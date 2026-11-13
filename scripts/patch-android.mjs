@@ -13,12 +13,22 @@ edit("android/app/src/main/AndroidManifest.xml", (s) => {
     "android.permission.POST_NOTIFICATIONS",
     ['android.permission.WRITE_EXTERNAL_STORAGE', ' android:maxSdkVersion="29"'],
     ['android.permission.READ_EXTERNAL_STORAGE', ' android:maxSdkVersion="32"'],
+    // only used for one thing: the little "name your music pack / making it…" window shown over another app after
+    // you drag an album or playlist into it (the app asks before using it)
+    "android.permission.SYSTEM_ALERT_WINDOW",
   ];
   for (const p of perms) {
     const [name, extra] = Array.isArray(p) ? p : [p, ""];
     if (!s.includes(`"${name}"`)) s = s.replace("</manifest>", `    <uses-permission android:name="${name}"${extra} />\n</manifest>`);
   }
   if (!s.includes("requestLegacyExternalStorage")) s = s.replace("<application", '<application\n        android:requestLegacyExternalStorage="true"');
+  // drag out to other apps: songs and music packs are handed over through this (read-only, per-drop permission)
+  if (!s.includes(".DragOutProvider")) s = s.replace("</application>", `    <provider
+            android:name=".DragOutProvider"
+            android:authorities="\${applicationId}.dragout"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>`);
   return s;
 });
 
@@ -65,6 +75,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AuraPoPlugin.class);             // YouTube proof-of-origin tokens (Add from Link)
+        registerPlugin(DragOutPlugin.class);            // drag songs / albums / playlists out to other apps
         super.onCreate(savedInstanceState);
         Window w = getWindow();
         WindowCompat.setDecorFitsSystemWindows(w, false);
