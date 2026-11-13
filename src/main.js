@@ -93,7 +93,7 @@ function press(el, tap, long) {
     if (e.button > 0) return;
     sx = e.clientX; sy = e.clientY; fired = false;
     el.classList.add("pressed");
-    if (long) timer = setTimeout(() => { fired = true; el.classList.remove("pressed"); navigator.vibrate?.(18); nc.haptic("press"); long(e); }, 460);
+    if (long) timer = setTimeout(() => { fired = true; el.classList.remove("pressed"); nc.haptic("press"); long(e); }, 460);
   });
   const cancel = () => { clearTimeout(timer); el.classList.remove("pressed"); };
   el.addEventListener("pointermove", (e) => { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel(); });
@@ -229,7 +229,8 @@ function buildTabs() {
   setupTabDrag();
 }
 function markTab() {
-  miniTuck.page(stack.at(-1).type === "settings");      // sideways: tucked in Settings; elsewhere the Scroll Timer restarts
+  miniTuck.page(stack.at(-1).type === "settings");
+  document.body.classList.toggle("in-settings", stack.at(-1).type === "settings");   // portrait: the bottom bar steps away      // sideways: tucked in Settings; elsewhere the Scroll Timer restarts
   for (const b of $("#tabs").querySelectorAll("button[data-tab]")) b.classList.toggle("on", b.dataset.tab === stack[0].type);
   sideLists();
   moveInd(stack[0].type);
@@ -382,7 +383,9 @@ function setupTabDrag() {
     lastX = pos; lastT = now;
     ind.x = x;
     const centre = x + ind.w / 2;
-    for (const t of g) t.el.classList.toggle("hover", centre >= t.x && centre < t.x + t.w);
+    let over = null;
+    for (const t of g) { const on = centre >= t.x && centre < t.x + t.w; t.el.classList.toggle("hover", on); if (on) over = t.id; }
+    if (over && over !== nav.dataset.over) { if (nav.dataset.over) nc.haptic("tick"); nav.dataset.over = over; }
     renderInd();
   });
   const up = () => {
@@ -394,6 +397,8 @@ function setupTabDrag() {
     g.forEach((t) => t.el.classList.remove("hover"));
     const near = g.reduce((a, b) => (Math.abs(b.x + b.w / 2 - centre) < Math.abs(a.x + a.w / 2 - centre) ? b : a));
     nav.dataset.dragged = "1";
+    delete nav.dataset.over;
+    nc.haptic("soft");
     setTimeout(() => delete nav.dataset.dragged, 50);
     if (near.id !== stack[0].type) goTab(near.id); else moveInd(near.id);
     springInd();
@@ -521,7 +526,12 @@ function refresh() {
 
 function pageShell(title, { back = stack.length > 1, actions = [] } = {}) {
   const page = h("div", { class: "page" });
-  const head = h("div", { class: "head" }, back && h("button", { class: "ib back", onclick: pop }, icon("back")), h("h1", {}, title), ...actions.filter(Boolean));
+  let acts = actions.filter(Boolean);
+  if (!nc.on) {                    // (iPhone: the native glass top bar does this itself)
+    const icons = acts.filter((a) => a.classList?.contains("ib") && !a.classList.contains("back"));
+    if (icons.length) { const cap = capsule(icons); const at = acts.indexOf(icons[0]); acts = acts.filter((a) => !icons.includes(a)); acts.splice(at, 0, cap); }
+  }
+  const head = h("div", { class: "head" }, back && h("button", { class: "ib back", onclick: pop }, icon("back")), h("h1", {}, title), ...acts);
   page.append(head);
   if (nc.on) {                    // iPhone: the native glass top bar mirrors this header
     let t = 0;
@@ -664,6 +674,59 @@ function playButtons(songs, ctx, mix) {
   };
 }
 
+/** The header's icon buttons in one capsule. Tap a button as usual — or hold the capsule and a bubble appears under
+ *  your finger: slide it across the buttons (a tick on each) and let go on the one you want. Going to a page with
+ *  fewer or more buttons, the capsule shrinks or grows into its new size. */
+let capW = 0;
+function capsule(buttons) {
+  const lens = h("i", { class: "lens" });
+  const cap = h("div", { class: "capsule" }, lens, ...buttons);
+  let timer = 0, held = false, over = null, sx = 0, sy = 0;
+  const btnAt = (x) => buttons.find((b) => { const r = b.getBoundingClientRect(); return x >= r.left - 2 && x <= r.right + 2; }) ||
+    (x < buttons[0].getBoundingClientRect().left ? buttons[0] : buttons.at(-1));
+  const place = (b, grow) => {
+    const cr = cap.getBoundingClientRect(), r = b.getBoundingClientRect();
+    lens.style.left = `${r.left - cr.left}px`; lens.style.width = `${r.width}px`;
+    lens.classList.toggle("big", !!grow);
+    buttons.forEach((x) => x.classList.toggle("lensed", x === b));
+  };
+  const end = () => { clearTimeout(timer); held = false; over = null; cap.classList.remove("holding"); lens.classList.remove("on", "big"); buttons.forEach((x) => x.classList.remove("lensed")); };
+  cap.addEventListener("pointerdown", (e) => {
+    sx = e.clientX; sy = e.clientY; held = false;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      held = true; over = btnAt(sx);
+      try { cap.setPointerCapture(e.pointerId); } catch {}
+      cap.classList.add("holding"); lens.classList.add("on"); place(over, true);
+      nc.haptic("press");
+    }, 220);
+  });
+  cap.addEventListener("pointermove", (e) => {
+    if (!held) { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 10) clearTimeout(timer); return; }
+    const b = btnAt(e.clientX);
+    if (b !== over) { over = b; place(b, true); nc.haptic("tick"); }
+  });
+  cap.addEventListener("pointerup", (e) => {
+    clearTimeout(timer);
+    if (!held) return;
+    const b = over; end();
+    cap.dataset.swallow = "1"; setTimeout(() => delete cap.dataset.swallow, 60);
+    nc.haptic("tap");
+    b?.click();
+  });
+  cap.addEventListener("pointercancel", end);
+  cap.addEventListener("click", (e) => { if (cap.dataset.swallow && e.isTrusted) { e.stopPropagation(); e.preventDefault(); } }, true);
+  cap.addEventListener("contextmenu", (e) => e.preventDefault());
+  // shrink / grow from the last capsule's size into this one's
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (!cap.isConnected) return;
+    const w = cap.getBoundingClientRect().width;
+    if (capW && Math.abs(capW - w) > 2 && motion())
+      cap.animate([{ width: `${capW}px` }, { width: `${w}px` }], { duration: 460, easing: "cubic-bezier(.3,1.35,.5,1)" });
+    capW = w;
+  }));
+  return cap;
+}
 const rootActions = (withFilter = true) => [ib("search", () => { push({ type: "browse" }); setTimeout(() => $(".browse-q")?.focus(), 420); }, "", "Search"),
   withFilter && filterButton(), ib("settings", () => push({ type: "settings" }), "", "Settings")].filter(Boolean);
 
@@ -1077,7 +1140,7 @@ function pageSettings() {
   const xfVal = h("span", { class: "val" });
   const xf = h("input", { type: "range", min: "0", max: "12", step: "1", value: String(s.crossfade || 0), class: "slider" });
   const showXf = () => { const v = +xf.value; xfVal.textContent = v ? `${v} s` : "Off"; xf.style.setProperty("--f", (v / 12) * 100 + "%"); };
-  xf.addEventListener("input", () => { s.crossfade = +xf.value; lib.saveMeta(); showXf(); });
+  xf.addEventListener("input", () => { s.crossfade = +xf.value; lib.saveMeta(); showXf(); nc.haptic("tick"); });
   showXf();
   const lrChips = h("div", { class: "chips", style: { padding: "2px 18px 14px" } });
   const drawLr = () => {
@@ -1847,7 +1910,7 @@ function setupMiniGestures() {
       a.style.transition = "transform .3s cubic-bezier(.22,1,.36,1)"; a.style.transform = "";
       if (!moved) return openNp();
       const ok = miniTuck.tucked ? dx < 0 : dx > 0;
-      if (ok && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) miniTuck.pin(!miniTuck.tucked);    // pinned tucked / back out
+      if (ok && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) { nc.haptic("soft"); miniTuck.pin(!miniTuck.tucked); }    // pinned tucked / back out
       return;
     }
     const els = parts();
@@ -1864,6 +1927,7 @@ function setupMiniGestures() {
       return;
     }
     // keep going the way the finger went, then the next song slides in from the other side
+    nc.haptic("tap");
     const dir = dx < 0 ? 1 : -1;
     const W = m.clientWidth;
     const id = m.dataset.id;
@@ -1922,7 +1986,7 @@ function buildNp() {
   np.stage = h("div", { class: "stage" }, np.cover);
   np.title = h("div", { class: "t" });
   np.artist = h("div", { class: "s" });
-  np.fav = ib("heart", () => { const s = player.current; if (s) { const on = lib.toggleFav([s.id]); updateNpFav(); nc.haptic(on ? "success" : "tap"); snack(on ? "Added to Favorites" : "Removed from Favorites"); refresh(); } });
+  np.fav = ib("heart", () => { const s = player.current; if (s) { const on = lib.toggleFav([s.id]); updateNpFav(); nc.haptic(on ? "success" : "soft"); snack(on ? "Added to Favorites" : "Removed from Favorites"); refresh(); } });
   np.fill = h("div", { class: "fillb" });
   np.seek = h("div", { class: "seek" }, h("div", { class: "track" }, np.fill));
   np.t0 = h("span", {}, "0:00"); np.t1 = h("span", {}, "0:00");
@@ -1968,8 +2032,9 @@ function buildNp() {
     return f;
   };
   np.seek.addEventListener("pointerdown", (e) => { seeking = true; np.seek.classList.add("active"); np.seek.setPointerCapture(e.pointerId); seekTo(e); e.stopPropagation(); });
-  np.seek.addEventListener("pointermove", (e) => seeking && seekTo(e));
-  np.seek.addEventListener("pointerup", (e) => { if (!seeking) return; const f = seekTo(e); seeking = false; np.seek.classList.remove("active"); player.seek(f * (player.audio.duration || 0)); nc.haptic("tick"); });
+  let seekStep = -1;
+  np.seek.addEventListener("pointermove", (e) => { if (!seeking) return; const f = seekTo(e); const st = Math.floor(f * 10); if (st !== seekStep) { if (seekStep >= 0) nc.haptic("tick"); seekStep = st; } });
+  np.seek.addEventListener("pointerup", (e) => { if (!seeking) return; const f = seekTo(e); seeking = false; np.seek.classList.remove("active"); seekStep = -1; player.seek(f * (player.audio.duration || 0)); nc.haptic("soft"); });
 
   // cover: tap to flip, swipe to skip
   let sx = 0, sy = 0, dx = 0, dy = 0, down = false, axis = "";
@@ -2079,6 +2144,7 @@ function openNpNow(native) {
   if (native) { morph.native = true; morph.active = true; document.documentElement.classList.add("native-morph"); }
   morph.set(1);                                  // start as the bubble…
   morph.v = 0;
+  if (!nc.on) nc.haptic("soft");
   requestAnimationFrame(() => morph.animate(0, SPRING_OPEN, () => morph.clear()));   // …and grow out of it, overshooting a touch
 }
 function prepareNp() {
@@ -2207,9 +2273,11 @@ const morph = {
     const pieces = this.pieces();
     for (const x of [np.stage, ...pieces.flip.map((f) => f.el), ...pieces.fade]) { x.style.transform = ""; x.style.opacity = ""; x.style.transformOrigin = ""; }
   },
-  animate(to, sp, done) {
+  /** arrive: finish the moment it reaches `to` and hand its speed to done(v) (for momentum into the bubble) */
+  animate(to, sp, done, arrive = false) {
     cancelAnimationFrame(this.raf);
     let last = performance.now();
+    const side = Math.sign(this.p - to);
     const step = (ts) => {
       let t = Math.min(0.064, (ts - last) / 1000); last = ts;
       let p = this.p;
@@ -2218,8 +2286,9 @@ const morph = {
         this.v += (-sp.k * (p - to) - sp.c * this.v) * dt;       // a spring: overshoots a little, then settles
         p += this.v * dt;
       }
+      if (arrive && side && Math.sign(p - to) !== side) { const v = this.v; this.set(to); this.v = 0; return done?.(Math.abs(v)); }
       this.set(p);
-      if (Math.abs(this.p - to) < 0.003 && Math.abs(this.v) < 0.05) { this.set(to); this.v = 0; return done?.(); }
+      if (Math.abs(this.p - to) < 0.003 && Math.abs(this.v) < 0.05) { this.set(to); this.v = 0; return done?.(Math.abs(this.v)); }
       this.raf = requestAnimationFrame(step);
     };
     this.raf = requestAnimationFrame(step);
@@ -2233,7 +2302,7 @@ const morph = {
   release(vPxPerMs) {               // finish whichever way it was going
     this.v = (vPxPerMs * 1000) / this.dist();
     if (this.p > 0.32 || vPxPerMs > 0.5) closeNp({ fromDrag: true });
-    else this.animate(0, SPRING_BACK, () => this.clear());
+    else { if (!nc.on) nc.haptic("tick"); this.animate(0, SPRING_BACK, () => this.clear()); }
   },
 };
 
@@ -2263,6 +2332,27 @@ function anchorParts(r) {
     bar: tucked ? { x: r.left + 10, y: r.top + 78, w: 48, h: 2 } : { x: r.left + 14, y: (side ? r.bottom - 3 : r.top + 60), w: w - 28, h: 2 } };
 }
 const clipFor = (r, rad) => `inset(${Math.round(r.top)}px ${Math.round(innerWidth - r.right)}px ${Math.round(innerHeight - r.bottom)}px ${Math.round(r.left)}px round ${rad}px)`;
+/** the player lands in the bubble with whatever speed it had: the bubble gives a little under it (squashes and dips,
+ *  more for a fast flick, barely for a gentle close) and springs back — one continuous motion, no separate bounce */
+let impulseRaf = 0;
+function bubbleImpulse(v) {
+  if (!motion()) return;
+  const side = matchMedia("(orientation: landscape) and (min-width: 640px)").matches;
+  const el = side ? $("#mini") : $("#dock");
+  if (!el || el.hidden) return;
+  cancelAnimationFrame(impulseRaf);
+  let x = 0, xv = Math.min(9, Math.max(2.2, v * 1.4)), last = performance.now();
+  el.style.transformOrigin = "50% 100%";
+  const step = (ts) => {
+    let t = Math.min(0.05, (ts - last) / 1000); last = ts;
+    while (t > 0) { const dt = Math.min(t, 1 / 240); t -= dt; xv += (-420 * x - 13 * xv) * dt; x += xv * dt; }
+    el.style.translate = `0 ${(x * 18).toFixed(2)}px`;
+    el.style.scale = `${(1 + x * 0.05).toFixed(4)} ${(1 - x * 0.09).toFixed(4)}`;
+    if (Math.abs(x) < 0.002 && Math.abs(xv) < 0.02) { el.style.translate = el.style.scale = el.style.transformOrigin = ""; return; }
+    impulseRaf = requestAnimationFrame(step);
+  };
+  impulseRaf = requestAnimationFrame(step);
+}
 function bounceBubble() {
   if (!motion()) return;
   const side = matchMedia("(orientation: landscape) and (min-width: 640px)").matches;
@@ -2287,14 +2377,14 @@ function closeNp(opts = {}) {
   else morph.rect = morph.rect || anchorRect();
   npPlayButton();
   morph.goNative(true);
-  const done = () => {
+  const done = (v = 0) => {
     if (npOpen) return;
     el.classList.remove("open");
     morph.clear();
     unflipNow();
-    if (nc.on) { nc.show(true); nc.haptic("thud"); } else bounceBubble();
+    if (nc.on) { nc.show(true); nc.haptic("thud"); } else { nc.haptic(v > 6 ? "thud" : "soft"); bubbleImpulse(v); }
   };
-  morph.animate(1, SPRING_CLOSE, done);
+  morph.animate(1, SPRING_CLOSE, done, !nc.on);           // (no stop-and-bounce: it lands with its speed)
   return true;
 }
 /** back to the front of the cover at once (no turning animation) — the player always reopens on the artwork */
@@ -2747,7 +2837,10 @@ async function boot() {
     // a light tap for every button, row and card you touch (programmatic clicks don't count)
     document.addEventListener("click", (e) => {
       if (!e.isTrusted) return;
-      if (e.target.closest("button, .row, .arow, .card, .chip, .item, [role=button], .switch")) nc.haptic("tap");
+      const t = e.target.closest("button, .row, .arow, .card, .chip, .item, [role=button], .switch, label");
+      if (!t || t.closest("[data-haptic=own]")) return;      // (those make their own, e.g. favorite = success)
+      nc.haptic(t.matches(".pp") ? "press" : t.matches(".danger, .btn.danger") ? "thud"
+        : t.matches(".chip, .switch, label, .seg button") ? "tick" : t.matches(".back") ? "soft" : "tap");
     }, true);
     nc.tint(getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
     nc.update({ tab: stack[0].type });

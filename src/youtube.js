@@ -170,7 +170,9 @@ export function parseLink(text) {
   const shorts = u.pathname.match(/^\/(shorts|embed|live)\/([\w-]{6,})/);
   if (shorts) video = shorts[2];
   let list = u.searchParams.get("list") || "";
-  if (/^RD/.test(list)) list = "";                 // an automatic "mix": just the one song
+  // an automatic "mix" started from a song (RD + the song's id…) is endless: just that song. But YouTube Music's own
+  // playlists (RDCLAK5uy_…, e.g. Today's Hits) and a mix link with no song in it are real playlists.
+  if (/^RD/.test(list) && !/^RDCLAK5uy_/.test(list) && video) list = "";
   return video || list ? { video, list, music: host === "music.youtube.com" } : null;
 }
 
@@ -316,6 +318,14 @@ export async function importLink(text, lib, onProgress) {
   const { title, playlist, tracks } = await resolve(link);
   let added = 0, skipped = 0, failed = 0, firstError = "";
   const songs = [], order = [];
+  let plName = null;
+  const keep = (id) => {                         // into the playlist right away, in the playlist's order
+    order.push(id);
+    if (!playlist) return;
+    if (!plName) { plName = lib.uniquePlaylist(title, title); diag.log(`YouTube: playlist “${plName}”`); }
+    lib.meta.playlists[plName] = [...order];
+    lib.saveMeta();
+  };
   for (let i = 0; i < tracks.length; i++) {
     const t = tracks[i];
     const base = i / tracks.length, span = 1 / tracks.length;
@@ -325,7 +335,7 @@ export async function importLink(text, lib, onProgress) {
       if (t.title) {
         const pre = tidy({ title: t.title, artist: t.artist, album: t.album });
         const had = lib.existing({ ...pre, duration: t.duration || 0 });
-        if (had) { skipped++; order.push(had.id); continue; }
+        if (had) { skipped++; keep(had.id); continue; }
       }
       const a = await fetchAudio(t.id, (f) => onProgress?.(base + span * 0.9 * f, `${i + 1} of ${tracks.length}${t.title ? ` · ${t.title}` : ""}`));
       const tags = tidy({ title: t.title || a.meta.title, artist: t.artist || a.meta.artist, album: t.album });
@@ -339,7 +349,7 @@ export async function importLink(text, lib, onProgress) {
         ? await lib.addAudio(file.blob, `${tags.title}.m4a`, info, cover)
         : await lib.addLocalFile(file.rel, file.size, "m4a", { albumartist: "", disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", ...info }, cover);
       r.skipped ? skipped++ : (added++, songs.push(r.song));
-      order.push(r.song.id);
+      keep(r.song.id);
     } catch (e) {
       failed++;
       firstError ||= e.message || String(e);
@@ -348,12 +358,6 @@ export async function importLink(text, lib, onProgress) {
     if (failed >= 3 && !added && !skipped) { diag.log("YouTube: the first 3 all failed — stopping"); failed += tracks.length - i - 1; break; }
   }
   onProgress?.(1, "Done");
-  let plName = null;
-  if (playlist && order.length) {
-    plName = lib.uniquePlaylist(title, title);
-    lib.meta.playlists[plName] = order;
-    lib.saveMeta();
-  }
   lib.rebuild();
   return { added, skipped, failed, firstError, title, playlist: plName, songs };
 }
