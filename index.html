@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0b0b0e" />
+  <link rel="icon" href="./icon-192.png" />
+  <title>AuraOS Music</title>
+</head>
+<body>
+  <div id="app">
+    <div id="aurora"><i></i><i></i><i></i></div>
+    <main id="pages"></main>
+    <div id="selbar" hidden></div>
+    <div id="dock"><div id="mini" hidden></div><nav id="tabs"></nav></div>
+    <section id="np" aria-hidden="true"></section>
+    <div id="scrim" hidden></div>
+    <div id="sheet" hidden></div>
+    <div id="snack"></div>
+    <input id="pickAudio" type="file" accept="audio/*" multiple hidden />
+    <input id="pickPack" type="file" accept=".zip" multiple hidden />
+    <input id="pickImage" type="file" accept="image/*" hidden />
+  </div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

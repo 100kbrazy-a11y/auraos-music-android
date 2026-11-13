@@ -1,0 +1,82 @@
+# Builds AuraOS Music for Android on GitHub's Linux machines and publishes AuraOS-Music.apk.
+# Download link (stays the same for every build):
+#   https://github.com/<you>/<repo>/releases/latest/download/AuraOS-Music.apk
+# The APK is signed with signing/release.jks, so each new build installs over the last one.
+name: Build Android app
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install packages
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the app's web part
+        run: npm run build
+
+      - name: Prepare the Android project
+        run: |
+          node scripts/patch-android.mjs
+          npx cap sync android
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+
+      - name: Compile
+        run: |
+          cd android && chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          test -f app/build/outputs/apk/release/app-release-unsigned.apk || { echo "::error::No APK was made; see the log above"; exit 1; }
+
+      - name: Sign AuraOS-Music.apk
+        run: |
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          echo "build-tools: $BT"
+          "$BT/zipalign" -f -p 4 android/app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          "$BT/apksigner" sign --ks signing/release.jks --ks-pass file:signing/keystore.pass \
+            --ks-key-alias auraos --out AuraOS-Music.apk aligned.apk
+          "$BT/apksigner" verify AuraOS-Music.apk
+          ls -lh AuraOS-Music.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AuraOS-Music-apk
+          path: AuraOS-Music.apk
+          retention-days: 14
+
+      - name: Publish the download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Build ${{ github.run_number }} ($(git log -1 --format=%h)). On your Android phone, open https://github.com/${{ github.repository }}/releases/latest/download/AuraOS-Music.apk and install it. See the README for step-by-step help."
+          if gh release view apk >/dev/null 2>&1; then
+            gh release upload apk AuraOS-Music.apk --clobber
+            gh release edit apk --notes "$notes" --latest
+          else
+            gh release create apk AuraOS-Music.apk --title "AuraOS Music for Android" --notes "$notes" --latest
+          fi
