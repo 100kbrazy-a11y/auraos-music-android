@@ -5,7 +5,7 @@ import { getJson as getJsonHttp, getBlob } from "./http.js";
 import { player, EQ_PRESETS, EQ_BANDS } from "./player.js";
 import { LyricsView, fetchLyrics, searchLyrics, cleanTitle } from "./lyrics.js";
 import { persistStorage, usage } from "./store.js";
-import { squareJpeg, coverColor } from "./tags.js";
+import { squareJpeg, coverColor, coverPalette } from "./tags.js";
 import { idb } from "./store.js";
 import { diag } from "./diag.js";
 import { DiskFile, dropPicked, initLibraryURL, songFileURLNow } from "./files.js";
@@ -93,6 +93,39 @@ function edge() {
   f.reset = () => { on = false; };
   return f;
 }
+
+// ---- double tap to like (anywhere a song is): a heart bursts where you tapped
+function likeSong(s, x, y) {
+  if (!s) return;
+  const on = !lib.isFav(s.id);
+  if (on) lib.toggleFav([s.id], true);
+  nc.haptic(on ? "success" : "tap");
+  heartBurst(x, y, on);
+  updateNpFav?.();
+  if (on) snack(`Liked “${s.title}”`);
+  pageDirty = true;
+}
+function heartBurst(x, y, on = true) {
+  if (x == null) { x = innerWidth / 2; y = innerHeight / 2; }
+  const el = h("div", { class: "heartburst" + (on ? "" : " already") }, icon("heartf"));
+  el.style.left = `${x}px`; el.style.top = `${y}px`;
+  document.body.append(el);
+  setTimeout(() => el.remove(), 900);
+}
+/** tap / double tap on one element: a single tap waits a moment only if `waitForDouble` (else it runs at once) */
+// (remembered per song, not per element: the first tap can redraw the row it landed on)
+let lastTap = { key: "", t: 0, x: 0, y: 0 };
+function doubleTap(el, onDouble, key) {
+  el.addEventListener("pointerup", (e) => {
+    const now = performance.now();
+    if (lastTap.key === key && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
+      lastTap = { key: "", t: 0, x: 0, y: 0 }; dblAt.set(key, now); onDouble(e.clientX, e.clientY); return;
+    }
+    lastTap = { key, t: now, x: e.clientX, y: e.clientY };
+  });
+}
+const dblAt = new Map();
+const justDoubled = (key) => performance.now() - (dblAt.get(key) || 0) < 120;
 
 // press: tap / long-press (and right-click on desktop)
 function press(el, tap, long, drag) {
@@ -540,6 +573,8 @@ function refresh() {
   pageEl = el;
   quietScrollUntil = performance.now() + 150;     // restoring the scroll position isn't you scrolling
   el.scrollTop = top;
+  el._wantTop = top;
+  setTimeout(() => { if (el._wantTop === top) el._wantTop = 0; }, 3000);
   if (top > 8) el.classList.add("scrolled");
 }
 
@@ -830,13 +865,33 @@ function songRow(s, i, list, opts = {}) {
     more.addEventListener("pointerdown", (e) => e.stopPropagation());
     row.append(more);
   }
-  press(row, () => (sel ? sel.kind === "songs" && toggleSel(s.id) : play()), () => (sel ? sel.kind === "songs" && toggleSel(s.id) : songMenu(s, opts)),
-    () => ({ kind: "song", song: s }));
+  press(row, () => { if (justDoubled("s" + s.id)) return; sel ? sel.kind === "songs" && toggleSel(s.id) : play(); },
+    () => (sel ? sel.kind === "songs" && toggleSel(s.id) : songMenu(s, opts)), () => ({ kind: "song", song: s }));
+  if (!sel) doubleTap(row, (x, y) => likeSong(s, x, y), "s" + s.id);
+  row.dataset.id = s.id;
+  row._make = () => songRow(s, i, list, opts);        // (so a new song playing can redo just this row)
   return row;
 }
 function songList(songs, opts) {
   const box = h("div", { class: "list" });
-  songs.forEach((s, i) => box.append(songRow(s, i, songs, opts)));
+  // long lists: the first screenfuls now, the rest a chunk per frame (no freeze on a big library)
+  const first = songs.length > 160 ? 100 : songs.length;
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < first; i++) frag.append(songRow(songs[i], i, songs, opts));
+  box.append(frag);
+  let at = first;
+  const more = () => {
+    if (at >= songs.length) return;
+    if (!box.isConnected && at > first) return;        // page went away
+    const f = document.createDocumentFragment();
+    const end = Math.min(songs.length, at + 220);
+    for (; at < end; at++) f.append(songRow(songs[at], at, songs, opts));
+    box.append(f);
+    const pg = box.closest(".page");                     // keep the scroll position a refresh asked for
+    if (pg?._wantTop && pg.scrollTop < pg._wantTop - 2) { quietScrollUntil = performance.now() + 150; pg.scrollTop = pg._wantTop; }
+    requestAnimationFrame(more);
+  };
+  if (at < songs.length) requestAnimationFrame(more);
   return box;
 }
 /** an artist as a card the size of an album card (round picture) */
@@ -850,7 +905,10 @@ function artistCard(a) {
 function songCard(s, list, i, ctx) {
   const c = h("div", { class: "card song-card" + (player.current?.id === s.id ? " now" : "") }, art(s.cover, { small: false, label: s.album }),
     h("div", { class: "t" }, s.title), h("div", { class: "s" }, s.artist || s.album || ""));
-  press(c, () => playWithMix(list, i, ctx), () => songMenu(s), () => ({ kind: "song", song: s }));
+  press(c, () => { if (justDoubled("s" + s.id)) return; playWithMix(list, i, ctx); }, () => songMenu(s), () => ({ kind: "song", song: s }));
+  doubleTap(c, (x, y) => likeSong(s, x, y), "s" + s.id);
+  c.dataset.id = s.id;
+  c._make = () => songCard(s, list, i, ctx);
   return c;
 }
 function albumCard(a) {
@@ -2182,7 +2240,7 @@ function buildNp() {
     h("div", { class: "ctrls" }, np.shuffle, ib("prev", () => player.prev()), np.pp, ib("next", () => player.next()), np.repeat),
     h("div", { class: "extras" }, np.lyrBtn, ib("eq", () => { closeNp(); push({ type: "settings" }); }, "", "Equalizer"), ib("queue", () => showQueue(), "", "Queue")));
   np.wrapEl = wrap;
-  el.append(np.bg, np.bg2l, h("div", { class: "bg2" }), np.glow, np.viz, wrap);
+  el.append(np.bg, np.bg2l, fog.el(), h("div", { class: "bg2" }), np.glow, np.viz, wrap);
   lyrView = new LyricsView(np.lyrCanvas);
   np.artist.onclick = () => { const s = player.current; if (s?.artist) { closeNp(); push({ type: "artist", name: s.artist.split(",")[0].trim() }); } };
 
@@ -2237,11 +2295,20 @@ function buildNp() {
     np.cover.style.transform = "";
     if (axis === "y") morph.release(0); else glideBack();
   });
+  // one tap flips the cover (after a moment, in case it's a double tap); two quick taps like the song
+  let coverT = 0, coverLast = 0;
+  const coverTap = (e) => {
+    const now = performance.now();
+    if (now - coverLast < 300) { clearTimeout(coverT); coverLast = 0; likeSong(player.current, e.clientX, e.clientY); return; }
+    coverLast = now;
+    clearTimeout(coverT);
+    coverT = setTimeout(() => { nc.haptic("soft"); flip(); }, 260);
+  };
   np.cover.addEventListener("pointerup", (e) => {
     if (detTap) {
       const moved = Math.hypot(e.clientX - detTap.x, e.clientY - detTap.y);
       detTap = null;
-      if (moved < 8) { nc.haptic("soft"); flip(); }
+      if (moved < 8) coverTap(e);
       return;
     }
     if (!down) return;
@@ -2258,7 +2325,7 @@ function buildNp() {
     if (Math.abs(dx) < 8) {
       np.cover.style.transform = "";
       if ($("#np").classList.contains("lyrics")) return toggleLyrics(false);   // lyrics on: tapping the cover turns them off
-      nc.haptic("soft"); flip(); return;
+      coverTap(e); return;
     }
     if (Math.abs(dx) <= 70) return glideBack();
     if (player.peek(dx < 0 ? 1 : -1) < 0) { glideBack(); dx < 0 ? player.next() : player.prev(); return; }  // same song again
@@ -2325,6 +2392,8 @@ function prepareNp() {
   npTrack(0);
   updateProgress();
   const el = $("#np");
+  el.classList.toggle("fogged", motion());         // the storm-in-fog background (motion off: the still, blurred cover)
+  if (!motion()) el.style.removeProperty("--accent");
   el.getAnimations().forEach((a) => a.cancel());
   el.style.transform = "";
   el.setAttribute("aria-hidden", "false");
@@ -2537,6 +2606,15 @@ function bounceBubble() {
     { duration: 420, easing: "cubic-bezier(.3,1,.5,1)" });
 }
 let pageDirty = false;
+/** the playing song changed: redo only the row/card that stopped and the one that started (not the whole page) */
+function markNow() {
+  if (!pageEl) return;
+  const id = player.current?.id;
+  for (const el of pageEl.querySelectorAll(".row[data-id], .song-card[data-id]")) {
+    const now = el.dataset.id === id;
+    if (now !== el.classList.contains("now")) { const n = el._make?.(); if (n) el.replaceWith(n); }
+  }
+}
 function closeNp(opts = {}) {
   if (!npOpen) return false;
   clearTimeout(openingT); $("#np").classList.remove("opening");
@@ -2640,6 +2718,7 @@ function npTrack(dir) {
   nc.tint(color);
   // the blurred backdrops use the small cover (looks the same blurred, far cheaper) and crossfade into each other
   setBackdrop(cov ? cov.small : null, color);
+  fog.setCover(s.cover);
   np.cover.querySelector(".back .blur").style.backgroundImage = cov ? `url(${cov.small})` : "none";
   np.ctx.replaceChildren(document.createTextNode(ctxLabel ? "PLAYING FROM" : "NOW PLAYING"), h("b", {}, ctxLabel || s.album || ""));
   np.title.textContent = s.title;
@@ -2791,9 +2870,92 @@ function showQueue() {
   openSheet(box);
 }
 
+// ---- the player's "storm in fog": two clouds in the cover's two main colours drift behind everything, swell with the
+// bass and flash on hard hits like lightning in fog; the player's accent colour slides between the two with the beat.
+// Drawn tiny (40×72) and stretched by the screen, so it's soft as fog and nearly free to draw.
+const toHsl = ([r, g, b]) => {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+  let h = 0, s = 0;
+  if (mx !== mn) { const d = mx - mn; s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn); h = (mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4) / 6; }
+  return [h, s, l];
+};
+const fromHsl = ([h, s, l]) => {
+  const f = (n) => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l); return 255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))); };
+  return [f(0), f(8), f(4)];
+};
+/** a version of a colour that reads well as text / controls */
+const accentSafe = (c) => { const [h, s, l] = toHsl(c); return fromHsl([h, Math.min(0.85, Math.max(s < 0.12 ? s : 0.38, s)), Math.min(0.74, Math.max(0.6, l))]); };
+const FOG_DEFAULT = [[150, 110, 140], [70, 70, 95]];
+const fog = {
+  cv: null, g: null, pal: FOG_DEFAULT, cur: null, acc: [accentSafe(FOG_DEFAULT[0]), accentSafe(FOG_DEFAULT[1])], accH: [toHsl(accentSafe(FOG_DEFAULT[0])), toHsl(accentSafe(FOG_DEFAULT[1]))],
+  t0: performance.now(), flash: 0, fx: 0.5, fy: 0.3, avg: 0, accStr: "", accAt: 0, cache: new Map(), want: null,
+  el() {
+    if (!this.cv) { this.cv = h("canvas", { class: "fog", width: 40, height: 72 }); this.g = this.cv.getContext("2d", { alpha: false }); }
+    return this.cv;
+  },
+  async setCover(id) {
+    this.want = id;
+    let p = id ? this.cache.get(id) : FOG_DEFAULT;
+    if (!p) {
+      const c = lib.cover(id);
+      p = (c?.smallBlob && (await coverPalette(c.smallBlob))) || FOG_DEFAULT;
+      if (this.cache.size > 200) this.cache.clear();
+      this.cache.set(id, p);
+    }
+    if (this.want !== id) return;
+    this.pal = p;
+    this.acc = [accentSafe(p[0]), accentSafe(p[1])];
+    this.accH = this.acc.map(toHsl);
+  },
+  draw(bass, bassS, playing) {
+    const g = this.g, W = 40, H = 72;
+    if (!g) return;
+    const now = performance.now(), t = (now - this.t0) / 1000;
+    if (!this.cur) this.cur = this.pal.map((c) => [...c]);
+    for (let k = 0; k < 2; k++) for (let i = 0; i < 3; i++) this.cur[k][i] += (this.pal[k][i] - this.cur[k][i]) * 0.05;   // new song: colours drift over
+    // a hit: the bass jumps well above its recent level
+    const spike = bass - this.avg;
+    this.avg += (bass - this.avg) * 0.06;
+    if (playing && spike > 0.13 && bass > 0.42 && this.flash < 0.25) { this.flash = Math.min(1, 0.55 + spike * 2.2); this.fx = 0.15 + Math.random() * 0.7; this.fy = 0.08 + Math.random() * 0.55; }
+    this.flash *= 0.9;
+    const e = playing ? bassS : 0;
+    const [A, B] = this.cur;
+    const rgb = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a.toFixed(3)})`;
+    g.globalCompositeOperation = "source-over";
+    g.fillStyle = rgb([A[0] * 0.1 + B[0] * 0.06, A[1] * 0.1 + B[1] * 0.06, A[2] * 0.1 + B[2] * 0.06], 1);
+    g.fillRect(0, 0, W, H);
+    g.globalCompositeOperation = "lighter";
+    const blob = (x, y, r, c, a) => {
+      const gr = g.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, rgb(c, a)); gr.addColorStop(0.55, rgb(c, a * 0.45)); gr.addColorStop(1, rgb(c, 0));
+      g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    };
+    blob(W * (0.5 + 0.34 * Math.sin(t * 0.13)), H * (0.28 + 0.12 * Math.sin(t * 0.17 + 1)), W * (0.95 + 0.3 * e), A, 0.34 + 0.46 * e);
+    blob(W * (0.5 + 0.36 * Math.cos(t * 0.11 + 2)), H * (0.64 + 0.14 * Math.cos(t * 0.09)), W * (1.0 + 0.25 * e), B, 0.3 + 0.42 * e);
+    for (let i = 0; i < 3; i++) {                              // wisps of fog drifting through
+      const c = i % 2 ? A : B;
+      blob(W * (0.5 + 0.5 * Math.sin(t * (0.21 + i * 0.07) + i * 2.1)), H * (0.5 + 0.42 * Math.sin(t * (0.15 + i * 0.05) + i)), W * 0.45, c, 0.07 + 0.08 * e);
+    }
+    if (this.flash > 0.02) blob(W * this.fx, H * this.fy, W * (0.55 + 0.4 * this.flash), [Math.min(255, A[0] * 0.6 + 110), Math.min(255, A[1] * 0.6 + 110), Math.min(255, A[2] * 0.6 + 110)], this.flash * 0.5);
+    // the player's accent rides between the two colours with the music (at most ~20 times a second)
+    if (now - this.accAt > 50) {
+      this.accAt = now;
+      const m = Math.max(0, Math.min(1, 0.15 + e * 1.3 + this.flash * 0.35));
+      // round the colour wheel (the short way), not straight across it: orange → blue goes through vivid colours, never grey
+      const [a, b] = this.accH;
+      let dh = b[0] - a[0]; if (dh > 0.5) dh -= 1; if (dh < -0.5) dh += 1;
+      const c = fromHsl([(a[0] + dh * m + 1) % 1, a[1] + (b[1] - a[1]) * m, a[2] + (b[2] - a[2]) * m]);
+      const s = `rgb(${Math.round(c[0])}, ${Math.round(c[1])}, ${Math.round(c[2])})`;
+      if (s !== this.accStr) { this.accStr = s; $("#np").style.setProperty("--accent", s); }
+    }
+  },
+};
+
 // visualizer + bass glow
 let vizOn = false, vizCol = "", vizColAt = 0, glowFade = 0;
 function vizColor() {
+  if (npOpen && fog.accStr && document.querySelector("#np.fogged")) return fog.accStr;
   const t = performance.now();
   if (t - vizColAt > 120) { vizColAt = t; vizCol = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#ff7aa0"; }
   return vizCol;
@@ -2803,9 +2965,12 @@ function startViz() {
   vizOn = true;
   const bins = new Uint8Array(1024);
   let smooth = new Float32Array(40), bassS = 0;
+  let cvAt = 0, cvPick = null;
   const loop = () => {
     // upright the little visualizer plays along the bottom of the bubble behind the tabs; sideways, in the player bar
-    const miniCv = [$("#dock .tviz"), $("#mini canvas")].find((c) => c && c.offsetParent !== null && c.clientWidth > 0 && !$("#mini").hidden);
+    // (which little canvas is showing: looked up a few times a second, not every frame — that forced a layout each time)
+    if (performance.now() - cvAt > 250) { cvAt = performance.now(); cvPick = [$("#dock .tviz"), $("#mini canvas")].find((c) => c && c.offsetParent !== null && c.clientWidth > 0 && !$("#mini").hidden) || null; }
+    const miniCv = cvPick;
     if (!npOpen && !miniCv) {
       // nothing visible to draw into right now (e.g. mid-rotation): check back shortly instead of stopping for good
       vizOn = false;
@@ -2850,7 +3015,9 @@ function startViz() {
       }
     };
     const draw = (cv, alphaTop, full) => {
-      const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+      const dpr = devicePixelRatio || 1;
+      if (!cv._sz || performance.now() - cv._szAt > 500) { cv._sz = [cv.clientWidth, cv.clientHeight]; cv._szAt = performance.now(); }
+      const [W, H] = cv._sz;
       if (!W) return;
       if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
       const g = cv.getContext("2d");
@@ -2870,6 +3037,7 @@ function startViz() {
       }
     };
     if (npOpen) {
+      if (motion()) fog.draw(bass, bassS, playing);
       draw(np.viz, 0.75, true);
       if (motion()) {
         const fade = Math.min(1, (performance.now() - glowFade) / 700);      // new colour: the glow eases back in
@@ -2896,7 +3064,7 @@ player.addEventListener("track", (e) => {
   updateMini();
   npTrack(e.detail?.dir ?? 0);
   if (!npOpen) { const c = lib.colorOf(player.current) || "hsl(345 90% 72%)"; document.documentElement.style.setProperty("--accent", c); nc.tint(c); }
-  if (pageEl?.querySelector(".row")) { if (npOpen) pageDirty = true; else requestAnimationFrame(() => setTimeout(refresh, 380)); }
+  markNow();                                      // just the rows that changed, not the whole page
   startViz();
   saveSession();
 });

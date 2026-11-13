@@ -92,7 +92,7 @@ svg.i.fill { fill: currentColor; stroke: none; }
 
 /* song rows */
 .list { padding: 0 8px; }
-.row { position: relative; display: flex; align-items: center; gap: 12px; height: 64px; padding: 0 4px 0 10px; border-radius: 14px;
+.row { content-visibility: auto; contain-intrinsic-size: auto 64px; position: relative; display: flex; align-items: center; gap: 12px; height: 64px; padding: 0 4px 0 10px; border-radius: 14px;
   content-visibility: auto; contain-intrinsic-size: auto 64px; transition: background .15s; }
 .row:active { background: rgba(255, 255, 255, .06); }
 .row .art { position: relative; width: 48px; height: 48px; border-radius: 9px; overflow: hidden; flex: none; background: var(--surface2); }
@@ -743,3 +743,22 @@ html, body, #app { background: var(--bg); }
 .group .fold-note { padding: 0 18px 8px; font-size: 12.5px; color: var(--sub); line-height: 1.35; }
 .group .item .badge { min-width: 26px; height: 22px; padding: 0 8px; border-radius: 999px; display: grid; place-items: center; font-size: 12px; font-weight: 800;
   color: #fff; background: color-mix(in srgb, var(--accent) 70%, transparent); }
+
+/* the full player's storm-in-fog background (two cover colours that drift and flash with the beat) */
+#np .fog { position: absolute; inset: 0; width: 100%; height: 100%; display: none; pointer-events: none; }
+#np.fogged .fog { display: block; }
+#np.fogged > .bg, #np.fogged > .glowpulse { display: none; }
+#np.fogged .bg2 { background: radial-gradient(130% 90% at 50% 0%, transparent 40%, rgba(0, 0, 0, .35)), linear-gradient(transparent 55%, rgba(0, 0, 0, .5)); }
+#np.morphing > .fog { opacity: var(--bgo, 1); }
+
+/* double tap to like: a heart bursts where you tapped */
+.heartburst { position: fixed; z-index: 400; width: 96px; height: 96px; margin: -48px 0 0 -48px; pointer-events: none; color: #ff4f7e;
+  filter: drop-shadow(0 6px 18px rgba(255, 60, 110, .55)); animation: heartburst .85s cubic-bezier(.2,1.4,.4,1) forwards; }
+.heartburst svg { width: 100%; height: 100%; }
+.heartburst.already { color: #fff; filter: drop-shadow(0 6px 18px rgba(0, 0, 0, .5)); }
+@keyframes heartburst {
+  0% { transform: scale(.2) rotate(-12deg); opacity: 0; }
+  25% { transform: scale(1.15) rotate(6deg); opacity: 1; }
+  45% { transform: scale(.95) rotate(0); opacity: 1; }
+  100% { transform: translateY(-50px) scale(1.05); opacity: 0; }
+}

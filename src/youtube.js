@@ -240,35 +240,45 @@ async function resolve(link) {
 }
 
 /** Download one song's audio: tries YouTube's app identities in turn until one of them gives a real m4a. */
+// asking YouTube for an address happens one song at a time (the sign-in switch is shared); downloads run in parallel
+let infoQueue = Promise.resolve();
+const oneAtATime = (fn) => { const r = infoQueue.then(fn, fn); infoQueue = r.catch(() => {}); return r; };
+let goodClient = null;                              // the identity that worked last: tried first next time
+
 async function fetchAudio(id, onFrac) {
   const { mod, yt } = await client();
   const reasons = [];
   const pot = await tokenFor(id);
   const signedIn = !!yt.session.oauth?.oauth2_tokens && ytSignedIn();
   // signed in: YouTube's TV identity carries the sign-in, so it goes first
-  const order = signedIn ? ["TV", "TV_SIMPLY", ...CLIENTS.filter((c) => c !== "TV_SIMPLY")] : CLIENTS;
+  let order = signedIn ? ["TV", "TV_SIMPLY", ...CLIENTS.filter((c) => c !== "TV_SIMPLY")] : [...CLIENTS];
+  if (goodClient && order.includes(goodClient)) order = [goodClient, ...order.filter((c) => c !== goodClient)];
   for (const name of order) {
     if (!pot && WEBBY.has(name)) continue;                // these need the token
-    yt.session.logged_in = signedIn && name.startsWith("TV");   // (the TV sign-in only works with the TV identities)
     try {
-      const info = await timed(yt.getBasicInfo(id, pot ? { client: name, po_token: pot } : { client: name }), 30000, `Asking YouTube (${name})`);
-      const ps = info.playability_status;
-      if (ps && ps.status && ps.status !== "OK") { reasons.push(`${name}: ${ps.status}${ps.reason ? " – " + ps.reason : ""}`); diag.log("YouTube: " + reasons.at(-1)); continue; }
-      let fmt;
-      try { fmt = info.chooseFormat({ type: "audio", quality: "best", format: "mp4" }); }
-      catch { reasons.push(`${name}: no m4a audio`); diag.log("YouTube: " + reasons.at(-1)); continue; }
-      let url = await timed(fmt.decipher(yt.session.player), 30000, "Unscrambling the audio address");
-      if (pot) { const u = new URL(url); u.searchParams.set("pot", pot); url = u.toString(); }
+      const got = await oneAtATime(async () => {
+        yt.session.logged_in = signedIn && name.startsWith("TV");   // (the TV sign-in only works with the TV identities)
+        try {
+          const info = await timed(yt.getBasicInfo(id, pot ? { client: name, po_token: pot } : { client: name }), 30000, `Asking YouTube (${name})`);
+          const ps = info.playability_status;
+          if (ps && ps.status && ps.status !== "OK") return { why: `${name}: ${ps.status}${ps.reason ? " – " + ps.reason : ""}` };
+          let fmt;
+          try { fmt = info.chooseFormat({ type: "audio", quality: "best", format: "mp4" }); } catch { return { why: `${name}: no m4a audio` }; }
+          let url = await timed(fmt.decipher(yt.session.player), 30000, "Unscrambling the audio address");
+          if (pot) { const u = new URL(url); u.searchParams.set("pot", pot); url = u.toString(); }
+          return { info, fmt, url };
+        } finally { yt.session.logged_in = false; }
+      });
+      if (got.why) { reasons.push(got.why); diag.log("YouTube: " + got.why); continue; }
       const ua = mod.Constants?.CLIENTS?.[name]?.USER_AGENT || navigator.userAgent;
-      const size = +fmt.content_length || 0;
+      const size = +got.fmt.content_length || 0;
       diag.log(`YouTube: ${name} gave an address for ${id} (${Math.round(size / 1024)} KB)`);
-      const file = await download(url, size, ua, id, onFrac, WEBBY.has(name) ? (name === "YTMUSIC" ? "https://music.youtube.com" : "https://www.youtube.com") : "");
-      yt.session.logged_in = false;
-      const b = info.basic_info || {};
+      const file = await download(got.url, size, ua, id, onFrac, WEBBY.has(name) ? (name === "YTMUSIC" ? "https://music.youtube.com" : "https://www.youtube.com") : "");
+      goodClient = name;
+      const b = got.info.basic_info || {};
       return { ...file, client: name, meta: { title: b.title || "", artist: b.author || "", duration: b.duration || 0, thumb: lastThumb(b.thumbnail) } };
-    } catch (e) { yt.session.logged_in = false; reasons.push(`${name}: ${String(e.message || e).replace(/https:\/\/\S+/, "(address)")}`); diag.log("YouTube: " + reasons.at(-1)); }
+    } catch (e) { reasons.push(`${name}: ${String(e.message || e).replace(/https:\/\/\S+/, "(address)")}`); diag.log("YouTube: " + reasons.at(-1)); }
   }
-  yt.session.logged_in = false;
   const first = String(reasons[0] || "").replace(/(Error downloading file):.*/, "$1");    // (not the whole address)
   const bot = reasons.some((r) => /not a bot|sign in|LOGIN_REQUIRED/i.test(r));
   throw new Error(`YouTube refused every way in (${first || "no answer"})` + (pot ? "" : ` · the player check failed: ${tokenWhy}`)
@@ -316,47 +326,61 @@ export async function importLink(text, lib, onProgress) {
   diag.log(`YouTube: link → ${JSON.stringify(link)}`);
   onProgress?.(0, "Connecting to YouTube…");
   const { title, playlist, tracks } = await resolve(link);
-  let added = 0, skipped = 0, failed = 0, firstError = "";
-  const songs = [], order = [];
+  let added = 0, skipped = 0, failed = 0, firstError = "", stop = false;
+  const songs = [], slots = new Array(tracks.length);
   let plName = null;
-  const keep = (id) => {                         // into the playlist right away, in the playlist's order
-    order.push(id);
+  const keep = (i, id) => {                      // into the playlist right away, in the playlist's own order
+    slots[i] = id;
     if (!playlist) return;
     if (!plName) { plName = lib.uniquePlaylist(title, title); diag.log(`YouTube: playlist “${plName}”`); }
-    lib.meta.playlists[plName] = [...order];
+    lib.meta.playlists[plName] = slots.filter(Boolean);
     lib.saveMeta();
   };
-  for (let i = 0; i < tracks.length; i++) {
+  let addQueue = Promise.resolve();              // saving into the library: one at a time (no clashing file names)
+  const addOne = (fn) => { const r = addQueue.then(fn, fn); addQueue = r.catch(() => {}); return r; };
+  let done = 0;
+  const frac = new Array(tracks.length).fill(0);
+  const report = (t) => onProgress?.(Math.min(0.99, (done + frac.reduce((x, y) => x + y, 0)) / tracks.length), `${done + 1} of ${tracks.length}${t ? ` · ${t}` : ""}`);
+  const one = async (i) => {
     const t = tracks[i];
-    const base = i / tracks.length, span = 1 / tracks.length;
-    onProgress?.(base, `${i + 1} of ${tracks.length}${t.title ? ` · ${t.title}` : ""}`);
     try {
       diag.step = `Downloading · ${t.title || t.id}`;
       if (t.title) {
         const pre = tidy({ title: t.title, artist: t.artist, album: t.album });
         const had = lib.existing({ ...pre, duration: t.duration || 0 });
-        if (had) { skipped++; keep(had.id); continue; }
+        if (had) { skipped++; keep(i, had.id); return; }
       }
-      const a = await fetchAudio(t.id, (f) => onProgress?.(base + span * 0.9 * f, `${i + 1} of ${tracks.length}${t.title ? ` · ${t.title}` : ""}`));
+      report(t.title);
+      // the cover comes down at the same time as the song
+      const coverP = (async () => {
+        let c = null;
+        try { c = await getBlob(bigThumb(t.thumb, t.id)); } catch {}
+        if (!c || c.size < 2000) { try { c = await getBlob(`https://i.ytimg.com/vi/${t.id}/hqdefault.jpg`); } catch {} }
+        return c;
+      })();
+      const a = await fetchAudio(t.id, (f) => { frac[i] = 0.9 * f; report(t.title); });
       const tags = tidy({ title: t.title || a.meta.title, artist: t.artist || a.meta.artist, album: t.album });
-      const file = a;
-      let cover = null;
-      try { cover = await getBlob(bigThumb(t.thumb || a.meta.thumb, t.id)); } catch {}
-      if (!cover || cover.size < 2000) { try { cover = await getBlob(`https://i.ytimg.com/vi/${t.id}/hqdefault.jpg`); } catch {} }
+      const cover = await coverP;
       const info = { ...tags, track: t.track || 0, duration: t.duration || a.meta.duration || 0,
         codec: "AAC · from YouTube", source: `https://music.youtube.com/watch?v=${t.id}` };
-      const r = file.blob
-        ? await lib.addAudio(file.blob, `${tags.title}.m4a`, info, cover)
-        : await lib.addLocalFile(file.rel, file.size, "m4a", { albumartist: "", disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", ...info }, cover);
+      const r = await addOne(() => a.blob
+        ? lib.addAudio(a.blob, `${tags.title}.m4a`, info, cover)
+        : lib.addLocalFile(a.rel, a.size, "m4a", { albumartist: "", disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", ...info }, cover));
       r.skipped ? skipped++ : (added++, songs.push(r.song));
-      keep(r.song.id);
+      keep(i, r.song.id);
     } catch (e) {
       failed++;
       firstError ||= e.message || String(e);
       diag.log(`YouTube: couldn't add ${t.title || t.id}: ${e.message || e}`);
-    }
-    if (failed >= 3 && !added && !skipped) { diag.log("YouTube: the first 3 all failed — stopping"); failed += tracks.length - i - 1; break; }
-  }
+      if (failed >= 3 && !added && !skipped && !stop) { stop = true; diag.log("YouTube: the first 3 all failed — stopping"); }
+    } finally { frac[i] = 0; done++; report(""); }
+  };
+  let next = 0;
+  const worker = async () => { while (!stop && next < tracks.length) await one(next++); };
+  // the first song alone (it finds the identity that works), then three at a time
+  if (tracks.length) { await one(next++); }
+  await Promise.all(Array.from({ length: Math.min(3, Math.max(0, tracks.length - 1)) }, worker));
+  if (stop) failed += tracks.length - done;
   onProgress?.(1, "Done");
   lib.rebuild();
   return { added, skipped, failed, firstError, title, playlist: plName, songs };
