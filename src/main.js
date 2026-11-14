@@ -5,7 +5,7 @@ import { getJson as getJsonHttp, getBlob } from "./http.js";
 import { player, EQ_PRESETS, EQ_BANDS } from "./player.js";
 import { LyricsView, fetchLyrics, searchLyrics, cleanTitle } from "./lyrics.js";
 import { persistStorage, usage } from "./store.js";
-import { squareJpeg, coverColor } from "./tags.js";
+import { squareJpeg, coverColor, splitArtists, primaryArtist } from "./tags.js";
 import { idb } from "./store.js";
 import { diag } from "./diag.js";
 import { DiskFile, dropPicked, initLibraryURL, songFileURLNow } from "./files.js";
@@ -42,7 +42,7 @@ const ICONS = {
   edit: ["M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"], globe: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9z"],
   history: ["M12 21a9 9 0 1 0-8.5-6M3 9.5V15h5.5M12 7.5V12l3 2"], browse: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM15.5 8.5l-2 5-5 2 2-5z"],
   chevron: ["M7 10l5 5 5-5"], logout: ["M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"],
-  filter: ["M4 6h16M7 12h10M10 18h4"],
+  filter: ["M4 6h16M7 12h10M10 18h4"], tag: ["M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01"],
   folder: ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"], select: ["M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 17l2 2 4-4"],
 };
 function icon(name, cls = "") {
@@ -225,7 +225,7 @@ function buildTabs() {
   nav.append(h("div", { class: "ind" }));
   if (!$("#dock .tviz")) $("#dock").prepend(h("canvas", { class: "tviz" }));
   for (const t of TABS) {
-    nav.append(h("button", { "data-tab": t.id, onclick: () => goTab(t.id) }, h("span", { class: "pill" }, icon(t.icon)), h("span", { class: "lbl" }, t.label)));
+    nav.append(h("button", { "data-tab": t.id, onclick: () => goTab(t.id) }, h("span", { class: "ahp" }, icon(t.icon)), h("span", { class: "lbl" }, t.label)));
   }
   setupTabDrag();
 }
@@ -542,7 +542,7 @@ function pageShell(title, { back = stack.length > 1, actions = [] } = {}) {
 // ---------------------------------------------------------------- filters (Albums, Artists, Songs, Favorites)
 const filt = { genres: new Set(), artists: new Set(), decades: new Set(), length: new Set(), fav: false, recent: false };
 const filtCount = () => filt.genres.size + filt.artists.size + filt.decades.size + filt.length.size + (filt.fav ? 1 : 0) + (filt.recent ? 1 : 0);
-const artistNames = (s) => [...(s.artist || "").split(/\s*,\s*/), s.albumartist || ""].map((x) => x.trim()).filter(Boolean);
+const artistNames = (s) => [...new Set([...splitArtists(s.artist), ...splitArtists(s.albumartist)])];
 const decadeOf = (s) => { const y = parseInt(s.year, 10); return y ? Math.floor(y / 10) * 10 : 0; };
 const lengthOf = (s) => (!s.duration ? "" : s.duration < 180 ? "short" : s.duration <= 300 ? "mid" : "long");
 const LENGTHS = { short: "Under 3 min", mid: "3 – 5 min", long: "Over 5 min" };
@@ -780,9 +780,8 @@ function albumCard(a) {
 }
 function emptyLibrary() {
   return h("div", { class: "empty" }, h("div", { class: "big" }, icon("note")), h("h3", {}, "Add your music"),
-    h("div", {}, "Pick songs from your phone, or add a music pack someone shared with you."),
-    h("div", { class: "acts" }, h("button", { class: "btn", onclick: pickSongs }, icon("add"), "Add Songs"),
-      h("button", { class: "btn tonal", onclick: pickPacks }, icon("pack"), "Add a Music Pack")));
+    h("div", {}, "Add songs from your phone, a music pack someone shared with you, or a YouTube link."),
+    h("div", { class: "acts" }, h("button", { class: "btn", onclick: () => addMusicMenu() }, icon("add"), "Add Music")));
 }
 
 // ============================================================ pages
@@ -918,7 +917,7 @@ function pageAlbum(key) {
   if (col) p.style.setProperty("--accent", col);
   p.style.background = `linear-gradient(color-mix(in srgb, var(--accent) 22%, transparent), transparent 420px)`;
   p.append(detailHero(art(a.cover, { small: false, label: a.title, cls: "bigart" }), a.title,
-    h("span", { onclick: () => push({ type: "artist", name: a.artist.split(",")[0].trim() }) }, a.artist),
+    h("span", { onclick: () => push({ type: "artist", name: a.artist }) }, a.artist),
     [a.year, plural(a.tracks.length, "song"), totalTime(a.tracks)].filter(Boolean).join(" · "), a.tracks, a.title, null, false, a.tracks.length < 5));
   p.append(songList(a.tracks, { num: true, ctx: a.title, dur: true, inAlbum: true, mix: a.tracks.length < 5 }));
   return withHeadPlay(p, p.querySelector(".hero"));
@@ -948,13 +947,15 @@ function similarArtists(name, songs) {
 function pageArtist(name) {
   const k = name.toLowerCase();
   const info = lib.artistInfo(name) || {};
-  const songs = [...lib.songs.values()].filter((s) => (s.albumartist || "").toLowerCase() === k || (s.artist || "").split(/\s*,\s*/).some((x) => x.toLowerCase() === k))
+  const songs = [...lib.songs.values()].filter((s) => artistNames(s).some((x) => x.toLowerCase() === k))
     .sort((a, b) => (a.album || "").localeCompare(b.album || "") || (a.track || 0) - (b.track || 0));
+  const isLead = (s) => (primaryArtist(s.artist) || primaryArtist(s.albumartist)).toLowerCase() === k;      // the first-named artist: the song belongs to them
   const p = pageShell("");
   const albums = [...new Set(songs.map((s) => albumKey(s)))].map((key) => lib.albumMap.get(key)).filter(Boolean);
   const newest = (x, y) => String(y.year || "").localeCompare(String(x.year || "")) || x.title.localeCompare(y.title);
-  const own = albums.filter((a) => a.artist.toLowerCase() === k).sort(newest);
-  const featured = albums.filter((a) => a.artist.toLowerCase() !== k).sort(newest);
+  const isOwn = (a) => a.artist.toLowerCase() === k || splitArtists(a.tracks[0]?.albumartist).some((x) => x.toLowerCase() === k);   // (an album credited to several artists is theirs too)
+  const own = albums.filter(isOwn).sort(newest);
+  const featured = albums.filter((a) => !isOwn(a)).sort(newest);
   const full = own.filter((a) => a.tracks.length > 6), small = own.filter((a) => a.tracks.length <= 6);
 
   const img = info.image && lib.cover(info.image) ? info.image : songs.find((s) => s.cover)?.cover;
@@ -968,19 +969,19 @@ function pageArtist(name) {
   const shuffle = () => { player.playList(songs.map((s) => s.id), 0, { shuffle: true }); ctxLabel = name; };
   const radio = () => playWithMix(songs, 0, name);
   const acts = h("div", { class: "ah-acts" },
-    h("button", { class: "pill solid", onclick: shuffle }, icon("shuffle"), "Shuffle"),
-    h("button", { class: "pill", onclick: radio }, icon("spark"), "Radio"),
-    native && h("button", { class: "pill round", onclick: () => artistFromYouTube(name), "aria-label": info.channel ? "Get more from YouTube Music" : "Link to YouTube Music" }, icon("globe")));
+    h("button", { class: "ahp solid", onclick: shuffle }, icon("shuffle"), "Shuffle"),
+    h("button", { class: "ahp", onclick: radio }, icon("spark"), "Radio"),
+    native && h("button", { class: "ahp round", onclick: () => artistFromYouTube(name), "aria-label": info.channel ? "Get more from YouTube Music" : "Link to YouTube Music" }, icon("globe")));
   p.append(hero, acts);
 
-  // songs: the first five, then "Show all" (favourites first, otherwise album order)
-  const ordered = [...songs].sort((a, b) => (lib.isFav(b.id) ? 1 : 0) - (lib.isFav(a.id) ? 1 : 0));
+  // songs: the first five, then "Show all" (favourites first, then the songs that belong to this artist, then the ones they are on)
+  const ordered = [...songs].sort((a, b) => (lib.isFav(b.id) ? 1 : 0) - (lib.isFav(a.id) ? 1 : 0) || (isLead(b) ? 1 : 0) - (isLead(a) ? 1 : 0));
   const box = h("div", { class: "list" });
   const SHOWN = 5;
   ordered.slice(0, SHOWN).forEach((s, i) => box.append(songRow(s, i, ordered, { ctx: name })));
   p.append(h("div", { class: "section-t" }, "Songs"), box);
   if (ordered.length > SHOWN) {
-    const more = h("button", { class: "pill more-songs" }, `Show all ${ordered.length} songs`);
+    const more = h("button", { class: "ahp more-songs" }, `Show all ${ordered.length} songs`);
     more.onclick = () => { ordered.slice(SHOWN).forEach((s, i) => box.append(songRow(s, SHOWN + i, ordered, { ctx: name }))); more.remove(); };
     p.append(h("div", { class: "ah-more" }, more));
   }
@@ -1062,7 +1063,6 @@ function settingsModel(sizeText) {
       { id: "add", type: "action", symbol: "plus", title: "Add Songs", subtitle: "Pick music files from your phone" },
       { id: "pack", type: "action", symbol: "shippingbox", title: "Add Music Pack", subtitle: "Add a …-musicpack.zip someone shared with you" },
       { id: "link", type: "action", symbol: "link", title: "Add from Link (Experimental)", subtitle: "Paste a YouTube or YouTube Music song, album, playlist or artist link" },
-      { id: "ytacct", type: "action", symbol: "person.crop.circle", title: "YouTube Account", subtitle: ytSignedInNow() ? "Signed in · used by Add from Link · tap to sign out" : "Sign in if YouTube asks you to (for Add from Link)" },
       { id: "covers", type: "action", symbol: "globe", title: "Find Missing Covers", subtitle: "Look up album art online" },
       { id: "genres", type: "action", symbol: "magnifyingglass", title: "Find Genres", subtitle: missingGenres ? `Look up genres online for ${plural(missingGenres, "song")} that don't have one` : "Every song has a genre" },
       { id: "autofill", type: "toggle", symbol: "wand.and.stars", title: "Fill In Song Info Automatically", subtitle: "When you add songs, look up missing albums, years, genres and covers", value: s.autofill !== false },
@@ -1105,16 +1105,12 @@ async function settingAction(id) {
   if (id === "add") pickSongs();
   else if (id === "pack") pickPacks();
   else if (id === "link") addFromLink();
-  else if (id === "ytacct") youtubeAccount();
   else if (id === "covers") findCovers(true);
   else if (id === "genres") findGenres();
   else if (id === "diag") showDiagnostics();
   else if (id === "removeAll") {
-    if (!lib.songs.size) return;
-    if (await confirmBox("Remove all music?", `This deletes all ${plural(lib.songs.size, "song")} from this app. Music packs and files on your phone aren't touched.`, "Remove All")) {
-      player.pause(); await lib.removeSongs([...lib.songs.keys()]); player.queue = []; player.index = -1; updateMini(); refresh(); snack("Removed all music");
-      nc.settings(settingsModel());
-    }
+    await removeAllMusic();
+    nc.settings(settingsModel());
   }
 }
 
@@ -1126,16 +1122,9 @@ function pageSettings() {
     return b;
   };
   const libGroup = h("div", { class: "group" }, h("h4", {}, "Your Music"),
-    item("add", "Add Songs", "Pick music files from your phone", pickSongs),
-    item("pack", "Add Music Pack", "Add a …-musicpack.zip someone shared with you", pickPacks),
-    item("globe", "Add from Link (Experimental)", "Paste a YouTube or YouTube Music song, album, playlist or artist link", addFromLink),
-    item("artist", "YouTube Account", ytSignedInNow() ? "Signed in · tap to sign out" : "Sign in if YouTube asks you to (for Add from Link)", () => youtubeAccount()),
-    item("globe", "Find Missing Covers", "Look up album art online", () => findCovers(true)),
-    item("search", "Find Genres", (() => { const n = [...lib.songs.values()].filter((x) => !genresOf(x).length).length; return n ? `Look up genres online for ${plural(n, "song")} that don't have one` : "Every song has a genre"; })(), () => findGenres()));
-  const sizeLine = h("div", { class: "s" }, "…");
-  usage().then((u) => { sizeLine.textContent = `${plural(lib.songs.size, "song")} · ${plural(lib.albums.length, "album")}` + (u.usage ? ` · ${fmtSize(u.usage)} used` : ""); });
-  libGroup.append(h("div", { class: "item" }, icon("folder"), h("div", { class: "meta" }, h("div", { class: "t" }, "Library"), sizeLine)));
-  libGroup.append(item("info", "Diagnostics", "What the app did recently, for troubleshooting", showDiagnostics));
+    item("add", "Add Music", "Songs, music packs or a YouTube link", () => addMusicMenu()),
+    item("folder", "Library", "Tap for options", () => libraryMenu()),
+    item("info", "Diagnostics", "What the app did recently, for troubleshooting", showDiagnostics));
 
   const eqViz = h("div", { class: "eqviz" });
   const drawEq = () => {
@@ -1174,10 +1163,6 @@ function pageSettings() {
       h("div", { class: "s" }, "After you stop scrolling, lyrics glide back to the current line and the player comes back (sideways) after"))), lrChips);
 
   const sw = h("span", { class: "switch" + (motion() ? " on" : "") });
-  const afSw = h("span", { class: "switch" + (s.autofill !== false ? " on" : "") });
-  libGroup.append(item("search", "Fill In Song Info Automatically", "When you add songs, look up missing albums, years, genres and covers", () => {
-    s.autofill = s.autofill === false; lib.saveMeta(); afSw.classList.toggle("on", s.autofill !== false);
-  }, afSw));
   const pinSw = h("span", { class: "switch" + (s.tuckPinned ? " on" : "") });
   playGroup.append(item("folder", "Keep Media Bar Tucked", "Sideways: keep the media bar tucked under the tabs as just the album cover", () => {
     miniTuck.pin(!s.tuckPinned); pinSw.classList.toggle("on", !!s.tuckPinned);
@@ -1186,15 +1171,66 @@ function pageSettings() {
     item("spark", "Motion Effects", "Sliding pages, glow, living background", () => {
       s.motion = !motion(); lib.saveMeta(); sw.classList.toggle("on", motion()); document.body.classList.toggle("nomotion", !motion());
     }, sw));
-  const danger = h("div", { class: "group" }, h("h4", {}, "Storage"),
-    item("trash", "Remove All Music", "Deletes the songs stored in this app", async () => {
-      if (!lib.songs.size) return;
-      if (await confirmBox("Remove all music?", `This deletes all ${plural(lib.songs.size, "song")} from this app. Music packs and files on your phone aren't touched.`, "Remove All")) {
-        player.pause(); await lib.removeSongs([...lib.songs.keys()]); player.queue = []; player.index = -1; updateMini(); refresh(); snack("Removed all music");
-      }
-    }));
-  p.append(libGroup, playGroup, eqGroup, look, danger, h("div", { class: "empty", style: { padding: "10px 30px 40px", fontSize: "12px" } }, "AuraOS Music for Android · music packs work with the desktop app too"));
+  p.append(libGroup, playGroup, eqGroup, look, h("div", { class: "empty", style: { padding: "10px 30px 40px", fontSize: "12px" } }, "AuraOS Music for Android · music packs work with the desktop app too"));
   return p;
+}
+
+// ---- popups: Add Music, Library options, Remove All Music
+/** a bottom sheet of rows: { icon, label, sub, ok (green check by the title), right (element), run, stay, danger, gap } */
+function menuSheet(head, rows) {
+  const box = h("div");
+  if (head) box.append(head);
+  for (const r of rows) {
+    if (!r) continue;
+    if (r.gap) { box.append(h("div", { class: "menu-gap" })); continue; }
+    box.append(h("button", { class: "act" + (r.danger ? " danger" : ""), onclick: () => { if (!r.stay) closeSheet(true); r.run(); } }, icon(r.icon),
+      h("div", { class: "meta" }, h("div", { class: "t" }, r.label), r.sub && h("div", { class: "s" }, r.sub)), r.right));
+  }
+  openSheet(box);
+}
+
+function addMusicMenu() {
+  menuSheet(h("div", { class: "sh-head" }, icon("add"), h("div", { class: "meta" }, h("div", { class: "t" }, "Add Music"), h("div", { class: "s" }, "Choose how to add music"))), [
+    { icon: "note", label: "Add Songs", sub: "Pick music files from your phone", run: pickSongs },
+    { icon: "pack", label: "Add Music Pack", sub: "Add a …-musicpack.zip someone shared with you", run: pickPacks },
+    { icon: "globe", label: "Add from Link", sub: "Paste a YouTube or YouTube Music song, album, playlist or artist link (experimental)", run: () => addFromLink() },
+  ]);
+}
+
+function libraryMenu() {
+  const s = lib.meta.settings;
+  const missing = [...lib.songs.values()].filter((x) => !genresOf(x).length).length;
+  const counts = h("div", { class: "s" }, `${plural(lib.songs.size, "song")} · ${plural(lib.albums.length, "album")}`);
+  usage().then((u) => { if (u.usage) counts.textContent += ` · ${fmtSize(u.usage)} used`; });
+  const afSw = h("span", { class: "switch" + (s.autofill !== false ? " on" : "") });
+  menuSheet(h("div", { class: "sh-head" }, icon("folder"), h("div", { class: "meta" }, h("div", { class: "t" }, "Library"), counts)), [
+    { icon: "image", label: "Find Missing Covers", sub: "Look up album art online", run: () => findCovers(true) },
+    { icon: "tag", label: "Find Genres", sub: missing ? `Look up genres online for ${plural(missing, "song")} that don't have one` : "Every song has a genre", run: () => findGenres() },
+    { icon: "spark", label: "Fill In Song Info Automatically", sub: "When you add songs, look up missing albums, years, genres and covers", right: afSw, stay: true,
+      run: () => { s.autofill = s.autofill === false; lib.saveMeta(); afSw.classList.toggle("on", s.autofill !== false); } },
+    { gap: true },
+    { icon: "trash", label: "Remove All Music", sub: "Deletes the songs stored in this app", danger: true, run: () => removeAllMusic() },
+  ]);
+}
+
+/** "Are you sure?" with how much music is in the library, two buttons, and a small note at the bottom of the screen */
+function confirmRemoveAll() {
+  const total = Math.round([...lib.songs.values()].reduce((a, x) => a + (x.duration || 0), 0));
+  const msg = `You have ${plural(Math.floor(total / 3600), "hour")}, ${plural(Math.floor((total % 3600) / 60), "minute")} and ${plural(total % 60, "second")} of music in your library.`;
+  if (nc.on) return confirmBox("Are you sure?", msg, "Yes delete my music");
+  return new Promise((res) => {
+    const note = h("div", { class: "legal-note" }, "wiimxd isn't responsible for the loss of your music");
+    const done = (v) => { note.remove(); closeSheet(true); res(v); };
+    openSheet(h("div", {}, h("h3", {}, "Are you sure?"), h("p", {}, msg), h("div", { class: "btns stack" },
+      h("button", { class: "btn tonal", onclick: () => done(false) }, "I changed my mind"),
+      h("button", { class: "btn danger", onclick: () => done(true) }, "Yes delete my music"))), { dialog: true, onClose: () => { note.remove(); res(false); } });
+    document.body.append(note);
+  });
+}
+async function removeAllMusic() {
+  if (!lib.songs.size) return snack("There's no music to remove");
+  if (!(await confirmRemoveAll())) return;
+  player.pause(); await lib.removeSongs([...lib.songs.keys()]); player.queue = []; player.index = -1; updateMini(); refresh(); snack("Removed all music");
 }
 
 // ============================================================ menus & actions
@@ -1210,7 +1246,7 @@ function songMenu(s, opts = {}) {
     { icon: fav ? "heartf" : "heart", label: fav ? "Remove from Favorites" : "Add to Favorites", run: () => { lib.toggleFav([s.id]); refresh(); updateNpFav(); } },
     { icon: "playlist", label: "Add to Playlist…", run: () => pickPlaylist([s]) },
     !opts.inAlbum && al && { icon: "album", label: "Go to Album", run: () => { closeNp(); push({ type: "album", key: al.key }); } },
-    s.artist && { icon: "artist", label: "Go to Artist", run: () => { closeNp(); push({ type: "artist", name: s.artist.split(",")[0].trim() }); } },
+    ...artistNames(s).slice(0, 4).map((n, i, all) => ({ icon: "artist", label: all.length > 1 ? `Go to ${n}` : "Go to Artist", run: () => { closeNp(); push({ type: "artist", name: n }); } })),
     { icon: "share", label: "Share as Music Pack…", run: () => sharePack([s], s.title) },
     opts.playlist && { icon: "close", label: "Remove from This Playlist", run: () => { const pl = lib.meta.playlists[opts.playlist]; pl.splice(pl.indexOf(s.id), 1); lib.saveMeta(); refresh(); } },
     { icon: "trash", label: "Remove Song…", danger: true, run: () => removeSongs([s], "this song") },
@@ -1320,7 +1356,7 @@ function lookupDialog(target) {
   const isAlbum = !!target.album;
   const a = target.album, s0 = target.song;
   const like = isAlbum ? { album: a.title, artist: a.artist, tracks: a.tracks.length } : s0;
-  const first = isAlbum ? `${a.title} ${a.artist !== "Unknown Artist" ? a.artist : ""}` : `${s0.title} ${(s0.artist || "").split(",")[0]}`;
+  const first = isAlbum ? `${a.title} ${a.artist !== "Unknown Artist" ? a.artist : ""}` : `${s0.title} ${primaryArtist(s0.artist)}`;
   const box = h("div", { class: "lookup" });
   const input = h("input", { class: "field", value: first.trim(), enterkeyhint: "search", placeholder: isAlbum ? "Album and artist" : "Song and artist" });
   const status = h("div", { class: "lk-status" });
@@ -1653,44 +1689,6 @@ async function importAudio(files) {
   refresh();
 }
 
-// ---- YouTube sign-in for Add from Link (the "enter a code at google.com/device" kind, like a TV)
-const ytSignedInNow = () => { try { return !!localStorage.getItem("auraos-yt-oauth"); } catch { return false; } };
-let ytSigningIn = false;
-async function youtubeAccount() {
-  const yt = await import("./youtube.js");
-  const again = () => { if (nc.on) nc.settings(settingsModel()); else if (stack.at(-1)?.type === "settings") refresh(); };
-  if (yt.ytSignedIn()) {
-    if (await confirmBox("Sign out of YouTube?", "Add from Link will stop using your YouTube account. You can sign in again any time.", "Sign Out")) {
-      await yt.ytSignOut(); snack("Signed out of YouTube"); again();
-    }
-    return;
-  }
-  if (ytSigningIn) return snack("Already waiting for you to sign in…");
-  ytSigningIn = true;
-  const pb = progressBox("Signing in to YouTube");
-  pb.set(0, "Getting a sign-in code…");
-  try {
-    await yt.ytSignIn(async (d) => {
-      const url = d.verification_url || "https://www.google.com/device";
-      try { await navigator.clipboard.writeText(d.user_code); } catch {}
-      pb.set(0.5, `Code ${d.user_code} — enter it at ${url.replace(/^https?:\/\//, "")} (copied)`);
-      diag.step = `Your code: ${d.user_code}`;
-      const go = await confirmBox("Sign in to YouTube", `On the page that opens, sign in with your Google account and enter this code:\n\n${d.user_code}\n\n(It's copied — just paste it.) Then come back here; the app finishes by itself.`, "Open Sign-In Page");
-      if (go) window.open(url, "_blank");
-    });
-    pb.close();
-    snack("Signed in to YouTube — Add from Link will use your account");
-    nc.haptic?.("success");
-  } catch (e) {
-    pb.close();
-    diag.log("YouTube sign-in: " + (e.message || e));
-    snack("Couldn't sign in to YouTube: " + (e.message || e), "Details", showDiagnostics, 10000);
-  } finally {
-    ytSigningIn = false;
-    again();
-  }
-}
-
 // ---- EXPERIMENTAL: add a song / album / playlist / artist from a YouTube or YouTube Music link (see youtube.js)
 let linkBusy = false;
 async function addFromLink(kind) {
@@ -1869,7 +1867,7 @@ function browseResults(q, useRecent) {
 // ============================================================ mixes: a song you searched for, or a short album, keeps going with similar songs
 function similarSongs(seeds, n = 25) {
   const seedIds = new Set(seeds.map((s) => s.id));
-  const names = (s) => [...(s.artist || "").split(/\s*,\s*/), s.albumartist || ""].map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const names = (s) => artistNames(s).map((x) => x.toLowerCase());
   const artists = new Set(seeds.flatMap(names));
   const genres = new Set(seeds.flatMap((s) => genresOf(s).map((g) => g.toLowerCase())));
   const years = seeds.map((s) => parseInt(s.year, 10)).filter(Boolean);
@@ -2119,7 +2117,13 @@ function buildNp() {
   np.wrapEl = wrap;
   el.append(np.bg, np.bg2l, h("div", { class: "bg2" }), np.glow, np.viz, wrap);
   lyrView = new LyricsView(np.lyrCanvas);
-  np.artist.onclick = () => { const s = player.current; if (s?.artist) { closeNp(); push({ type: "artist", name: s.artist.split(",")[0].trim() }); } };
+  np.artist.onclick = () => {
+    const s = player.current, names = s ? artistNames(s) : [];
+    if (!names.length) return;
+    const go = (n) => { closeNp(); push({ type: "artist", name: n }); };
+    if (names.length === 1) return go(names[0]);
+    actionSheet(null, names.slice(0, 6).map((n) => ({ icon: "artist", label: n, run: () => go(n) })));
+  };
 
   // seek bar
   const seekTo = (e) => {
@@ -2646,7 +2650,7 @@ async function loadLyrics() {
 }
 
 function lyricsPicker(s) {
-  const input = h("input", { class: "field", value: `${cleanTitle(s.title)} ${(s.artist || "").split(",")[0]}`.trim(), enterkeyhint: "search" });
+  const input = h("input", { class: "field", value: `${cleanTitle(s.title)} ${primaryArtist(s.artist)}`.trim(), enterkeyhint: "search" });
   const status = h("div", { class: "lk-status" });
   const list = h("div", { class: "lk-list" });
   const go = async () => {

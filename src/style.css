@@ -716,15 +716,15 @@ html, body, #app { background: var(--bg); }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .ah-txt .info { margin-top: 6px; font-size: 13.5px; color: rgba(255, 255, 255, .78); font-weight: 500; }
 .ah-acts { display: flex; align-items: center; gap: 10px; padding: 8px 18px 4px; }
-.pill { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: 20px;
+.ahp { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: 20px;
   font-weight: 700; font-size: 14.5px; color: var(--text); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .3); transition: transform .15s var(--spring), background .15s; }
-.pill:active { transform: scale(.95); background: rgba(255, 255, 255, .08); }
-.pill svg.i { width: 19px; height: 19px; }
-.pill.solid { background: #fff; color: #0b0b0e; box-shadow: none; }
-.pill.solid:active { background: #e6e6ea; }
-.pill.round { width: 40px; padding: 0; margin-left: auto; }
+.ahp:active { transform: scale(.95); background: rgba(255, 255, 255, .08); }
+.ahp svg.i { width: 19px; height: 19px; }
+.ahp.solid { background: #fff; color: #0b0b0e; box-shadow: none; }
+.ahp.solid:active { background: #e6e6ea; }
+.ahp.round { width: 40px; padding: 0; margin-left: auto; }
 .ah-more { padding: 6px 18px 0; }
-.ah-more .pill { height: 36px; font-size: 13.5px; }
+.ah-more .ahp { height: 36px; font-size: 13.5px; }
 .ah-about { margin: 0 18px; color: var(--sub); font-size: 14px; line-height: 1.5; white-space: pre-line; }
 .ah-about.clamp { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .ah-genres { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 18px 0; }
@@ -738,5 +738,15 @@ html, body, #app { background: var(--bg); }
   .ah-txt h2 { font-size: 44px; }
   .ah-acts, .ah-more { padding-left: 24px; padding-right: 24px; }
   .ah-about, .ah-genres { margin-left: 24px; margin-right: 24px; max-width: 760px; }
-  .pill.round { margin-left: 0; }
+  .ahp.round { margin-left: 0; }
 }
+
+/* popups: divider, the stacked remove-all buttons and the small note under them */
+#sheet .act .t { display: flex; align-items: center; gap: 8px; }
+#sheet .act .switch { flex: none; }
+.menu-gap { height: 1px; background: var(--line); margin: 6px 20px; }
+#sheet .btns.stack { flex-direction: column; align-items: stretch; gap: 10px; }
+#sheet .btns.stack .btn { width: 100%; height: 48px; }
+.btn.danger { background: #ff6b63; color: #1d0907; }
+.legal-note { position: fixed; left: 0; right: 0; bottom: calc(14px + var(--safe-b)); z-index: 95; text-align: center; font-size: 11.5px;
+  color: rgba(255, 255, 255, .6); padding: 0 24px; pointer-events: none; }

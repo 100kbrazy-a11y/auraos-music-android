@@ -18,7 +18,7 @@ export function safeName(s, fallback = "Unknown") {
 
 /** Same layout as the desktop app: Artist/Album/NN Title.ext */
 export function organizedPath(t, ext) {
-  const artist = t.albumartist || primaryArtist(t.artist) || "Unknown Artist";
+  const artist = primaryArtist(t.albumartist) || primaryArtist(t.artist) || "Unknown Artist";
   const album = t.album || "Unknown Album";
   const n = +t.track || 0, d = +t.disc || 0;
   const pre = n ? (d > 1 ? `${d}-${String(n).padStart(2, "0")} ` : `${String(n).padStart(2, "0")} `) : "";
@@ -36,7 +36,33 @@ function fromFilename(name) {
   return out;
 }
 
-export const primaryArtist = (a) => String(a || "").split(/\s*,\s*/)[0].trim();
+// Names that contain a separator but are ONE artist (kept whole instead of being split in two)
+const ONE_ARTIST = ["Tyler, The Creator", "Earth, Wind & Fire", "Earth, Wind and Fire", "AC/DC", "Simon & Garfunkel", "Hall & Oates",
+  "Brooks & Dunn", "Crosby, Stills, Nash & Young", "Crosby, Stills & Nash", "Blood, Sweat & Tears", "Emerson, Lake & Palmer",
+  "Florence + The Machine", "Florence & The Machine", "Mumford & Sons", "Of Monsters and Men", "Bell Biv DeVoe", "Sly & The Family Stone",
+  "Kool & The Gang", "Huey Lewis & The News", "Prince & The Revolution", "Smokey Robinson & The Miracles", "Ike & Tina Turner"];
+/**
+ * All the artists named in a credit, in order: "Ken Carson, Destroy Lonely", "Ken Carson & Destroy Lonely",
+ * "Ken Carson x Destroy Lonely", "Ken Carson feat. Destroy Lonely", "A; B" → ["Ken Carson", "Destroy Lonely"].
+ * The first one is who the song belongs to.
+ */
+export function splitArtists(credit) {
+  let s = String(credit || "").replace(/[()[\]]/g, " ").replace(/\s+/g, " ").trim();
+  if (!s) return [];
+  const keep = [];
+  for (const name of ONE_ARTIST) {                              // protect known one-artist names while splitting
+    const i = s.toLowerCase().indexOf(name.toLowerCase());
+    if (i >= 0) { keep.push(s.slice(i, i + name.length)); s = s.slice(0, i) + `\u0000${keep.length - 1}\u0000` + s.slice(i + name.length); }
+  }
+  const out = [], seen = new Set();
+  for (let part of s.split(/\s*[,;]\s*|\s+(?:&|\+|×|\/|x)\s+|\s+(?:[Ff]eat\.?|[Ff]t\.?|[Ff]eaturing|FEAT\.?|FT\.?)\s+/)) {
+    part = part.replace(/\u0000(\d+)\u0000/g, (_, n) => keep[+n]).trim();
+    const k = part.toLowerCase();
+    if (part && !seen.has(k)) { seen.add(k); out.push(part); }
+  }
+  return out;
+}
+export const primaryArtist = (a) => splitArtists(a)[0] || "";
 
 /** Ask the browser's own decoder for the length when the tags don't say. */
 export function probeDuration(blob) {

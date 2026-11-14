@@ -49,41 +49,11 @@ async function client() {
       Platform.load({ ...Platform.shim, eval: (data) => new Function(data.output)() });
       const yt = await timed(Innertube.create({ fetch: nativeFetch, cache: new UniversalCache(false), retrieve_player: true }), 45000, "Connecting to YouTube");
       diag.log("YouTube: connected");
-      yt.session.on("auth", ({ credentials }) => saveCreds(credentials));
-      yt.session.on("update-credentials", ({ credentials }) => saveCreds(credentials));
-      const saved = savedCreds();
-      if (saved) {
-        try { await timed(yt.session.signIn(saved), 30000, "Signing in to YouTube"); yt.session.logged_in = false; diag.log("YouTube: signed in"); }
-        catch (e) { diag.log(`YouTube: saved sign-in didn't work (${e.message || e})`); if (/invalid|revoked|denied|expired/i.test(String(e.message))) saveCreds(null); }
-      }
+      try { localStorage.removeItem("auraos-yt-oauth"); } catch {}          // (a sign-in saved by an earlier build: gone)
       return { mod, yt };
     })();
   }
   try { return await ytp; } catch (e) { ytp = null; throw e; }
-}
-
-// ---- signing in (only if YouTube asks): the "enter a code at google.com/device" sign-in that TVs use.
-// The app keeps the sign-in (not your password) on the phone; Sign Out in Settings removes it.
-const AUTH_KEY = "auraos-yt-oauth";
-function savedCreds() { try { return JSON.parse(localStorage.getItem(AUTH_KEY) || "null"); } catch { return null; } }
-function saveCreds(c) { try { c ? localStorage.setItem(AUTH_KEY, JSON.stringify(c)) : localStorage.removeItem(AUTH_KEY); } catch {} }
-export function ytSignedIn() { return !!savedCreds(); }
-/** onCode({ user_code, verification_url }) is called with the code to enter; resolves once you've signed in. */
-export async function ytSignIn(onCode) {
-  const { yt } = await client();
-  if (yt.session.oauth?.oauth2_tokens && ytSignedIn()) return;
-  const pending = (d) => { diag.log("YouTube: sign-in code ready"); onCode?.(d); };
-  yt.session.on("auth-pending", pending);
-  try { await yt.session.signIn(); }
-  finally { yt.session.off("auth-pending", pending); }
-  saveCreds(yt.session.oauth?.oauth2_tokens);
-  yt.session.logged_in = false;                          // (switched on only for the TV identity, see fetchAudio)
-  diag.log("YouTube: signed in");
-}
-export async function ytSignOut() {
-  try { const { yt } = await client(); if (yt.session.oauth?.oauth2_tokens) { yt.session.logged_in = true; await yt.session.signOut(); } } catch (e) { diag.log(`YouTube: sign-out: ${e.message || e}`); }
-  saveCreds(null);
-  ytp = null;                                            // start fresh, signed out
 }
 
 // ---- proof of origin: YouTube now only hands out audio to players that pass its "BotGuard" check. The app's web view
@@ -248,12 +218,9 @@ async function fetchAudio(id, onFrac) {
   const { mod, yt } = await client();
   const reasons = [];
   const pot = await tokenFor(id);
-  const signedIn = !!yt.session.oauth?.oauth2_tokens && ytSignedIn();
-  // signed in: YouTube's TV identity carries the sign-in, so it goes first
-  const order = signedIn ? ["TV", "TV_SIMPLY", ...CLIENTS.filter((c) => c !== "TV_SIMPLY")] : CLIENTS;
+  const order = CLIENTS;
   for (const name of order) {
     if (!pot && WEBBY.has(name)) continue;                // these need the token
-    yt.session.logged_in = signedIn && name.startsWith("TV");   // (the TV sign-in only works with the TV identities)
     try {
       const info = await timed(yt.getBasicInfo(id, pot ? { client: name, po_token: pot } : { client: name }), 30000, `Asking YouTube (${name})`);
       const ps = info.playability_status;
@@ -267,16 +234,13 @@ async function fetchAudio(id, onFrac) {
       const size = +fmt.content_length || 0;
       diag.log(`YouTube: ${name} gave an address for ${id} (${Math.round(size / 1024)} KB)`);
       const file = await download(url, size, ua, id, onFrac, WEBBY.has(name) ? (name === "YTMUSIC" ? "https://music.youtube.com" : "https://www.youtube.com") : "");
-      yt.session.logged_in = false;
       const b = info.basic_info || {};
       return { ...file, client: name, meta: { title: b.title || "", artist: b.author || "", duration: b.duration || 0, thumb: lastThumb(b.thumbnail) } };
-    } catch (e) { yt.session.logged_in = false; reasons.push(`${name}: ${String(e.message || e).replace(/https:\/\/\S+/, "(address)")}`); diag.log("YouTube: " + reasons.at(-1)); }
+    } catch (e) { reasons.push(`${name}: ${String(e.message || e).replace(/https:\/\/\S+/, "(address)")}`); diag.log("YouTube: " + reasons.at(-1)); }
   }
-  yt.session.logged_in = false;
   const first = String(reasons[0] || "").replace(/(Error downloading file):.*/, "$1");    // (not the whole address)
-  const bot = reasons.some((r) => /not a bot|sign in|LOGIN_REQUIRED/i.test(r));
   throw new Error(`YouTube refused every way in (${first || "no answer"})` + (pot ? "" : ` · the player check failed: ${tokenWhy}`)
-    + (bot && !signedIn ? " · signing in to YouTube (Settings › YouTube Account) may help" : ""));
+  );
 }
 
 /** Download natively, straight to a file. iPhone: into Library/Incoming (the library moves it into place).
@@ -348,7 +312,7 @@ async function addTracks(tracks, lib, onProgress, opts = {}) {
       if (t.albumartist) info.albumartist = t.albumartist;
       if (t.year) info.year = String(t.year);
       const r = file.blob
-        ? await lib.addAudio(file.blob, `${tags.title}.m4a`, info, cover)
+        ? await lib.addAudio(file.blob, `${tags.title}.m4a`, info, cover, null, { trusted: true })
         : await lib.addLocalFile(file.rel, file.size, "m4a", { albumartist: "", disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", ...info }, cover);
       r.skipped ? skipped++ : (added++, songs.push(r.song));
       streak = 0;

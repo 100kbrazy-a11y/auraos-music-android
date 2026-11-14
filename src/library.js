@@ -1,6 +1,6 @@
 import { idb } from "./store.js";
 import { COLOR_VERSION } from "./tags.js";
-import { readTags, squareJpeg, coverColor, organizedPath, extOf, isAudio, safeName, primaryArtist, probeDuration } from "./tags.js";
+import { readTags, squareJpeg, coverColor, organizedPath, extOf, isAudio, safeName, primaryArtist, splitArtists, probeDuration } from "./tags.js";
 import { buildZip, readZip } from "./zip.js";
 import { putSongFile, songBlob, delSongFile, songURL, libraryFileURL, dropPicked } from "./files.js";
 import { diag, timed } from "./diag.js";
@@ -15,7 +15,7 @@ function hash(s) {
   return (h >>> 0).toString(36);
 }
 
-export const albumKey = (t) => `${t.albumartist || primaryArtist(t.artist) || "Unknown Artist"}\u0001${t.album || "Unknown Album"}`;
+export const albumKey = (t) => `${primaryArtist(t.albumartist) || primaryArtist(t.artist) || "Unknown Artist"}\u0001${t.album || "Unknown Album"}`;
 
 class Library extends EventTarget {
   songs = new Map();
@@ -71,7 +71,7 @@ class Library extends EventTarget {
     const map = new Map();
     for (const s of this.songs.values()) {
       const k = albumKey(s);
-      if (!map.has(k)) map.set(k, { key: k, title: s.album || "Unknown Album", artist: s.albumartist || primaryArtist(s.artist) || "Unknown Artist", tracks: [], cover: null, year: "", added: 0 });
+      if (!map.has(k)) map.set(k, { key: k, title: s.album || "Unknown Album", artist: primaryArtist(s.albumartist) || primaryArtist(s.artist) || "Unknown Artist", tracks: [], cover: null, year: "", added: 0 });
       const a = map.get(k);
       a.tracks.push(s);
       a.cover ||= s.cover;
@@ -91,8 +91,9 @@ class Library extends EventTarget {
   artists() {
     const m = new Map();
     for (const s of this.songs.values()) {
-      for (const name of (s.albumartist ? [s.albumartist] : []).concat((s.artist || "Unknown Artist").split(/\s*,\s*/))) {
-        if (!name) continue;
+      const names = [...splitArtists(s.albumartist), ...splitArtists(s.artist)];
+      if (!names.length) names.push("Unknown Artist");
+      for (const name of names) {
         const k = name.toLowerCase();
         if (!m.has(k)) m.set(k, { name, songs: new Set(), cover: null });
         const e = m.get(k);
@@ -155,9 +156,9 @@ class Library extends EventTarget {
 
   /** The same song (title, artist, length) already here, on whatever release. */
   existingAnywhere(t) {
-    const title = norm(t.title), artist = norm(String(t.artist || "").split(/\s*,\s*/)[0]);
+    const title = norm(t.title), artist = norm(primaryArtist(t.artist));
     for (const s of this.songs.values()) {
-      if (norm(s.title) === title && norm(String(s.artist || "").split(/\s*,\s*/)[0]) === artist
+      if (norm(s.title) === title && norm(primaryArtist(s.artist)) === artist
           && Math.abs((s.duration || 0) - (t.duration || 0)) < 2.5) return s;
     }
     return null;
@@ -174,9 +175,14 @@ class Library extends EventTarget {
   }
 
   /** Add one audio blob with info (from the file's tags, optionally overridden). Returns {song, skipped}. */
-  async addAudio(blob, name, override = {}, folderCover = null, source = null) {
-    diag.step = `Reading tags · ${name}`;
-    const { tags, picture } = await timed(readTags(blob, name), 60000, `Reading the tags of ${name}`);
+  async addAudio(blob, name, override = {}, folderCover = null, source = null, opts = {}) {
+    let tags, picture = null;
+    if (opts.trusted) {      // the info is already known (YouTube gave it): no need to read the file's tags
+      tags = { title: "", artist: "", album: "", albumartist: "", track: 0, disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", duration: 0, codec: "" };
+    } else {
+      diag.step = `Reading tags · ${name}`;
+      ({ tags, picture } = await timed(readTags(blob, name), 60000, `Reading the tags of ${name}`));
+    }
     for (const [k, v] of Object.entries(override)) if (v !== undefined && v !== null && v !== "") tags[k] = v;
     if (!tags.duration) { diag.step = `Measuring · ${name}`; tags.duration = await probeDuration(blob); }
     const dup = this.existing(tags);

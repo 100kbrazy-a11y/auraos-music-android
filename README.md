@@ -64,7 +64,7 @@ Works on Android 7 and newer. Keep **Android System WebView** up to date (Play S
 
 - **Add from Link (experimental):** paste a YouTube or YouTube Music link to a song, album or playlist. The
   songs are downloaded with tidy names and covers, and a playlist link becomes a playlist in the same order.
-  Sign in under **Settings › YouTube Account** if YouTube asks. YouTube changes its protections often, so this
+  YouTube changes its protections often, so this
   can stop working. If it fails, **Settings › Diagnostics › Share** shows why. Only add music you have the
   right to.
 - **Add an artist from YouTube Music (experimental):** paste a `music.youtube.com/channel/UC…` artist link (or use
