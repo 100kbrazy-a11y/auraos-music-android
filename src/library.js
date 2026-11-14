@@ -60,8 +60,6 @@ class Library extends EventTarget {
     }
   }
 
-
-
   saveMeta() {
     clearTimeout(this._mt);
     this._mt = setTimeout(() => idb.put("kv", this.meta, "meta"), 250);
@@ -177,7 +175,7 @@ class Library extends EventTarget {
   /** Add one audio blob with info (from the file's tags, optionally overridden). Returns {song, skipped}. */
   async addAudio(blob, name, override = {}, folderCover = null, source = null, opts = {}) {
     let tags, picture = null;
-    if (opts.trusted) {      // the info is already known (YouTube gave it): no need to read the file's tags
+    if (opts.trusted) {      // the info is already known (YouTube or musicpack.json gave it): no need to read the file's tags
       tags = { title: "", artist: "", album: "", albumartist: "", track: 0, disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", duration: 0, codec: "" };
     } else {
       diag.step = `Reading tags · ${name}`;
