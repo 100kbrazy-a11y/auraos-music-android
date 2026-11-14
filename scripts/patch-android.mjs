@@ -22,6 +22,24 @@ edit("android/app/src/main/AndroidManifest.xml", (s) => {
     if (!s.includes(`"${name}"`)) s = s.replace("</manifest>", `    <uses-permission android:name="${name}"${extra} />\n</manifest>`);
   }
   if (!s.includes("requestLegacyExternalStorage")) s = s.replace("<application", '<application\n        android:requestLegacyExternalStorage="true"');
+  // the apps you can drop songs / packs onto (Android 11+ only shows apps the manifest says it looks for)
+  if (!s.includes("<queries>")) s = s.replace("<application", `<queries>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="*/*" />
+        </intent>
+    </queries>
+
+    <application`);
+  // YouTube / YouTube Music › Share › AuraOS Music: the link comes straight in (Add from Link)
+  if (!s.includes("android.intent.action.SEND\"") || !s.includes('android:label="Add to AuraOS Music"')) {
+    s = s.replace(/(<activity[^>]*\.MainActivity[\s\S]*?)(<\/activity>)/, `$1    <intent-filter android:label="Add to AuraOS Music">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        $2`);
+  }
   // drag out to other apps: songs and music packs are handed over through this (read-only, per-drop permission)
   if (!s.includes(".DragOutProvider")) s = s.replace("</application>", `    <provider
             android:name=".DragOutProvider"
@@ -76,6 +94,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AuraPoPlugin.class);             // YouTube proof-of-origin tokens (Add from Link)
         registerPlugin(DragOutPlugin.class);            // drag songs / albums / playlists out to other apps
+        registerPlugin(ShareInPlugin.class);            // links shared to the app (YouTube › Share › AuraOS Music)
         super.onCreate(savedInstanceState);
         Window w = getWindow();
         WindowCompat.setDecorFitsSystemWindows(w, false);

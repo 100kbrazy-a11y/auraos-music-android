@@ -129,25 +129,32 @@ const justDoubled = (key) => performance.now() - (dblAt.get(key) || 0) < 120;
 
 // press: tap / long-press (and right-click on desktop)
 function press(el, tap, long, drag) {
-  let timer = 0, sx = 0, sy = 0, fired = false, dragged = false;
+  let timer = 0, sx = 0, sy = 0, fired = false, dragged = false, touching = false;
+  const fire = (e) => { if (fired) return; fired = true; clearTimeout(timer); el.classList.remove("pressed"); nc.haptic("press"); long?.(e); };
   el.addEventListener("pointerdown", (e) => {
     if (e.button > 0) return;
-    sx = e.clientX; sy = e.clientY; fired = false; dragged = false;
+    sx = e.clientX; sy = e.clientY; fired = false; dragged = false; touching = e.pointerType !== "mouse";
     el.classList.add("pressed");
-    if (long) timer = setTimeout(() => { fired = true; el.classList.remove("pressed"); nc.haptic("press"); long(e); }, 460);
+    if (long) timer = setTimeout(() => fire(e), 460);
   });
-  const cancel = () => { clearTimeout(timer); el.classList.remove("pressed"); };
+  const cancel = () => { clearTimeout(timer); el.classList.remove("pressed"); touching = false; };
   el.addEventListener("pointermove", (e) => {
     const d = Math.hypot(e.clientX - sx, e.clientY - sy);
-    // held, then the finger moves: pick it up and drag it out to another app (Android)
-    if (fired && drag && !dragged && d > 14 && canDragOut()) { dragged = true; closeSheet(true); startDragOut(drag()); return; }
+    // held, then the finger moves: pick it up and drag it (to another app, or onto one of the targets that appear)
+    if (fired && drag && !dragged && d > 12 && canDragOut()) { dragged = true; closeSheet(true); startDragOut(drag(), e); return; }
     if (!fired && d > 10) cancel();
   });
+  // once it's been held, moving the finger must not scroll the list (that would cancel the touch before the drag starts)
+  if (drag) el.addEventListener("touchmove", (e) => { if (fired) e.preventDefault(); }, { passive: false });
   el.addEventListener("pointerup", cancel);
   el.addEventListener("pointercancel", cancel);
-  el.addEventListener("pointerleave", () => clearTimeout(timer));
+  el.addEventListener("pointerleave", () => { if (!touching) clearTimeout(timer); });
   el.addEventListener("click", (e) => { if (fired) { e.preventDefault(); e.stopPropagation(); return; } tap?.(e); });
-  if (long) el.addEventListener("contextmenu", (e) => { e.preventDefault(); clearTimeout(timer); if (!fired) long(e); fired = false; });
+  if (long) el.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (touching) { fire(e); return; }          // the phone's own long-press: the same hold (keeps it "held" for dragging)
+    clearTimeout(timer); long(e); fired = false;  // a right-click
+  });
 }
 
 // ============================================================ snackbar, dialogs, sheets
@@ -237,14 +244,31 @@ function progressBox(title) {
     let f = 0, t = "", sent = "";
     const push = () => { const o = { fraction: f, text: t, step: diag.step, log: diag.recent(3) }; const k = JSON.stringify(o); if (k !== sent) { sent = k; nc.progressUpdate(o); } };
     const tick = setInterval(push, 250);
-    return { set(nf, nt) { f = nf; if (nt) t = nt; push(); }, close() { clearInterval(tick); diag.step = ""; nc.progressHide(); } };
+    return { set(nf, nt, sub) { f = nf; if (nt) t = nt; if (sub?.text) diag.step = sub.text; push(); }, close() { clearInterval(tick); diag.step = ""; nc.progressHide(); } };
   }
-  const bar = h("b"), txt = h("p", {}, "Starting…"), step = h("div", { class: "suffix" });
-  openSheet(h("div", {}, h("h3", {}, title), h("div", { class: "progress" }, bar), txt, step), { dialog: true });
+  // two bars: the whole job, and the thing it's doing right now (one song's download, a step…)
+  const bar = h("b"), txt = h("p", {}, "Starting…"), pct = h("span", { class: "pct" }, "0%");
+  const bar2 = h("b"), txt2 = h("div", { class: "suffix" }), sub = h("div", { class: "subtask" }, h("div", { class: "progress thin" }, bar2), txt2);
+  openSheet(h("div", { class: "progbox" }, h("h3", {}, title, pct), h("div", { class: "progress" }, bar), txt, sub), { dialog: true });
   $("#scrim").onclick = null;
   diag.step = ""; diag.log("progress: " + title);
-  const tick = setInterval(() => { if (step.textContent !== diag.step) step.textContent = diag.step; }, 250);   // what it's doing right now
-  return { set(f, t) { bar.style.width = Math.round(f * 100) + "%"; if (t) txt.textContent = t; }, close() { clearInterval(tick); diag.step = ""; closeSheet(true); } };
+  let subSet = 0;
+  // without its own sub-task, the second line shows what the app is doing right now
+  const tick = setInterval(() => { if (performance.now() - subSet > 1500 && txt2.textContent !== diag.step) { txt2.textContent = diag.step; sub.classList.toggle("nobar", true); } }, 250);
+  return {
+    set(f, t, s2) {
+      const p = Math.max(0, Math.min(1, f));
+      bar.style.width = (p * 100).toFixed(1) + "%"; pct.textContent = Math.floor(p * 100) + "%";
+      if (t) txt.textContent = t;
+      if (s2) {
+        subSet = performance.now();
+        sub.classList.toggle("nobar", s2.f == null);
+        if (s2.f != null) bar2.style.width = (Math.max(0, Math.min(1, s2.f)) * 100).toFixed(1) + "%";
+        if (s2.text) txt2.textContent = s2.text;
+      }
+    },
+    close() { clearInterval(tick); diag.step = ""; closeSheet(true); },
+  };
 }
 function showDiagnostics() {
   const pre = h("pre", { class: "diag" }, diag.text() || "Nothing logged yet.");
@@ -1610,6 +1634,14 @@ async function sharePack(songs, defTitle, playlist) {
   }
 }
 
+// ---- YouTube / YouTube Music › Share › Add to AuraOS Music: the link comes straight in, no copying and pasting
+if (native && Capacitor.getPlatform() === "android") {
+  const ShareIn = registerPlugin("ShareIn");
+  const take = (t) => { if (!t) return; diag.log("shared to the app: " + String(t).slice(0, 120)); setTimeout(() => addFromLink(String(t)), 300); };
+  ShareIn.addListener("shared", ({ text }) => take(text));
+  setTimeout(() => ShareIn.take().then(({ text }) => take(text)).catch(() => {}), 900);   // (shared while the app was closed)
+}
+
 // ---- drag out to other apps (Android): hold a song, album or playlist, then move your finger. A song goes as its
 // real audio file; an album or playlist becomes a music pack, made when you drop it (a small window over the other
 // app asks its name and shows progress: the only time the app draws over other apps, and only with permission).
@@ -1622,8 +1654,114 @@ function wireDragOut() {
   dragWired = true;
   DragOut.addListener("packRequest", ({ token, title }) => makeDroppedPack(token, title));
   DragOut.addListener("packCancel", ({ token }) => { dragJobs.delete(token); nc.haptic("soft"); });
-  DragOut.addListener("dropped", ({ token }) => { const j = dragJobs.get(token); if (j) { nc.haptic("success"); snack(`Sent “${j.label}”`); } });
+  DragOut.addListener("dropped", ({ token }) => { const j = dragJobs.get(token); if (j && !j.inApp) { nc.haptic("success"); snack(`Sent “${j.label}”`); } });
+  // following the drag over our own screen: the drop targets light up under it
+  DragOut.addListener("dragMove", ({ x, y }) => dropBar.hover(x, y));
+  DragOut.addListener("dragLeave", () => dropBar.hover(-1, -1));
+  DragOut.addListener("dragDrop", ({ token, x, y }) => dropBar.drop(token, x, y));
+  DragOut.addListener("dragEnd", ({ token, result, here }) => {
+    dropBar.hide();
+    const j = dragJobs.get(token);
+    if (j?.kind === "pack" && result && !here) askOverlayOnce();      // dropped into another app: offer to name packs there next time
+  });
 }
+
+/** the targets that slide down while you drag: Save to Downloads, then the apps you share with most */
+const targetCache = new Map();
+const dropBar = {
+  el: null, hot: null,
+  async show(job) {
+    this.hide(true);
+    const save = h("div", { class: "dt", "data-save": "1" }, h("div", { class: "ic" }, icon("folder")), h("span", {}, "Save to Downloads"));
+    const row = h("div", { class: "dts" }, save);
+    this.el = h("div", { id: "dropbar" }, h("div", { class: "hint" }, `Drop “${job.label}” on an app`), row,
+      h("div", { class: "sub" }, "…or into another app open beside this one"));
+    document.body.append(this.el);
+    requestAnimationFrame(() => this.el?.classList.add("on"));
+    const key = job.mime;
+    let list = targetCache.get(key);
+    if (!list || Date.now() - list.at > 60000) {
+      try { list = { at: Date.now(), t: (await DragOut.targets({ mime: job.mime, max: 6 })).targets || [] }; targetCache.set(key, list); }
+      catch { list = { t: [] }; }
+    }
+    if (!this.el) return;
+    for (const t of list.t) {
+      const d = h("div", { class: "dt" }, h("div", { class: "ic" }, t.icon ? h("img", { src: t.icon, alt: "" }) : icon("share")), h("span", {}, t.label));
+      d._t = t;
+      row.append(d);
+    }
+  },
+  at(x, y) {
+    if (!this.el) return null;
+    for (const d of this.el.querySelectorAll(".dt")) {
+      const r = d.getBoundingClientRect();
+      if (x >= r.left - 6 && x <= r.right + 6 && y >= r.top - 10 && y <= r.bottom + 10) return d;
+    }
+    return null;
+  },
+  hover(x, y) {
+    const d = this.at(x, y);
+    if (d === this.hot) return;
+    this.hot?.classList.remove("hot");
+    this.hot = d;
+    if (d) { d.classList.add("hot"); nc.haptic("tick"); }
+  },
+  drop(token, x, y) {
+    const d = this.at(x, y);
+    const job = dragJobs.get(token);
+    this.hide();
+    if (!job) return;
+    if (!d) return snack("Drop it on one of the apps at the top (or into an app open beside this one)");
+    nc.haptic("thud");
+    job.inApp = true;
+    runDropTarget(token, job, d.dataset.save ? null : d._t);
+  },
+  hide(now) {
+    const el = this.el;
+    this.el = null; this.hot = null;
+    if (!el) return;
+    if (now) return el.remove();
+    el.classList.remove("on");
+    setTimeout(() => el.remove(), 320);
+  },
+};
+
+/** dropped on one of our targets: save it, or hand it to that app (a pack is named and made here first) */
+async function runDropTarget(token, job, target) {
+  try {
+    if (job.kind === "song") {
+      if (!target) {
+        const blob = await lib.fileBlob(job.song);
+        const r = await saveFile(blob, job.name);
+        return snack(`Saved “${job.label}”${r?.where ? " to " + r.where : ""}`);
+      }
+      await job.ready;                                   // (the file is written as soon as the drag starts)
+      await DragOut.send({ token, pkg: target.pkg, cls: target.cls });
+      return;
+    }
+    const name = await prompt("Name your music pack", `${plural(job.songs.length, "song")} from “${job.label}”`, job.label, "Pack name", target ? `Send to ${target.label}` : "Save");
+    if (!name) return;
+    const pb = progressBox(`Making “${name}”`);
+    try {
+      const pack = await lib.buildPack(name, job.songs, job.playlist ? name : null, (f, t) => pb.set(f * 0.7, t || `Packing ${plural(job.songs.length, "song")}…`));
+      const file = `${safeFile(name)}-musicpack.zip`;
+      if (!target) {
+        pb.set(0.75, "Saving…");
+        const r = await saveFile(pack.blob, file, (f) => pb.set(0.75 + f * 0.25, "Saving…"));
+        pb.close();
+        return snack(`Saved the music pack “${name}”${r?.where ? " to " + r.where : ""}`);
+      }
+      const uri = await writeCacheFile(`dragout/${token}/pack.zip`, pack.blob, (f) => pb.set(0.7 + f * 0.3, `Handing it to ${target.label}…`));
+      await DragOut.ready({ token, path: uri, name: file });
+      pb.close();
+      await DragOut.send({ token, pkg: target.pkg, cls: target.cls });
+    } catch (e) { pb.close(); throw e; }
+  } catch (e) {
+    diag.log("drop: " + (e.message || e));
+    snack("Couldn't share that: " + (e.message || e));
+  }
+}
+
 async function writeCacheFile(path, blob, onProgress) {
   const { Filesystem, Directory } = await import("@capacitor/filesystem");
   const CH = 3 * 1024 * 1024;
@@ -1650,28 +1788,34 @@ async function startDragOut(info) {
       const s = info.song;
       const ext = (s.file?.match(/\.([a-z0-9]+)$/i)?.[1] || "mp3").toLowerCase();
       const name = `${s.artist ? s.artist + " - " : ""}${s.title}.${ext}`.replace(/[\\/:*?"<>|]+/g, "_");
-      const { token, started } = await DragOut.start({ kind: "song", name, mime: s.type || mimeFor(ext) || "audio/mpeg", label: s.title, sub: s.artist || s.album || "",
+      const mime = s.type || mimeFor(ext) || "audio/mpeg";
+      const job = { kind: "song", song: s, label: s.title, name, mime };
+      dropBar.show(job);
+      const { token, started } = await DragOut.start({ kind: "song", name, mime, label: s.title, sub: s.artist || s.album || "",
         size: s.size || 0, art: await smallArt(s.cover) });
-      if (!started) return;
-      dragJobs.set(token, { label: s.title });
-      try {
-        const blob = await lib.fileBlob(s);
-        if (!blob) throw new Error("the song's file is missing");
-        const uri = await writeCacheFile(`dragout/${token}/${name}`, blob);
-        await DragOut.ready({ token, path: uri });
-      } catch (e) { DragOut.fail({ token, error: e.message || String(e) }); diag.log("drag out: " + (e.message || e)); }
+      if (!started) { dropBar.hide(); return snack("Couldn't pick that up"); }
+      dragJobs.set(token, job);
+      job.ready = (async () => {                          // the real file, written while you drag
+        try {
+          const blob = await lib.fileBlob(s);
+          if (!blob) throw new Error("the song's file is missing");
+          const uri = await writeCacheFile(`dragout/${token}/${name}`, blob);
+          await DragOut.ready({ token, path: uri });
+        } catch (e) { DragOut.fail({ token, error: e.message || String(e) }); diag.log("drag out: " + (e.message || e)); throw e; }
+      })();
+      job.ready.catch(() => {});
     } else {
       const songs = info.songs().filter(Boolean);
       if (!songs.length) return snack("There's nothing in it to share");
-      if (!lib.meta.settings.overlayAsked) {          // first time: explain + ask, then drags just work
-        const { granted } = await DragOut.canOverlay();
-        if (!granted) { askOverlayOnce(); return; }
-      }
+      const job = { kind: "pack", label: info.title, songs, playlist: info.playlist || null, mime: "application/zip" };
+      dropBar.show(job);
       const { token, started } = await DragOut.start({ kind: "pack", name: `${safeFile(info.title)}-musicpack.zip`, mime: "application/zip",
         title: info.title, label: info.title, sub: info.sub || plural(songs.length, "song"), art: await smallArt(info.cover || songs.find((x) => x.cover)?.cover) });
-      if (started) dragJobs.set(token, { label: info.title, songs, playlist: info.playlist || null });
+      if (!started) { dropBar.hide(); return snack("Couldn't pick that up"); }
+      dragJobs.set(token, job);
     }
   } catch (e) {
+    dropBar.hide();
     diag.log("drag out: " + (e.message || e));
     snack("Couldn't drag that out: " + (e.message || e));
   }
@@ -1894,16 +2038,17 @@ async function youtubeAccount() {
 
 // ---- EXPERIMENTAL: add a song / album / playlist from a YouTube or YouTube Music link (see youtube.js)
 let linkBusy = false;
-async function addFromLink() {
+async function addFromLink(shared) {
   if (linkBusy) return snack("Already adding from a link…");
-  const text = await prompt("Add from Link", "Paste a YouTube or YouTube Music link to a song, album or playlist. Experimental: YouTube sometimes blocks this.", "", "", "Add");
+  const text = typeof shared === "string" ? shared
+    : await prompt("Add from Link", "Paste a YouTube or YouTube Music link to a song, album or playlist. Experimental: YouTube sometimes blocks this.", "", "", "Add");
   if (!text) return;
   const yt = await import("./youtube.js");
   if (!yt.parseLink(text)) { snack("That isn't a YouTube or YouTube Music link"); return; }
   linkBusy = true;
   const pb = progressBox("Adding from YouTube");
   try {
-    const r = await yt.importLink(text, lib, (f, t) => pb.set(f, t));
+    const r = await yt.importLink(text, lib, (f, t, sub) => pb.set(f, t, sub));
     pb.close();
     setTimeout(() => autoFill(r.songs || []), 4600);
     if (!r.added && !r.skipped) { snack(`Couldn't add from that link${r.firstError ? ": " + r.firstError : ""}`, "Details", showDiagnostics, 12000); return; }
@@ -3229,6 +3374,6 @@ async function boot() {
     const audio = files.filter((f) => !/\.zip$/i.test(f.name));
     if (audio.length) importAudio(audio);
   });
-  window.__app = { nc, DiskFile, miniTuck, morph, filt, findGenres, filterSheet, get lyr() { return lyrView; }, np, browse, similarSongs, playWithMix, lyricsPicker, lookupDialog, autoFill, lib, player, push, goTab, openNp, closeNp, toggleLyrics, sharePack, importPacks, importAudio, startSelect, refresh, back, stack: () => stack };
+  window.__app = { nc, progressBox, DiskFile, miniTuck, morph, filt, findGenres, filterSheet, get lyr() { return lyrView; }, np, browse, similarSongs, playWithMix, lyricsPicker, lookupDialog, autoFill, lib, player, push, goTab, openNp, closeNp, toggleLyrics, sharePack, importPacks, importAudio, startSelect, refresh, back, stack: () => stack };
 }
 boot();

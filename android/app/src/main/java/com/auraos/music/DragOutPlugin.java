@@ -4,6 +4,15 @@ import android.content.ClipData;
 import android.content.ClipDescription;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.graphics.drawable.Drawable;
+import android.view.DragEvent;
+import com.getcapacitor.JSArray;
+import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -104,6 +113,90 @@ public class DragOutPlugin extends Plugin {
         }
     }
 
+    // ---------------------------------------------------------------- the apps you can drop onto inside AuraOS
+    private static final List<String> PREFERRED = Arrays.asList(
+        "com.samsung.android.messaging", "com.google.android.apps.messaging", "com.samsung.android.app.sharelive",
+        "com.google.android.gms", "com.whatsapp", "org.telegram.messenger", "com.discord", "com.google.android.apps.docs",
+        "com.google.android.gm", "com.snapchat.android", "com.instagram.android", "com.facebook.orca");
+
+    @PluginMethod
+    public void targets(PluginCall call) {
+        String mime = call.getString("mime", "*/*");
+        int max = call.getInt("max", 6);
+        new Thread(() -> {
+            try {
+                PackageManager pm = getContext().getPackageManager();
+                Intent i = new Intent(Intent.ACTION_SEND);
+                i.setType(mime);
+                List<ResolveInfo> all = new ArrayList<>();
+                String me = getContext().getPackageName();
+                for (ResolveInfo r : pm.queryIntentActivities(i, 0)) if (!me.equals(r.activityInfo.packageName)) all.add(r);
+                java.util.Collections.sort(all, (a, b) -> {
+                    int ia = PREFERRED.indexOf(a.activityInfo.packageName), ib = PREFERRED.indexOf(b.activityInfo.packageName);
+                    return Integer.compare(ia < 0 ? 999 : ia, ib < 0 ? 999 : ib);
+                });
+                JSArray out = new JSArray();
+                List<String> seen = new ArrayList<>();
+                for (ResolveInfo r : all) {
+                    if (out.length() >= max) break;
+                    String pkg = r.activityInfo.packageName;
+                    if (seen.contains(pkg)) continue;          // one per app
+                    seen.add(pkg);
+                    JSObject t = new JSObject();
+                    t.put("label", String.valueOf(r.loadLabel(pm)));
+                    t.put("pkg", pkg);
+                    t.put("cls", r.activityInfo.name);
+                    t.put("icon", iconPng(r.loadIcon(pm)));
+                    out.put(t);
+                }
+                JSObject res = new JSObject();
+                res.put("targets", out);
+                call.resolve(res);
+            } catch (Exception ex) {
+                call.reject("Couldn't list apps: " + ex.getMessage());
+            }
+        }).start();
+    }
+
+    private String iconPng(Drawable d) {
+        try {
+            int n = dp(48);
+            Bitmap b = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(b);
+            d.setBounds(0, 0, n, n);
+            d.draw(c);
+            ByteArrayOutputStream o = new ByteArrayOutputStream();
+            b.compress(Bitmap.CompressFormat.PNG, 100, o);
+            return "data:image/png;base64," + Base64.encodeToString(o.toByteArray(), Base64.NO_WRAP);
+        } catch (Exception ex) {
+            return "";
+        }
+    }
+
+    /** hand a dragged song / made pack straight to one app (the file must be ready) */
+    @PluginMethod
+    public void send(PluginCall call) {
+        Entry e = entries.get(call.getString("token", ""));
+        if (e == null || e.file == null) { call.reject("That isn't ready"); return; }
+        e.begun = true;                                  // (named in the app already: no window over the other app)
+        try {
+            Uri uri = new Uri.Builder().scheme("content").authority(getContext().getPackageName() + ".dragout")
+                .appendPath(e.token).appendPath(e.name).build();
+            Intent i = new Intent(Intent.ACTION_SEND);
+            i.setType(e.mime);
+            i.putExtra(Intent.EXTRA_STREAM, uri);
+            i.setClipData(ClipData.newRawUri(e.name, uri));
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            String pkg = call.getString("pkg"), cls = call.getString("cls");
+            if (pkg != null && cls != null) i.setClassName(pkg, cls);
+            else i = Intent.createChooser(i, e.label).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getContext().startActivity(i);
+            call.resolve();
+        } catch (Exception ex) {
+            call.reject("Couldn't open that app: " + ex.getMessage());
+        }
+    }
+
     // ---------------------------------------------------------------- the drag itself
     @PluginMethod
     public void start(PluginCall call) {
@@ -133,6 +226,28 @@ public class DragOutPlugin extends Plugin {
                     .appendPath(e.token).appendPath(e.name).build();
                 ClipData clip = new ClipData(new ClipDescription(e.label, new String[] { e.mime }), new ClipData.Item(uri));
                 View web = getBridge().getWebView();
+                // follow the drag over our own screen too, so the app's drop targets (Save, Messages…) light up under it
+                final float den = web.getResources().getDisplayMetrics().density;
+                final boolean[] droppedHere = { false };
+                web.setOnDragListener((v, ev) -> {
+                    JSObject d = new JSObject();
+                    d.put("token", e.token);
+                    d.put("x", ev.getX() / den);
+                    d.put("y", ev.getY() / den);
+                    switch (ev.getAction()) {
+                        case DragEvent.ACTION_DRAG_STARTED: return true;
+                        case DragEvent.ACTION_DRAG_LOCATION: notifyListeners("dragMove", d); return true;
+                        case DragEvent.ACTION_DRAG_EXITED: notifyListeners("dragLeave", d); return true;
+                        case DragEvent.ACTION_DROP: droppedHere[0] = true; notifyListeners("dragDrop", d); return true;
+                        case DragEvent.ACTION_DRAG_ENDED:
+                            d.put("result", ev.getResult());
+                            d.put("here", droppedHere[0]);
+                            notifyListeners("dragEnd", d);
+                            v.setOnDragListener(null);
+                            return true;
+                        default: return true;
+                    }
+                });
                 Bitmap cover = null;
                 if (art != null && !art.isEmpty()) {
                     try { byte[] b = Base64.decode(art, Base64.DEFAULT); cover = BitmapFactory.decodeByteArray(b, 0, b.length); } catch (Exception ignored) {}
@@ -157,6 +272,8 @@ public class DragOutPlugin extends Plugin {
         Entry e = entries.get(call.getString("token", ""));
         String path = call.getString("path", "");
         if (e != null && path != null) {
+            String nn = call.getString("name");
+            if (nn != null && !nn.trim().isEmpty()) e.name = nn;     // named in the app: the file gets that name
             if (path.startsWith("file://")) path = Uri.parse(path).getPath();
             e.file = new File(path);
             e.ready.countDown();

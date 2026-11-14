@@ -245,9 +245,10 @@ let infoQueue = Promise.resolve();
 const oneAtATime = (fn) => { const r = infoQueue.then(fn, fn); infoQueue = r.catch(() => {}); return r; };
 let goodClient = null;                              // the identity that worked last: tried first next time
 
-async function fetchAudio(id, onFrac) {
+async function fetchAudio(id, onFrac, onStage) {
   const { mod, yt } = await client();
   const reasons = [];
+  onStage?.("Getting YouTube's OK…");
   const pot = await tokenFor(id);
   const signedIn = !!yt.session.oauth?.oauth2_tokens && ytSignedIn();
   // signed in: YouTube's TV identity carries the sign-in, so it goes first
@@ -256,6 +257,7 @@ async function fetchAudio(id, onFrac) {
   for (const name of order) {
     if (!pot && WEBBY.has(name)) continue;                // these need the token
     try {
+      onStage?.(`Asking YouTube for the audio (${name.toLowerCase().replace(/_/g, " ")})…`);
       const got = await oneAtATime(async () => {
         yt.session.logged_in = signedIn && name.startsWith("TV");   // (the TV sign-in only works with the TV identities)
         try {
@@ -273,6 +275,7 @@ async function fetchAudio(id, onFrac) {
       const ua = mod.Constants?.CLIENTS?.[name]?.USER_AGENT || navigator.userAgent;
       const size = +got.fmt.content_length || 0;
       diag.log(`YouTube: ${name} gave an address for ${id} (${Math.round(size / 1024)} KB)`);
+      onStage?.("Downloading…", 0);
       const file = await download(got.url, size, ua, id, onFrac, WEBBY.has(name) ? (name === "YTMUSIC" ? "https://music.youtube.com" : "https://www.youtube.com") : "");
       goodClient = name;
       const b = got.info.basic_info || {};
@@ -292,10 +295,11 @@ async function download(url, size, ua, id, onFrac, origin = "") {
   const dir = onDisk ? Directory.Library : Directory.Cache;
   const rel = `${onDisk ? "Incoming/" : ""}yt-${id}-${Date.now().toString(36)}.m4a`;
   let sub = null;
-  try { sub = await Filesystem.addListener("progress", (p) => { if (p.contentLength > 0) onFrac?.(p.bytes / p.contentLength); }); } catch {}
+  const full = size ? `${url}&range=0-${size - 1}` : url;
+  // (every download in flight hears every progress event: only listen to this one's)
+  try { sub = await Filesystem.addListener("progress", (p) => { if (p.contentLength > 0 && (!p.url || p.url === full)) onFrac?.(p.bytes / p.contentLength, p.bytes, p.contentLength); }); } catch {}
   let keep = false;
   try {
-    const full = size ? `${url}&range=0-${size - 1}` : url;
     const r = await timed(Filesystem.downloadFile({ url: full, path: rel, directory: dir, headers: origin ? { "User-Agent": ua, Origin: origin, Referer: origin + "/" } : { "User-Agent": ua }, recursive: true, progress: true }), 300000, "Downloading");
     let got = 0, blob = null;
     if (onDisk) {
@@ -340,7 +344,19 @@ export async function importLink(text, lib, onProgress) {
   const addOne = (fn) => { const r = addQueue.then(fn, fn); addQueue = r.catch(() => {}); return r; };
   let done = 0;
   const frac = new Array(tracks.length).fill(0);
-  const report = (t) => onProgress?.(Math.min(0.99, (done + frac.reduce((x, y) => x + y, 0)) / tracks.length), `${done + 1} of ${tracks.length}${t ? ` · ${t}` : ""}`);
+  const live = new Map();                         // songs in progress: index → { title, text, f }
+  const mb = (n) => (n / 1048576).toFixed(1);
+  let lastReport = 0;
+  const report = (force) => {
+    const now = performance.now();
+    if (!force && now - lastReport < 120) return;
+    lastReport = now;
+    const overall = Math.min(0.995, (done + frac.reduce((x, y) => x + y, 0)) / Math.max(1, tracks.length));
+    const cur = live.size ? live.get(Math.min(...live.keys())) : null;     // the earliest song still going
+    const head = `${Math.min(tracks.length, done + 1)} of ${tracks.length}` + (live.size > 1 ? ` · ${live.size} at once` : "");
+    onProgress?.(overall, cur ? `${head} · ${cur.title}` : head, cur ? { f: cur.f, text: cur.text } : { text: "Finishing up…" });
+  };
+  const stage = (i, text, f = null) => { const c = live.get(i); if (c) { c.text = text; c.f = f; } report(); };
   const one = async (i) => {
     const t = tracks[i];
     try {
@@ -350,7 +366,8 @@ export async function importLink(text, lib, onProgress) {
         const had = lib.existing({ ...pre, duration: t.duration || 0 });
         if (had) { skipped++; keep(i, had.id); return; }
       }
-      report(t.title);
+      live.set(i, { title: t.title || "song", text: "Starting…", f: null });
+      report(true);
       // the cover comes down at the same time as the song
       const coverP = (async () => {
         let c = null;
@@ -358,7 +375,11 @@ export async function importLink(text, lib, onProgress) {
         if (!c || c.size < 2000) { try { c = await getBlob(`https://i.ytimg.com/vi/${t.id}/hqdefault.jpg`); } catch {} }
         return c;
       })();
-      const a = await fetchAudio(t.id, (f) => { frac[i] = 0.9 * f; report(t.title); });
+      const a = await fetchAudio(t.id, (f, got, total) => {
+        frac[i] = 0.1 + 0.8 * f;
+        stage(i, total ? `Downloading · ${mb(got)} of ${mb(total)} MB` : "Downloading…", f);
+      }, (text, f = null) => { frac[i] = Math.max(frac[i], 0.05); stage(i, text, f); });
+      stage(i, "Saving to your library…", 1);
       const tags = tidy({ title: t.title || a.meta.title, artist: t.artist || a.meta.artist, album: t.album });
       const cover = await coverP;
       const info = { ...tags, track: t.track || 0, duration: t.duration || a.meta.duration || 0,
@@ -373,7 +394,7 @@ export async function importLink(text, lib, onProgress) {
       firstError ||= e.message || String(e);
       diag.log(`YouTube: couldn't add ${t.title || t.id}: ${e.message || e}`);
       if (failed >= 3 && !added && !skipped && !stop) { stop = true; diag.log("YouTube: the first 3 all failed — stopping"); }
-    } finally { frac[i] = 0; done++; report(""); }
+    } finally { frac[i] = 0; live.delete(i); done++; report(true); }
   };
   let next = 0;
   const worker = async () => { while (!stop && next < tracks.length) await one(next++); };
