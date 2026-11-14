@@ -67,6 +67,13 @@ Works on Android 7 and newer. Keep **Android System WebView** up to date (Play S
   Sign in under **Settings › YouTube Account** if YouTube asks. YouTube changes its protections often, so this
   can stop working. If it fails, **Settings › Diagnostics › Share** shows why. Only add music you have the
   right to.
+- **Add an artist from YouTube Music (experimental):** paste a `music.youtube.com/channel/UC…` artist link (or use
+  **Artists › Add an artist from YouTube Music**). The app reads the artist's page, saves their photo and bio, and
+  downloads their albums, singles & EPs (or just the top songs) album by album with covers, years and track numbers.
+  Songs you already have are skipped, and a **Stop** button ends it early (what's done stays).
+- **YouTube Music style artist page:** full-width artist photo with the name over it, **Shuffle** and **Radio**
+  buttons, the songs (first five, then *Show all*), **Albums**, **Singles & EPs**, **Featured on**,
+  **Fans might also like** and **About**. The globe button gets more from the same artist.
 - **Music Packs:** share any songs, albums or playlists as a `…-musicpack.zip` and add packs from friends with
   all their info, covers and playlists. Packs also work with the iPhone and desktop apps.
 

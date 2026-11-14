@@ -158,7 +158,7 @@ async function tokenFor(id) {
   } catch (e) { tokenWhy += ` · in-app: ${e.message || e}`; diag.log(`YouTube: no proof-of-origin token (${tokenWhy}); trying without`); return ""; }
 }
 
-/** What a pasted link points at: { video } and/or { list } */
+/** What a pasted link points at: { video } and/or { list }, or { channel } / { handle } for an artist */
 export function parseLink(text) {
   const m = String(text || "").match(/https?:\/\/[^\s]+/);
   let u;
@@ -170,11 +170,15 @@ export function parseLink(text) {
   const shorts = u.pathname.match(/^\/(shorts|embed|live)\/([\w-]{6,})/);
   if (shorts) video = shorts[2];
   let list = u.searchParams.get("list") || "";
-  // an automatic "mix" started from a song (RD + the song's id…) is endless: just that song. But YouTube Music's own
-  // playlists (RDCLAK5uy_…, e.g. Today's Hits) and a mix link with no song in it are real playlists.
-  if (/^RD/.test(list) && !/^RDCLAK5uy_/.test(list) && video) list = "";
-  return video || list ? { video, list, music: host === "music.youtube.com" } : null;
+  if (/^RD/.test(list)) list = "";                 // an automatic "mix": just the one song
+  // an artist: music.youtube.com/channel/UC…  (also youtube.com/channel/UC…, /browse/UC…, and /@handle)
+  const ch = u.pathname.match(/^\/(?:channel|browse)\/(UC[\w-]{20,})/);
+  const hd = u.pathname.match(/^\/@([^/?#]+)/);
+  const channel = !video && !list && ch ? ch[1] : "";
+  const handle = !video && !list && !channel && hd ? decodeURIComponent(hd[1]) : "";
+  return video || list || channel || handle ? { video, list, channel, handle, music: host === "music.youtube.com" } : null;
 }
+export const isArtistLink = (l) => !!(l && (l.channel || l.handle));
 
 // ---- tidy names (the same rules as aura-musicpack on the computer)
 const JUNK = /\s*[([{]\s*(official|lyrics?|lyric video|audio|video|music video|hd|hq|4k|visuali[sz]er|full album|remaster(ed)?|explicit|clean|mv|m\/v)[^)\]}]*[)\]}]/gi;
@@ -240,48 +244,35 @@ async function resolve(link) {
 }
 
 /** Download one song's audio: tries YouTube's app identities in turn until one of them gives a real m4a. */
-// asking YouTube for an address happens one song at a time (the sign-in switch is shared); downloads run in parallel
-let infoQueue = Promise.resolve();
-const oneAtATime = (fn) => { const r = infoQueue.then(fn, fn); infoQueue = r.catch(() => {}); return r; };
-let goodClient = null;                              // the identity that worked last: tried first next time
-
-async function fetchAudio(id, onFrac, onStage) {
+async function fetchAudio(id, onFrac) {
   const { mod, yt } = await client();
   const reasons = [];
-  onStage?.("Getting YouTube's OK…");
   const pot = await tokenFor(id);
   const signedIn = !!yt.session.oauth?.oauth2_tokens && ytSignedIn();
   // signed in: YouTube's TV identity carries the sign-in, so it goes first
-  let order = signedIn ? ["TV", "TV_SIMPLY", ...CLIENTS.filter((c) => c !== "TV_SIMPLY")] : [...CLIENTS];
-  if (goodClient && order.includes(goodClient)) order = [goodClient, ...order.filter((c) => c !== goodClient)];
+  const order = signedIn ? ["TV", "TV_SIMPLY", ...CLIENTS.filter((c) => c !== "TV_SIMPLY")] : CLIENTS;
   for (const name of order) {
     if (!pot && WEBBY.has(name)) continue;                // these need the token
+    yt.session.logged_in = signedIn && name.startsWith("TV");   // (the TV sign-in only works with the TV identities)
     try {
-      onStage?.(`Asking YouTube for the audio (${name.toLowerCase().replace(/_/g, " ")})…`);
-      const got = await oneAtATime(async () => {
-        yt.session.logged_in = signedIn && name.startsWith("TV");   // (the TV sign-in only works with the TV identities)
-        try {
-          const info = await timed(yt.getBasicInfo(id, pot ? { client: name, po_token: pot } : { client: name }), 30000, `Asking YouTube (${name})`);
-          const ps = info.playability_status;
-          if (ps && ps.status && ps.status !== "OK") return { why: `${name}: ${ps.status}${ps.reason ? " – " + ps.reason : ""}` };
-          let fmt;
-          try { fmt = info.chooseFormat({ type: "audio", quality: "best", format: "mp4" }); } catch { return { why: `${name}: no m4a audio` }; }
-          let url = await timed(fmt.decipher(yt.session.player), 30000, "Unscrambling the audio address");
-          if (pot) { const u = new URL(url); u.searchParams.set("pot", pot); url = u.toString(); }
-          return { info, fmt, url };
-        } finally { yt.session.logged_in = false; }
-      });
-      if (got.why) { reasons.push(got.why); diag.log("YouTube: " + got.why); continue; }
+      const info = await timed(yt.getBasicInfo(id, pot ? { client: name, po_token: pot } : { client: name }), 30000, `Asking YouTube (${name})`);
+      const ps = info.playability_status;
+      if (ps && ps.status && ps.status !== "OK") { reasons.push(`${name}: ${ps.status}${ps.reason ? " – " + ps.reason : ""}`); diag.log("YouTube: " + reasons.at(-1)); continue; }
+      let fmt;
+      try { fmt = info.chooseFormat({ type: "audio", quality: "best", format: "mp4" }); }
+      catch { reasons.push(`${name}: no m4a audio`); diag.log("YouTube: " + reasons.at(-1)); continue; }
+      let url = await timed(fmt.decipher(yt.session.player), 30000, "Unscrambling the audio address");
+      if (pot) { const u = new URL(url); u.searchParams.set("pot", pot); url = u.toString(); }
       const ua = mod.Constants?.CLIENTS?.[name]?.USER_AGENT || navigator.userAgent;
-      const size = +got.fmt.content_length || 0;
+      const size = +fmt.content_length || 0;
       diag.log(`YouTube: ${name} gave an address for ${id} (${Math.round(size / 1024)} KB)`);
-      onStage?.("Downloading…", 0);
-      const file = await download(got.url, size, ua, id, onFrac, WEBBY.has(name) ? (name === "YTMUSIC" ? "https://music.youtube.com" : "https://www.youtube.com") : "");
-      goodClient = name;
-      const b = got.info.basic_info || {};
+      const file = await download(url, size, ua, id, onFrac, WEBBY.has(name) ? (name === "YTMUSIC" ? "https://music.youtube.com" : "https://www.youtube.com") : "");
+      yt.session.logged_in = false;
+      const b = info.basic_info || {};
       return { ...file, client: name, meta: { title: b.title || "", artist: b.author || "", duration: b.duration || 0, thumb: lastThumb(b.thumbnail) } };
-    } catch (e) { reasons.push(`${name}: ${String(e.message || e).replace(/https:\/\/\S+/, "(address)")}`); diag.log("YouTube: " + reasons.at(-1)); }
+    } catch (e) { yt.session.logged_in = false; reasons.push(`${name}: ${String(e.message || e).replace(/https:\/\/\S+/, "(address)")}`); diag.log("YouTube: " + reasons.at(-1)); }
   }
+  yt.session.logged_in = false;
   const first = String(reasons[0] || "").replace(/(Error downloading file):.*/, "$1");    // (not the whole address)
   const bot = reasons.some((r) => /not a bot|sign in|LOGIN_REQUIRED/i.test(r));
   throw new Error(`YouTube refused every way in (${first || "no answer"})` + (pot ? "" : ` · the player check failed: ${tokenWhy}`)
@@ -295,11 +286,10 @@ async function download(url, size, ua, id, onFrac, origin = "") {
   const dir = onDisk ? Directory.Library : Directory.Cache;
   const rel = `${onDisk ? "Incoming/" : ""}yt-${id}-${Date.now().toString(36)}.m4a`;
   let sub = null;
-  const full = size ? `${url}&range=0-${size - 1}` : url;
-  // (every download in flight hears every progress event: only listen to this one's)
-  try { sub = await Filesystem.addListener("progress", (p) => { if (p.contentLength > 0 && (!p.url || p.url === full)) onFrac?.(p.bytes / p.contentLength, p.bytes, p.contentLength); }); } catch {}
+  try { sub = await Filesystem.addListener("progress", (p) => { if (p.contentLength > 0) onFrac?.(p.bytes / p.contentLength); }); } catch {}
   let keep = false;
   try {
+    const full = size ? `${url}&range=0-${size - 1}` : url;
     const r = await timed(Filesystem.downloadFile({ url: full, path: rel, directory: dir, headers: origin ? { "User-Agent": ua, Origin: origin, Referer: origin + "/" } : { "User-Agent": ua }, recursive: true, progress: true }), 300000, "Downloading");
     let got = 0, blob = null;
     if (onDisk) {
@@ -320,6 +310,63 @@ async function download(url, size, ua, id, onFrac, origin = "") {
 }
 
 /**
+ * Download a list of tracks [{ id, title, artist, album, albumartist, year, duration, thumb, track }] into the library.
+ * onProgress(fraction, text). opts.ctl.stop = true ends it early (what is done stays). opts.stopStreak: give up after this many
+ * failures in a row (default: after 3 failures if nothing worked yet). opts.looseDup: skip a song you already have on any release.
+ * Returns { added, skipped, failed, firstError, songs, order, stopped }.
+ */
+async function addTracks(tracks, lib, onProgress, opts = {}) {
+  let added = 0, skipped = 0, failed = 0, firstError = "", streak = 0, stopped = false;
+  const songs = [], order = [], covers = new Map();
+  for (let i = 0; i < tracks.length; i++) {
+    if (opts.ctl?.stop) { stopped = true; break; }
+    const t = tracks[i];
+    const base = i / tracks.length, span = 1 / tracks.length;
+    const label = `${i + 1} of ${tracks.length}${t.title ? ` · ${t.title}` : ""}`;
+    onProgress?.(base, label);
+    try {
+      diag.step = `Downloading · ${t.title || t.id}`;
+      if (t.title) {
+        const pre = tidy({ title: t.title, artist: t.artist, album: t.album });
+        const dur = t.duration || 0;
+        const had = lib.existing({ ...pre, duration: dur }) || (opts.looseDup && dur ? lib.existingAnywhere({ ...pre, duration: dur }) : null);
+        if (had) { skipped++; streak = 0; order.push(had.id); continue; }
+      }
+      const a = await fetchAudio(t.id, (f) => onProgress?.(base + span * 0.9 * f, label));
+      const tags = tidy({ title: t.title || a.meta.title, artist: t.artist || a.meta.artist, album: t.album });
+      const file = a;
+      let cover = null;
+      const url = bigThumb(t.thumb || a.meta.thumb, t.id);
+      if (covers.has(url)) cover = covers.get(url);               // (the same album cover for every song on it)
+      else {
+        try { cover = await getBlob(url); } catch {}
+        if (!cover || cover.size < 2000) { try { cover = await getBlob(`https://i.ytimg.com/vi/${t.id}/hqdefault.jpg`); } catch {} }
+        if (cover && t.album) covers.set(url, cover);
+      }
+      const info = { ...tags, track: t.track || 0, duration: t.duration || a.meta.duration || 0,
+        codec: "AAC · from YouTube", source: `https://music.youtube.com/watch?v=${t.id}` };
+      if (t.albumartist) info.albumartist = t.albumartist;
+      if (t.year) info.year = String(t.year);
+      const r = file.blob
+        ? await lib.addAudio(file.blob, `${tags.title}.m4a`, info, cover)
+        : await lib.addLocalFile(file.rel, file.size, "m4a", { albumartist: "", disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", ...info }, cover);
+      r.skipped ? skipped++ : (added++, songs.push(r.song));
+      streak = 0;
+      order.push(r.song.id);
+    } catch (e) {
+      failed++; streak++;
+      firstError ||= e.message || String(e);
+      diag.log(`YouTube: couldn't add ${t.title || t.id}: ${e.message || e}`);
+    }
+    if (opts.stopStreak ? streak >= opts.stopStreak : failed >= 3 && !added && !skipped) {
+      diag.log(`YouTube: ${opts.stopStreak || 3} failures in a row — stopping`);
+      failed += tracks.length - i - 1; stopped = true; break;
+    }
+  }
+  return { added, skipped, failed, firstError, songs, order, stopped };
+}
+
+/**
  * Add everything a link points at. lib: the library; onProgress(fraction, text).
  * Returns { added, skipped, failed, firstError, title, playlist, songs }.
  */
@@ -327,82 +374,149 @@ export async function importLink(text, lib, onProgress) {
   if (!native) throw new Error("Adding from links works in the phone app");
   const link = parseLink(text);
   if (!link) throw new Error("That isn't a YouTube or YouTube Music link");
+  if (isArtistLink(link)) throw new Error("That's an artist link — use readArtist / importArtist");
   diag.log(`YouTube: link → ${JSON.stringify(link)}`);
   onProgress?.(0, "Connecting to YouTube…");
   const { title, playlist, tracks } = await resolve(link);
-  let added = 0, skipped = 0, failed = 0, firstError = "", stop = false;
-  const songs = [], slots = new Array(tracks.length);
-  let plName = null;
-  const keep = (i, id) => {                      // into the playlist right away, in the playlist's own order
-    slots[i] = id;
-    if (!playlist) return;
-    if (!plName) { plName = lib.uniquePlaylist(title, title); diag.log(`YouTube: playlist “${plName}”`); }
-    lib.meta.playlists[plName] = slots.filter(Boolean);
-    lib.saveMeta();
-  };
-  let addQueue = Promise.resolve();              // saving into the library: one at a time (no clashing file names)
-  const addOne = (fn) => { const r = addQueue.then(fn, fn); addQueue = r.catch(() => {}); return r; };
-  let done = 0;
-  const frac = new Array(tracks.length).fill(0);
-  const live = new Map();                         // songs in progress: index → { title, text, f }
-  const mb = (n) => (n / 1048576).toFixed(1);
-  let lastReport = 0;
-  const report = (force) => {
-    const now = performance.now();
-    if (!force && now - lastReport < 120) return;
-    lastReport = now;
-    const overall = Math.min(0.995, (done + frac.reduce((x, y) => x + y, 0)) / Math.max(1, tracks.length));
-    const cur = live.size ? live.get(Math.min(...live.keys())) : null;     // the earliest song still going
-    const head = `${Math.min(tracks.length, done + 1)} of ${tracks.length}` + (live.size > 1 ? ` · ${live.size} at once` : "");
-    onProgress?.(overall, cur ? `${head} · ${cur.title}` : head, cur ? { f: cur.f, text: cur.text } : { text: "Finishing up…" });
-  };
-  const stage = (i, text, f = null) => { const c = live.get(i); if (c) { c.text = text; c.f = f; } report(); };
-  const one = async (i) => {
-    const t = tracks[i];
-    try {
-      diag.step = `Downloading · ${t.title || t.id}`;
-      if (t.title) {
-        const pre = tidy({ title: t.title, artist: t.artist, album: t.album });
-        const had = lib.existing({ ...pre, duration: t.duration || 0 });
-        if (had) { skipped++; keep(i, had.id); return; }
-      }
-      live.set(i, { title: t.title || "song", text: "Starting…", f: null });
-      report(true);
-      // the cover comes down at the same time as the song
-      const coverP = (async () => {
-        let c = null;
-        try { c = await getBlob(bigThumb(t.thumb, t.id)); } catch {}
-        if (!c || c.size < 2000) { try { c = await getBlob(`https://i.ytimg.com/vi/${t.id}/hqdefault.jpg`); } catch {} }
-        return c;
-      })();
-      const a = await fetchAudio(t.id, (f, got, total) => {
-        frac[i] = 0.1 + 0.8 * f;
-        stage(i, total ? `Downloading · ${mb(got)} of ${mb(total)} MB` : "Downloading…", f);
-      }, (text, f = null) => { frac[i] = Math.max(frac[i], 0.05); stage(i, text, f); });
-      stage(i, "Saving to your library…", 1);
-      const tags = tidy({ title: t.title || a.meta.title, artist: t.artist || a.meta.artist, album: t.album });
-      const cover = await coverP;
-      const info = { ...tags, track: t.track || 0, duration: t.duration || a.meta.duration || 0,
-        codec: "AAC · from YouTube", source: `https://music.youtube.com/watch?v=${t.id}` };
-      const r = await addOne(() => a.blob
-        ? lib.addKnown(a.blob, "m4a", info, cover)                // (no tag reading: YouTube already told us)
-        : lib.addLocalFile(a.rel, a.size, "m4a", { albumartist: "", disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", ...info }, cover));
-      r.skipped ? skipped++ : (added++, songs.push(r.song));
-      keep(i, r.song.id);
-    } catch (e) {
-      failed++;
-      firstError ||= e.message || String(e);
-      diag.log(`YouTube: couldn't add ${t.title || t.id}: ${e.message || e}`);
-      if (failed >= 3 && !added && !skipped && !stop) { stop = true; diag.log("YouTube: the first 3 all failed — stopping"); }
-    } finally { frac[i] = 0; live.delete(i); done++; report(true); }
-  };
-  let next = 0;
-  const worker = async () => { while (!stop && next < tracks.length) await one(next++); };
-  // the first song alone (it finds the identity that works), then three at a time
-  if (tracks.length) { await one(next++); }
-  await Promise.all(Array.from({ length: Math.min(3, Math.max(0, tracks.length - 1)) }, worker));
-  if (stop) failed += tracks.length - done;
+  const { added, skipped, failed, firstError, songs, order } = await addTracks(tracks, lib, onProgress);
   onProgress?.(1, "Done");
+  let plName = null;
+  if (playlist && order.length) {
+    plName = lib.uniquePlaylist(title, title);
+    lib.meta.playlists[plName] = order;
+    lib.saveMeta();
+  }
   lib.rebuild();
   return { added, skipped, failed, firstError, title, playlist: plName, songs };
+}
+
+// ============================================================ artists (YouTube Music artist links)
+// music.youtube.com/channel/UC… → the artist's photo, their albums / singles / EPs and top songs, downloaded album by album
+// into the library with the artist as "album artist", so the Artist page fills up with proper albums.
+const txt = (x) => {
+  if (x == null) return "";
+  if (typeof x === "string") return x;
+  if (typeof x.text === "string") return x.text;
+  const s = typeof x.toString === "function" ? x.toString() : "";
+  return s && s !== "[object Object]" ? s : "";
+};
+const thumbOf = (t) => lastThumb(t?.contents || t?.thumbnails || t) || "";
+const yearOf = (...xs) => { for (const x of xs) { const m = txt(x).match(/\b(19|20)\d{2}\b/); if (m) return m[0]; } return ""; };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function trackOf(it, fallbackArtist, extra = {}) {
+  const artists = (it.artists || it.authors || []).map((a) => a?.name).filter(Boolean);
+  return { id: it.id || it.video_id, title: txt(it.title), artist: artists.join(", ") || fallbackArtist, album: it.album?.name || "",
+    duration: it.duration?.seconds || 0, thumb: thumbOf(it.thumbnail), ...extra };
+}
+
+/** The albums / singles listed on an artist's page (the full list when YouTube Music offers one). */
+async function listReleases(mod, yt, sections, onProgress) {
+  const out = new Map();
+  const add = (it, single) => {
+    const id = it?.id || it?.endpoint?.payload?.browseId || "";
+    if (!/^MPREb/.test(id) || out.has(id)) return;
+    out.set(id, { id, title: txt(it.title), year: it.year || yearOf(it.subtitle, it.year), single, thumb: thumbOf(it.thumbnail) });
+  };
+  for (const sec of sections || []) {
+    const title = txt(sec.header?.title ?? sec.title).toLowerCase();
+    if (!/album|single|\bep\b/.test(title)) continue;
+    const single = /single|\bep\b/.test(title) && !/album/.test(title);
+    for (const it of sec.contents || []) add(it, single);
+    const more = sec.header?.more_content?.endpoint || sec.endpoint;            // "More" → the complete list
+    if (more?.call && mod.YTNodes?.MusicTwoRowItem) {
+      try {
+        onProgress?.(`Reading all ${single ? "singles" : "albums"}…`);
+        const page = await timed(more.call(yt.actions || yt.session?.actions, { client: "YTMUSIC", parse: true }), 45000, "Reading the full list");
+        for (const it of page?.contents_memo?.getType?.(mod.YTNodes.MusicTwoRowItem) || []) add(it, single);
+      } catch (e) { diag.log(`YouTube: full ${title} list unavailable (${e.message || e})`); }
+    }
+  }
+  return [...out.values()];
+}
+
+/** Read an artist link (no downloading yet): { channel, name, thumb, about, albums[], singles[], top[] } */
+export async function readArtist(link, onProgress) {
+  if (!native) throw new Error("Adding from links works in the phone app");
+  const { mod, yt } = await client();
+  let channel = link.channel;
+  if (!channel && link.handle) {
+    onProgress?.("Finding the artist…");
+    try {
+      const ep = await timed(yt.resolveURL(`https://www.youtube.com/@${link.handle}`), 30000, "Finding the channel");
+      channel = ep?.payload?.browseId || "";
+    } catch (e) { diag.log(`YouTube: couldn't resolve @${link.handle}: ${e.message || e}`); }
+    if (!/^UC/.test(channel || "")) throw new Error("Couldn't find that channel — paste the artist's link from the YouTube Music app (Share › Copy link)");
+  }
+  onProgress?.("Reading the artist page…");
+  let page;
+  try { page = await timed(yt.music.getArtist(channel), 45000, "Reading the artist page"); }
+  catch (e) { diag.log(`YouTube: getArtist failed: ${e.message || e}`); throw new Error("That doesn't look like a YouTube Music artist page"); }
+  const hdr = page.header || {};
+  const name = txt(hdr.title).replace(/\s*-\s*Topic$/i, "").trim();
+  if (!name) throw new Error("Couldn't read the artist's name from that page");
+  let about = txt(hdr.description);
+  const sections = page.sections || [];
+  if (!about) for (const sec of sections) { if (sec?.description) { about = txt(sec.description); if (about) break; } }
+  const releases = await listReleases(mod, yt, sections, onProgress);
+  const top = [];
+  for (const sec of sections) {                 // "Top songs": a shelf of song rows (video ids are 11 characters)
+    if (!/song/i.test(txt(sec.title ?? sec.header?.title))) continue;
+    for (const it of sec.contents || []) if (/^[\w-]{11}$/.test(it?.id || "")) top.push(trackOf(it, name));
+    if (top.length) break;
+  }
+  const byYear = (a, b) => String(a.year || "9999").localeCompare(String(b.year || "9999"));
+  const r = { channel, name, thumb: bigThumb(thumbOf(hdr.thumbnail ?? hdr.thumbnails)), about: about.trim(),
+    albums: releases.filter((x) => !x.single).sort(byYear), singles: releases.filter((x) => x.single).sort(byYear), top };
+  diag.log(`YouTube: artist “${name}” — ${r.albums.length} albums, ${r.singles.length} singles/EPs, ${top.length} top songs`);
+  return r;
+}
+
+/**
+ * Download from an artist read with readArtist. what: "all" (albums + singles/EPs), "albums" or "top".
+ * ctl.stop = true ends it early. Returns { added, skipped, failed, firstError, songs, stopped, albums }.
+ */
+export async function importArtist(a, what, lib, onProgress, ctl = {}) {
+  const { yt } = await client();
+  const total = { added: 0, skipped: 0, failed: 0, firstError: "", songs: [], stopped: false, albums: 0 };
+  const merge = (r) => { total.added += r.added; total.skipped += r.skipped; total.failed += r.failed; total.firstError ||= r.firstError; total.songs.push(...r.songs); total.stopped ||= r.stopped; };
+  // the artist's photo and "about" text go in first, so the Artist page looks right even if the downloads stop early
+  let pic = null;
+  if (a.thumb) { try { pic = await getBlob(a.thumb); } catch (e) { diag.log(`YouTube: artist photo: ${e.message || e}`); } }
+  await lib.setArtistInfo(a.name, { channel: a.channel, about: a.about, synced: Date.now() }, pic && pic.size > 2000 ? pic : null);
+  const opts = { ctl, stopStreak: 5, looseDup: true };
+
+  if (what === "top") {
+    onProgress?.(0, "Top songs");
+    merge(await addTracks(a.top.map((t) => ({ ...t, albumartist: a.name })), lib, onProgress, opts));
+  } else {
+    const releases = [...a.albums, ...(what === "all" ? a.singles : [])];
+    for (let i = 0; i < releases.length && !total.stopped && !ctl.stop; i++) {
+      const rel = releases[i];
+      const sub = (f, t) => onProgress?.((i + f) / releases.length, `${rel.title || "Album"} · ${t}`);
+      sub(0, "reading…");
+      let al;
+      try { al = await timed(yt.music.getAlbum(rel.id), 45000, `Reading ${rel.title}`); }
+      catch (e) { diag.log(`YouTube: couldn't read ${rel.title}: ${e.message || e}`); total.failed++; total.firstError ||= `couldn't read ${rel.title}`; continue; }
+      const title = txt(al.header?.title) || rel.title;
+      const year = al.header?.year || yearOf(al.header?.subtitle) || rel.year || "";
+      const cover = thumbOf(al.header?.thumbnails ?? al.header?.thumbnail) || rel.thumb;
+      let n = 0;
+      const tracks = [];
+      for (const it of al.contents || []) {
+        if (!it?.id) continue;
+        n++;
+        tracks.push(trackOf(it, a.name, { album: title.replace(/^(Album|Single|EP)\s*-\s*/i, ""), albumartist: a.name, year, thumb: cover || thumbOf(it.thumbnail),
+          track: parseInt(txt(it.index), 10) || n }));
+      }
+      diag.log(`YouTube: ${title} (${year || "?"}) — ${tracks.length} songs`);
+      merge(await addTracks(tracks, lib, sub, opts));
+      total.albums++;
+      lib.rebuild();
+      await sleep(250);
+    }
+  }
+  onProgress?.(1, "Done");
+  lib.rebuild();
+  return total;
 }
