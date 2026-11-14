@@ -1554,7 +1554,7 @@ async function autoFill(songs) {
   const pause = () => new Promise((r) => setTimeout(r, 350));
   try {
     // songs with no album name: find which album they're from
-    for (const s of songs.filter((x) => !x.album || !x.year || !x.genre).slice(0, 40)) {
+    for (const s of songs.filter((x) => !x.album || !x.year || !x.genre).slice(0, 200)) {     // (a whole imported playlist, paced: one lookup at a time)
       if (s.album && lib.albumOf(s)?.tracks.length > 1) continue;      // whole albums are done below, in one go
       asked++;
       const m = await bestSongMatch(s);

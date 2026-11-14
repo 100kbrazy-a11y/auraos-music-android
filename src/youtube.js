@@ -385,7 +385,7 @@ export async function importLink(text, lib, onProgress) {
       const info = { ...tags, track: t.track || 0, duration: t.duration || a.meta.duration || 0,
         codec: "AAC · from YouTube", source: `https://music.youtube.com/watch?v=${t.id}` };
       const r = await addOne(() => a.blob
-        ? lib.addAudio(a.blob, `${tags.title}.m4a`, info, cover)
+        ? lib.addKnown(a.blob, "m4a", info, cover)                // (no tag reading: YouTube already told us)
         : lib.addLocalFile(a.rel, a.size, "m4a", { albumartist: "", disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", ...info }, cover));
       r.skipped ? skipped++ : (added++, songs.push(r.song));
       keep(i, r.song.id);

@@ -158,6 +158,25 @@ class Library extends EventTarget {
     return { song, skipped: false };
   }
 
+  /** Add a song whose details are already known (YouTube links): no reading the file's tags — the name, artist,
+   *  album and length come from YouTube, and "fill in info" adds the year, genre and the rest afterwards. */
+  async addKnown(blob, ext, info, picture) {
+    const tags = { title: "", artist: "", album: "", albumartist: "", track: 0, disc: 0, year: "", genre: "", composer: "",
+      label: "", copyright: "", isrc: "", bpm: "", duration: 0, codec: "", ...info };
+    if (!tags.duration) { diag.step = `Measuring · ${tags.title}`; tags.duration = await probeDuration(blob); }
+    const dup = this.existing(tags);
+    if (dup) return { song: dup, skipped: true };
+    const file = this.uniqueFile(organizedPath(tags, ext));
+    const type = blob.type || mimeFor(ext);
+    const song = { id: uid(), file, ...tags, size: blob.size, added: Date.now(), type };
+    diag.step = `Cover · ${tags.title}`;
+    song.cover = await timed(this.storeCover(tags, picture), 30000, `Saving the cover of ${tags.title}`);
+    song.store = await putSongFile(blob.type ? blob : new Blob([blob], { type }), file);
+    await idb.put("songs", song);
+    this.songs.set(song.id, song);
+    return { song, skipped: false };
+  }
+
   /** Add a file already downloaded into Library/<rel> (YouTube links), with known info and cover. Returns {song, skipped}. */
   async addLocalFile(rel, size, ext, tags, picture) {
     const dup = this.existing(tags);
