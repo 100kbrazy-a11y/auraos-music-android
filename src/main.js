@@ -1,33 +1,78 @@
 
-// 1. Maintain scroll position on Artist pages
-let artistScrollPositions = {}; // Store scroll positions by artist name
+// 1. Fixing the Media Bar Tap issue across ALL full-screen buttons.
+// When you tap the mini player, the click can 'bleed' through to the full screen 
+// buttons if they are instantly rendered in the exact same spot during the morph animation.
 
-// Inside your pageShell event listener, add this line right before closing it:
-// page.addEventListener("scroll", () => { ...
-//   if (stack.at(-1).type === "artist") {
-//       artistScrollPositions[stack.at(-1).name] = page.scrollTop;
-//   }
-// }, { passive: true });
+/* 
+  In your src/main.js, locate the buildNp() function.
+  Find where all the controls are built (around line 247).
+  
+  Replace these lines:
+  
+  np.fav = ib("heart", () => { const s = player.current; if (s) { const on = lib.toggleFav([s.id]); updateNpFav(); nc.haptic(on ? "success" : "tap"); snack(on ? "Added to Favorites" : "Removed from Favorites"); refresh(); } });
+  // ...
+  np.shuffle = ib("shuffle", () => player.toggleShuffle(), "small dim");
+  np.repeat = ib("repeat", () => player.cycleRepeat(), "small dim");
+  np.pp = h("button", { class: "pp", onclick: () => player.toggle() }, icon("play"));
+  // ...
+  np.lyrBtn = ib("lyrics", () => toggleLyrics(), "", "Lyrics");
+  // ...
+  
+  With this updated block that checks !morph.active for EVERY button:
+*/
 
-// Also, when pushing a new page, if it's an artist page, restore the scroll:
-// (You'll inject this inside the `show` or `pageArtist` function)
-// if (artistScrollPositions[name]) {
-//    setTimeout(() => { p.scrollTop = artistScrollPositions[name]; }, 10);
-// }
+np.fav = ib("heart", () => { 
+    if (morph.active) return;
+    const s = player.current; 
+    if (s) { 
+        const on = lib.toggleFav([s.id]); 
+        updateNpFav(); 
+        nc.haptic(on ? "success" : "tap"); 
+        snack(on ? "Added to Favorites" : "Removed from Favorites"); 
+        refresh(); 
+    } 
+});
 
-// When popping off an artist page (leaving it), clear it:
-// (Inject inside `pop` function)
-// if (stack.at(-1).type === "artist") { delete artistScrollPositions[stack.at(-1).name]; }
+np.shuffle = ib("shuffle", () => { if (!morph.active) player.toggleShuffle(); }, "small dim");
+np.repeat = ib("repeat", () => { if (!morph.active) player.cycleRepeat(); }, "small dim");
+np.pp = h("button", { class: "pp", onclick: () => { if (!morph.active) player.toggle(); } }, icon("play"));
+
+const btnPrev = ib("prev", () => { if (!morph.active) player.prev(); });
+const btnNext = ib("next", () => { if (!morph.active) player.next(); });
+
+np.lyrBtn = ib("lyrics", () => { if (!morph.active) toggleLyrics(); }, "", "Lyrics");
+const btnEq = ib("eq", () => { if (!morph.active) { closeNp(); push({ type: "settings" }); } }, "", "Equalizer");
+const btnQueue = ib("queue", () => { if (!morph.active) showQueue(); }, "", "Queue");
+const btnMore = ib("more", () => { if (!morph.active && player.current) songMenu(player.current); });
+
+/*
+  Then, a few lines lower down, update the wrapper construction to use the new variables.
+  Find this block:
+  
+  const wrap = h("div", { class: "wrap" },
+    h("div", { class: "top" }, ib("down", () => closeNp(), "", "Close"), np.ctx, ib("more", () => player.current && songMenu(player.current))),
+    // ...
+    h("div", { class: "ctrls" }, np.shuffle, ib("prev", () => player.prev()), np.pp, ib("next", () => player.next()), np.repeat),
+    h("div", { class: "extras" }, np.lyrBtn, ib("eq", () => { closeNp(); push({ type: "settings" }); }, "", "Equalizer"), ib("queue", () => showQueue(), "", "Queue")));
+    
+  Replace the top, ctrls, and extras lines with:
+*/
+
+// h("div", { class: "top" }, ib("down", () => { if (!morph.active) closeNp(); }, "", "Close"), np.ctx, btnMore),
+// ...
+// h("div", { class: "ctrls" }, np.shuffle, btnPrev, np.pp, btnNext, np.repeat),
+// h("div", { class: "extras" }, np.lyrBtn, btnEq, btnQueue));
 
 
-// 2. Modifying the addArtist function to use inline progress instead of progressBox popups
+
+// 2. Modifying the addArtist function to use inline progress (from previous request)
 async function addArtist(yt, link) {
   if (linkBusy) return snack("Already adding from a link…");
   linkBusy = true;
   try {
     let a;
     try { 
-        // Read artist info first without popup (or using a minimal loading state)
+        // Read artist info first without popup
         a = await yt.readArtist(link, () => {}); 
     } catch (e) {
       diag.log("YouTube: " + (e.message || e));
@@ -99,15 +144,6 @@ async function addArtist(yt, link) {
   }
 }
 
-// 3. Injecting the UI elements into pageArtist()
-// Locate where 'acts' is defined in pageArtist(name) and modify it like this:
-/*
-  const acts = h("div", { class: "ah-acts" },
-    h("button", { class: "ahp solid", onclick: shuffle }, icon("shuffle"), "Shuffle"),
-    h("button", { class: "ahp", onclick: radio }, icon("spark"), "Radio"),
-    h("div", { class: "ah-dl-text" }, `Downloading ${name}...`), // NEW TEXT
-    native && h("button", { class: "ahp round", onclick: () => artistFromYouTube(name), "aria-label": info.channel ? "Get more from YouTube Music" : "Link to YouTube Music" }, icon("globe")));
-  
-  const dlBar = h("div", { class: "ah-dl-bar" }, h("b")); // NEW BAR
-  p.append(hero, acts, dlBar);
-*/
+// 3. Scroll Position Tracking (from previous request)
+let artistScrollPositions = {}; 
+// ... logic to save to artistScrollPositions on page scroll, and restore on show/pageArtist
