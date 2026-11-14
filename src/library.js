@@ -34,6 +34,7 @@ class Library extends EventTarget {
 
   async loadCovers() {
     const ids = new Set([...this.songs.values()].map((s) => s.cover).filter(Boolean));
+    for (const a of Object.values(this.meta.artistInfo || {})) if (a?.image) ids.add(a.image);     // artist photos (from YouTube Music)
     for (const id of ids) if (!this.covers.has(id)) await this.loadCover(id);
   }
 
@@ -99,7 +100,31 @@ class Library extends EventTarget {
         e.cover ||= s.cover;
       }
     }
+    for (const [k, e] of m) { const img = this.meta.artistInfo?.[k]?.image; if (img && this.covers.has(img)) e.cover = img; }
     return [...m.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** What is known about an artist besides their songs: { image, channel, about, synced } (set by Add from Link) */
+  artistInfo(name) { return this.meta.artistInfo?.[String(name || "").toLowerCase()] || null; }
+  async setArtistInfo(name, fields, picBlob) {
+    const k = String(name || "").toLowerCase();
+    const info = ((this.meta.artistInfo ||= {})[k] ||= {});
+    if (picBlob) {
+      try {
+        const id = "artist-" + hash(k);
+        const big = await squareJpeg(picBlob, 1000);
+        const small = big && await squareJpeg(big, 160);
+        if (big && small) {
+          const color = await coverColor(small);
+          await idb.put("covers", { big, small, color, cv: COLOR_VERSION }, id);
+          await this.loadCover(id);
+          info.image = id;
+        }
+      } catch (e) { diag.log(`artist photo: ${e?.message || e}`); }
+    }
+    for (const [f, v] of Object.entries(fields || {})) if (v !== undefined && v !== null && v !== "") info[f] = v;
+    this.saveMeta();
+    return info;
   }
 
   cover(id) { return id ? this.covers.get(id) : null; }
@@ -124,6 +149,16 @@ class Library extends EventTarget {
     for (const s of this.songs.values()) {
       if (norm(s.title) === norm(t.title) && norm(s.artist) === norm(t.artist) && norm(s.album) === norm(t.album)
           && Math.abs((s.duration || 0) - (t.duration || 0)) < 1.5) return s;
+    }
+    return null;
+  }
+
+  /** The same song (title, artist, length) already here, on whatever release. */
+  existingAnywhere(t) {
+    const title = norm(t.title), artist = norm(String(t.artist || "").split(/\s*,\s*/)[0]);
+    for (const s of this.songs.values()) {
+      if (norm(s.title) === title && norm(String(s.artist || "").split(/\s*,\s*/)[0]) === artist
+          && Math.abs((s.duration || 0) - (t.duration || 0)) < 2.5) return s;
     }
     return null;
   }
@@ -153,25 +188,6 @@ class Library extends EventTarget {
     diag.step = `Cover · ${name}`;
     song.cover = await timed(this.storeCover(tags, picture || folderCover), 30000, `Saving the cover of ${name}`);
     song.store = await putSongFile(blob.type ? blob : new Blob([blob], { type }), file, source || blob.source);
-    await idb.put("songs", song);
-    this.songs.set(song.id, song);
-    return { song, skipped: false };
-  }
-
-  /** Add a song whose details are already known (YouTube links): no reading the file's tags — the name, artist,
-   *  album and length come from YouTube, and "fill in info" adds the year, genre and the rest afterwards. */
-  async addKnown(blob, ext, info, picture) {
-    const tags = { title: "", artist: "", album: "", albumartist: "", track: 0, disc: 0, year: "", genre: "", composer: "",
-      label: "", copyright: "", isrc: "", bpm: "", duration: 0, codec: "", ...info };
-    if (!tags.duration) { diag.step = `Measuring · ${tags.title}`; tags.duration = await probeDuration(blob); }
-    const dup = this.existing(tags);
-    if (dup) return { song: dup, skipped: true };
-    const file = this.uniqueFile(organizedPath(tags, ext));
-    const type = blob.type || mimeFor(ext);
-    const song = { id: uid(), file, ...tags, size: blob.size, added: Date.now(), type };
-    diag.step = `Cover · ${tags.title}`;
-    song.cover = await timed(this.storeCover(tags, picture), 30000, `Saving the cover of ${tags.title}`);
-    song.store = await putSongFile(blob.type ? blob : new Blob([blob], { type }), file);
     await idb.put("songs", song);
     this.songs.set(song.id, song);
     return { song, skipped: false };

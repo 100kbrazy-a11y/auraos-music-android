@@ -1,11 +1,11 @@
 import "./style.css";
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Capacitor } from "@capacitor/core";
 import { lib, albumKey, mimeFor } from "./library.js";
 import { getJson as getJsonHttp, getBlob } from "./http.js";
 import { player, EQ_PRESETS, EQ_BANDS } from "./player.js";
 import { LyricsView, fetchLyrics, searchLyrics, cleanTitle } from "./lyrics.js";
 import { persistStorage, usage } from "./store.js";
-import { squareJpeg, coverColor, coverPalette } from "./tags.js";
+import { squareJpeg, coverColor } from "./tags.js";
 import { idb } from "./store.js";
 import { diag } from "./diag.js";
 import { DiskFile, dropPicked, initLibraryURL, songFileURLNow } from "./files.js";
@@ -86,83 +86,27 @@ function mosaic(songs, label) {
   return el;
 }
 
-/** a tick whenever a drag crosses the point where letting go would do something (and back) */
-function edge() {
-  let on = false;
-  const f = (now) => { if (now !== on) { on = now; nc.haptic(now ? "tick" : "soft"); } };
-  f.reset = () => { on = false; };
-  return f;
-}
-
-// ---- double tap to like (anywhere a song is): a heart bursts where you tapped
-function likeSong(s, x, y) {
-  if (!s) return;
-  const on = !lib.isFav(s.id);
-  if (on) lib.toggleFav([s.id], true);
-  nc.haptic(on ? "success" : "tap");
-  heartBurst(x, y, on);
-  updateNpFav?.();
-  if (on) snack(`Liked “${s.title}”`);
-  pageDirty = true;
-}
-function heartBurst(x, y, on = true) {
-  if (x == null) { x = innerWidth / 2; y = innerHeight / 2; }
-  const el = h("div", { class: "heartburst" + (on ? "" : " already") }, icon("heartf"));
-  el.style.left = `${x}px`; el.style.top = `${y}px`;
-  document.body.append(el);
-  setTimeout(() => el.remove(), 900);
-}
-/** tap / double tap on one element: a single tap waits a moment only if `waitForDouble` (else it runs at once) */
-// (remembered per song, not per element: the first tap can redraw the row it landed on)
-let lastTap = { key: "", t: 0, x: 0, y: 0 };
-function doubleTap(el, onDouble, key) {
-  el.addEventListener("pointerup", (e) => {
-    const now = performance.now();
-    if (lastTap.key === key && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
-      lastTap = { key: "", t: 0, x: 0, y: 0 }; dblAt.set(key, now); onDouble(e.clientX, e.clientY); return;
-    }
-    lastTap = { key, t: now, x: e.clientX, y: e.clientY };
-  });
-}
-const dblAt = new Map();
-const justDoubled = (key) => performance.now() - (dblAt.get(key) || 0) < 120;
-
 // press: tap / long-press (and right-click on desktop)
-function press(el, tap, long, drag) {
-  let timer = 0, sx = 0, sy = 0, fired = false, dragged = false, touching = false;
-  const fire = (e) => { if (fired) return; fired = true; clearTimeout(timer); el.classList.remove("pressed"); nc.haptic("press"); long?.(e); };
+function press(el, tap, long) {
+  let timer = 0, sx = 0, sy = 0, fired = false;
   el.addEventListener("pointerdown", (e) => {
     if (e.button > 0) return;
-    sx = e.clientX; sy = e.clientY; fired = false; dragged = false; touching = e.pointerType !== "mouse";
+    sx = e.clientX; sy = e.clientY; fired = false;
     el.classList.add("pressed");
-    if (long) timer = setTimeout(() => fire(e), 460);
+    if (long) timer = setTimeout(() => { fired = true; el.classList.remove("pressed"); navigator.vibrate?.(18); nc.haptic("press"); long(e); }, 460);
   });
-  const cancel = () => { clearTimeout(timer); el.classList.remove("pressed"); touching = false; };
-  el.addEventListener("pointermove", (e) => {
-    const d = Math.hypot(e.clientX - sx, e.clientY - sy);
-    // held, then the finger moves: pick it up and drag it (to another app, or onto one of the targets that appear)
-    if (fired && drag && !dragged && d > 12 && canDragOut()) { dragged = true; closeSheet(true); startDragOut(drag(), e); return; }
-    if (!fired && d > 10) cancel();
-  });
-  // once it's been held, moving the finger must not scroll the list (that would cancel the touch before the drag starts)
-  if (drag) el.addEventListener("touchmove", (e) => { if (fired) e.preventDefault(); }, { passive: false });
+  const cancel = () => { clearTimeout(timer); el.classList.remove("pressed"); };
+  el.addEventListener("pointermove", (e) => { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel(); });
   el.addEventListener("pointerup", cancel);
   el.addEventListener("pointercancel", cancel);
-  el.addEventListener("pointerleave", () => { if (!touching) clearTimeout(timer); });
+  el.addEventListener("pointerleave", () => clearTimeout(timer));
   el.addEventListener("click", (e) => { if (fired) { e.preventDefault(); e.stopPropagation(); return; } tap?.(e); });
-  if (long) el.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    if (touching) { fire(e); return; }          // the phone's own long-press: the same hold (keeps it "held" for dragging)
-    clearTimeout(timer); long(e); fired = false;  // a right-click
-  });
+  if (long) el.addEventListener("contextmenu", (e) => { e.preventDefault(); clearTimeout(timer); if (!fired) long(e); fired = false; });
 }
 
 // ============================================================ snackbar, dialogs, sheets
 let snackT;
 function snack(msg, action, fn, ms = 4200) {
-  const m = String(msg);
-  if (/^(couldn'?t|can'?t|failed|error|no |nothing)|isn'?t|wouldn'?t|refused|missing/i.test(m)) nc.haptic("error");
-  else if (/^(added|saved|sent|made|created|imported|copied|signed in|found|renamed|updated|restored|downloaded)/i.test(m)) nc.haptic("success");
   const box = $("#snack");
   box.innerHTML = "";
   const s = h("div", { class: "s" }, h("span", {}, msg), action && h("button", { onclick: () => { fn(); s.remove(); } }, action));
@@ -174,7 +118,6 @@ function snack(msg, action, fn, ms = 4200) {
 let sheetClose = null;
 function openSheet(content, { dialog = false, onClose } = {}) {
   closeSheet(true);
-  nc.haptic(dialog ? "soft" : "tap");
   const sh = $("#sheet"), scrim = $("#scrim");
   sh.innerHTML = "";
   sh.className = dialog ? "dialog" : "";
@@ -237,38 +180,22 @@ function confirmBox(title, message, ok = "Remove") {
     { dialog: true, onClose: () => res(false) });
   });
 }
-function progressBox(title) {
+function progressBox(title, onStop) {
   if (nc.on) {                     // iPhone: a Liquid Glass card that shows what it's doing, step by step
     diag.step = ""; diag.log("progress: " + title);
     nc.progressShow(title);
     let f = 0, t = "", sent = "";
     const push = () => { const o = { fraction: f, text: t, step: diag.step, log: diag.recent(3) }; const k = JSON.stringify(o); if (k !== sent) { sent = k; nc.progressUpdate(o); } };
     const tick = setInterval(push, 250);
-    return { set(nf, nt, sub) { f = nf; if (nt) t = nt; if (sub?.text) diag.step = sub.text; push(); }, close() { clearInterval(tick); diag.step = ""; nc.progressHide(); } };
+    return { set(nf, nt) { f = nf; if (nt) t = nt; push(); }, close() { clearInterval(tick); diag.step = ""; nc.progressHide(); } };
   }
-  // two bars: the whole job, and the thing it's doing right now (one song's download, a step…)
-  const bar = h("b"), txt = h("p", {}, "Starting…"), pct = h("span", { class: "pct" }, "0%");
-  const bar2 = h("b"), txt2 = h("div", { class: "suffix" }), sub = h("div", { class: "subtask" }, h("div", { class: "progress thin" }, bar2), txt2);
-  openSheet(h("div", { class: "progbox" }, h("h3", {}, title, pct), h("div", { class: "progress" }, bar), txt, sub), { dialog: true });
+  const bar = h("b"), txt = h("p", {}, "Starting…"), step = h("div", { class: "suffix" });
+  const stop = onStop && h("div", { class: "btns" }, h("button", { class: "btn text", onclick: (e) => { e.currentTarget.disabled = true; e.currentTarget.textContent = "Stopping…"; onStop(); } }, "Stop"));
+  openSheet(h("div", {}, h("h3", {}, title), h("div", { class: "progress" }, bar), txt, step, stop), { dialog: true });
   $("#scrim").onclick = null;
   diag.step = ""; diag.log("progress: " + title);
-  let subSet = 0;
-  // without its own sub-task, the second line shows what the app is doing right now
-  const tick = setInterval(() => { if (performance.now() - subSet > 1500 && txt2.textContent !== diag.step) { txt2.textContent = diag.step; sub.classList.toggle("nobar", true); } }, 250);
-  return {
-    set(f, t, s2) {
-      const p = Math.max(0, Math.min(1, f));
-      bar.style.width = (p * 100).toFixed(1) + "%"; pct.textContent = Math.floor(p * 100) + "%";
-      if (t) txt.textContent = t;
-      if (s2) {
-        subSet = performance.now();
-        sub.classList.toggle("nobar", s2.f == null);
-        if (s2.f != null) bar2.style.width = (Math.max(0, Math.min(1, s2.f)) * 100).toFixed(1) + "%";
-        if (s2.text) txt2.textContent = s2.text;
-      }
-    },
-    close() { clearInterval(tick); diag.step = ""; closeSheet(true); },
-  };
+  const tick = setInterval(() => { if (step.textContent !== diag.step) step.textContent = diag.step; }, 250);   // what it's doing right now
+  return { set(f, t) { bar.style.width = Math.round(f * 100) + "%"; if (t) txt.textContent = t; }, close() { clearInterval(tick); diag.step = ""; closeSheet(true); } };
 }
 function showDiagnostics() {
   const pre = h("pre", { class: "diag" }, diag.text() || "Nothing logged yet.");
@@ -303,8 +230,7 @@ function buildTabs() {
   setupTabDrag();
 }
 function markTab() {
-  miniTuck.page(stack.at(-1).type === "settings");
-  document.body.classList.toggle("in-settings", stack.at(-1).type === "settings");   // portrait: the bottom bar steps away      // sideways: tucked in Settings; elsewhere the Scroll Timer restarts
+  miniTuck.page(stack.at(-1).type === "settings");      // sideways: tucked in Settings; elsewhere the Scroll Timer restarts
   for (const b of $("#tabs").querySelectorAll("button[data-tab]")) b.classList.toggle("on", b.dataset.tab === stack[0].type);
   sideLists();
   moveInd(stack[0].type);
@@ -457,9 +383,7 @@ function setupTabDrag() {
     lastX = pos; lastT = now;
     ind.x = x;
     const centre = x + ind.w / 2;
-    let over = null;
-    for (const t of g) { const on = centre >= t.x && centre < t.x + t.w; t.el.classList.toggle("hover", on); if (on) over = t.id; }
-    if (over && over !== nav.dataset.over) { if (nav.dataset.over) nc.haptic("tick"); nav.dataset.over = over; }
+    for (const t of g) t.el.classList.toggle("hover", centre >= t.x && centre < t.x + t.w);
     renderInd();
   });
   const up = () => {
@@ -471,8 +395,6 @@ function setupTabDrag() {
     g.forEach((t) => t.el.classList.remove("hover"));
     const near = g.reduce((a, b) => (Math.abs(b.x + b.w / 2 - centre) < Math.abs(a.x + a.w / 2 - centre) ? b : a));
     nav.dataset.dragged = "1";
-    delete nav.dataset.over;
-    nc.haptic("soft");
     setTimeout(() => delete nav.dataset.dragged, 50);
     if (near.id !== stack[0].type) goTab(near.id); else moveInd(near.id);
     springInd();
@@ -537,11 +459,10 @@ function setupSwipe() {
     return j >= 0 && j < TABS.length ? TABS[j].id : null;
   };
   pages.addEventListener("touchstart", (e) => {
-    active = !sel && e.touches.length === 1 && !e.target.closest(".hscroll, .chips, input, .eqviz, #mini, .capsule, [data-dragging]");
+    active = !sel && e.touches.length === 1 && !e.target.closest(".hscroll, .chips, input, .eqviz, #mini");
     if (!active) return;
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY; dx = 0; decided = horiz = false; swipeEdge.reset();
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; dx = 0; decided = horiz = false;
   }, { passive: true });
-  const swipeEdge = edge();
   pages.addEventListener("touchmove", (e) => {
     if (!active) return;
     const t = e.touches[0];
@@ -550,7 +471,6 @@ function setupSwipe() {
     if (!decided && (Math.abs(dx) > 14 || Math.abs(dy) > 14)) { decided = true; horiz = Math.abs(dx) > Math.abs(dy) * 1.4; }
     if (!horiz || !pageEl) return;
     const ok = !!target(dx);
-    swipeEdge(ok && Math.abs(dx) > 70);
     pageEl.style.transition = "none";
     pageEl.style.overflowY = "hidden";
     pageEl.style.transform = `translateX(${dx * (ok ? 0.6 : 0.12)}px)`;
@@ -597,19 +517,12 @@ function refresh() {
   pageEl = el;
   quietScrollUntil = performance.now() + 150;     // restoring the scroll position isn't you scrolling
   el.scrollTop = top;
-  el._wantTop = top;
-  setTimeout(() => { if (el._wantTop === top) el._wantTop = 0; }, 3000);
   if (top > 8) el.classList.add("scrolled");
 }
 
 function pageShell(title, { back = stack.length > 1, actions = [] } = {}) {
   const page = h("div", { class: "page" });
-  let acts = actions.filter(Boolean);
-  if (!nc.on) {                    // (iPhone: the native glass top bar does this itself)
-    const icons = acts.filter((a) => a.classList?.contains("ib") && !a.classList.contains("back"));
-    if (icons.length) { const cap = capsule(icons); const at = acts.indexOf(icons[0]); acts = acts.filter((a) => !icons.includes(a)); acts.splice(at, 0, cap); }
-  }
-  const head = h("div", { class: "head" }, back && h("button", { class: "ib back", onclick: pop }, icon("back")), h("h1", {}, title), ...acts);
+  const head = h("div", { class: "head" }, back && h("button", { class: "ib back", onclick: pop }, icon("back")), h("h1", {}, title), ...actions.filter(Boolean));
   page.append(head);
   if (nc.on) {                    // iPhone: the native glass top bar mirrors this header
     let t = 0;
@@ -752,59 +665,6 @@ function playButtons(songs, ctx, mix) {
   };
 }
 
-/** The header's icon buttons in one capsule. Tap a button as usual — or hold the capsule and a bubble appears under
- *  your finger: slide it across the buttons (a tick on each) and let go on the one you want. Going to a page with
- *  fewer or more buttons, the capsule shrinks or grows into its new size. */
-let capW = 0;
-function capsule(buttons) {
-  const lens = h("i", { class: "lens" });
-  const cap = h("div", { class: "capsule" }, lens, ...buttons);
-  let timer = 0, held = false, over = null, sx = 0, sy = 0;
-  const btnAt = (x) => buttons.find((b) => { const r = b.getBoundingClientRect(); return x >= r.left - 2 && x <= r.right + 2; }) ||
-    (x < buttons[0].getBoundingClientRect().left ? buttons[0] : buttons.at(-1));
-  const place = (b, grow) => {
-    const cr = cap.getBoundingClientRect(), r = b.getBoundingClientRect();
-    lens.style.left = `${r.left - cr.left}px`; lens.style.width = `${r.width}px`;
-    lens.classList.toggle("big", !!grow);
-    buttons.forEach((x) => x.classList.toggle("lensed", x === b));
-  };
-  const end = () => { clearTimeout(timer); held = false; over = null; cap.classList.remove("holding"); lens.classList.remove("on", "big"); buttons.forEach((x) => x.classList.remove("lensed")); };
-  cap.addEventListener("pointerdown", (e) => {
-    sx = e.clientX; sy = e.clientY; held = false;
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      held = true; over = btnAt(sx);
-      try { cap.setPointerCapture(e.pointerId); } catch {}
-      cap.classList.add("holding"); lens.classList.add("on"); place(over, true);
-      nc.haptic("press");
-    }, 220);
-  });
-  cap.addEventListener("pointermove", (e) => {
-    if (!held) { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 10) clearTimeout(timer); return; }
-    const b = btnAt(e.clientX);
-    if (b !== over) { over = b; place(b, true); nc.haptic("tick"); }
-  });
-  cap.addEventListener("pointerup", (e) => {
-    clearTimeout(timer);
-    if (!held) return;
-    const b = over; end();
-    cap.dataset.swallow = "1"; setTimeout(() => delete cap.dataset.swallow, 60);
-    nc.haptic("tap");
-    b?.click();
-  });
-  cap.addEventListener("pointercancel", end);
-  cap.addEventListener("click", (e) => { if (cap.dataset.swallow && e.isTrusted) { e.stopPropagation(); e.preventDefault(); } }, true);
-  cap.addEventListener("contextmenu", (e) => e.preventDefault());
-  // shrink / grow from the last capsule's size into this one's
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    if (!cap.isConnected) return;
-    const w = cap.getBoundingClientRect().width;
-    if (capW && Math.abs(capW - w) > 2 && motion())
-      cap.animate([{ width: `${capW}px` }, { width: `${w}px` }], { duration: 460, easing: "cubic-bezier(.3,1.35,.5,1)" });
-    capW = w;
-  }));
-  return cap;
-}
 const rootActions = (withFilter = true) => [ib("search", () => { push({ type: "browse" }); setTimeout(() => $(".browse-q")?.focus(), 420); }, "", "Search"),
   withFilter && filterButton(), ib("settings", () => push({ type: "settings" }), "", "Settings")].filter(Boolean);
 
@@ -826,7 +686,6 @@ function render(p) {
 
 // ============================================================ selection
 function startSelect(kind, id) {
-  nc.haptic("press");
   sel = { kind, ids: new Set([id]) };
   nc.update({ covered: true });
   refresh();
@@ -834,7 +693,6 @@ function startSelect(kind, id) {
 }
 function toggleSel(id) {
   sel.ids.has(id) ? sel.ids.delete(id) : sel.ids.add(id);
-  nc.haptic(sel.ids.has(id) ? "tick" : "soft");
   if (!sel.ids.size) return endSelect();
   refresh();
   updateSelbar();
@@ -889,33 +747,12 @@ function songRow(s, i, list, opts = {}) {
     more.addEventListener("pointerdown", (e) => e.stopPropagation());
     row.append(more);
   }
-  press(row, () => { if (justDoubled("s" + s.id)) return; sel ? sel.kind === "songs" && toggleSel(s.id) : play(); },
-    () => (sel ? sel.kind === "songs" && toggleSel(s.id) : songMenu(s, opts)), () => ({ kind: "song", song: s }));
-  if (!sel) doubleTap(row, (x, y) => likeSong(s, x, y), "s" + s.id);
-  row.dataset.id = s.id;
-  row._make = () => songRow(s, i, list, opts);        // (so a new song playing can redo just this row)
+  press(row, () => (sel ? sel.kind === "songs" && toggleSel(s.id) : play()), () => (sel ? sel.kind === "songs" && toggleSel(s.id) : songMenu(s, opts)));
   return row;
 }
 function songList(songs, opts) {
   const box = h("div", { class: "list" });
-  // long lists: the first screenfuls now, the rest a chunk per frame (no freeze on a big library)
-  const first = songs.length > 160 ? 100 : songs.length;
-  const frag = document.createDocumentFragment();
-  for (let i = 0; i < first; i++) frag.append(songRow(songs[i], i, songs, opts));
-  box.append(frag);
-  let at = first;
-  const more = () => {
-    if (at >= songs.length) return;
-    if (!box.isConnected && at > first) return;        // page went away
-    const f = document.createDocumentFragment();
-    const end = Math.min(songs.length, at + 220);
-    for (; at < end; at++) f.append(songRow(songs[at], at, songs, opts));
-    box.append(f);
-    const pg = box.closest(".page");                     // keep the scroll position a refresh asked for
-    if (pg?._wantTop && pg.scrollTop < pg._wantTop - 2) { quietScrollUntil = performance.now() + 150; pg.scrollTop = pg._wantTop; }
-    requestAnimationFrame(more);
-  };
-  if (at < songs.length) requestAnimationFrame(more);
+  songs.forEach((s, i) => box.append(songRow(s, i, songs, opts)));
   return box;
 }
 /** an artist as a card the size of an album card (round picture) */
@@ -929,10 +766,7 @@ function artistCard(a) {
 function songCard(s, list, i, ctx) {
   const c = h("div", { class: "card song-card" + (player.current?.id === s.id ? " now" : "") }, art(s.cover, { small: false, label: s.album }),
     h("div", { class: "t" }, s.title), h("div", { class: "s" }, s.artist || s.album || ""));
-  press(c, () => { if (justDoubled("s" + s.id)) return; playWithMix(list, i, ctx); }, () => songMenu(s), () => ({ kind: "song", song: s }));
-  doubleTap(c, (x, y) => likeSong(s, x, y), "s" + s.id);
-  c.dataset.id = s.id;
-  c._make = () => songCard(s, list, i, ctx);
+  press(c, () => playWithMix(list, i, ctx), () => songMenu(s));
   return c;
 }
 function albumCard(a) {
@@ -941,8 +775,7 @@ function albumCard(a) {
     h("div", { class: "t" }, a.title), h("div", { class: "s" }, a.artist));
   if (selected) c.firstChild.append(h("span", { class: "check" }, icon("check")));
   press(c, () => (sel ? sel.kind === "albums" && toggleSel(a.key) : push({ type: "album", key: a.key })),
-    () => (sel ? sel.kind === "albums" && toggleSel(a.key) : albumMenu(a)),
-    () => ({ kind: "pack", title: a.title, sub: `${a.artist} · ${plural(a.tracks.length, "song")}`, cover: a.cover, songs: () => a.tracks }));
+    () => (sel ? sel.kind === "albums" && toggleSel(a.key) : albumMenu(a)));
   return c;
 }
 function emptyLibrary() {
@@ -970,6 +803,12 @@ function pageArtists() {
   if (filtCount()) list = list.map((a) => ({ ...a, n: [...a.songs].filter(passes).length })).filter((a) => a.n);
   { const fb = filterBar(); if (fb) p.append(fb); }
   if (!list.length) p.append(noMatches());
+  if (native) {
+    const add = h("div", { class: "arow add-artist" }, h("div", { class: "art add" }, icon("add")),
+      h("div", {}, h("div", { class: "t" }, "Add an artist from YouTube Music"), h("div", { class: "s" }, "Paste an artist link to download their music")));
+    press(add, () => addFromLink("artist"));
+    p.append(add);
+  }
   for (const a of list) {
     const r = h("div", { class: "arow" }, art(a.cover, { label: a.name, round: true }),
       h("div", {}, h("div", { class: "t" }, a.name), h("div", { class: "s" }, plural(a.n ?? a.songs.size, "song"))));
@@ -1040,16 +879,14 @@ function pagePlaylists() {
   p.append(newRow);
   const fav = h("div", { class: "arow" }, h("div", { class: "art", style: { borderRadius: "12px", display: "grid", placeItems: "center", background: "linear-gradient(145deg,#ff7aa0,#b0305a)", color: "#2a0612" } }, icon("heartf")),
     h("div", {}, h("div", { class: "t" }, "Favorite Songs"), h("div", { class: "s" }, plural(lib.favorites().length, "song"))));
-  press(fav, () => push({ type: "favorites" }), null,
-    () => ({ kind: "pack", title: "Favorite Songs", sub: plural(lib.favorites().length, "song"), songs: () => lib.favorites(), playlist: "Favorite Songs" }));
+  press(fav, () => push({ type: "favorites" }));
   p.append(fav);
   for (const name of Object.keys(lib.meta.playlists)) {
     const songs = lib.playlistSongs(name);
     const a = art(songs.find((s) => s.cover)?.cover, { label: name });
     a.style.borderRadius = "12px";
     const r = h("div", { class: "arow" }, a, h("div", {}, h("div", { class: "t" }, name), h("div", { class: "s" }, plural(songs.length, "song"))));
-    press(r, () => push({ type: "playlist", name }), () => playlistMenu(name),
-      () => ({ kind: "pack", title: name, sub: plural(songs.length, "song"), cover: songs.find((x) => x.cover)?.cover, songs: () => lib.playlistSongs(name), playlist: name }));
+    press(r, () => push({ type: "playlist", name }), () => playlistMenu(name));
     p.append(r);
   }
   return p;
@@ -1087,17 +924,91 @@ function pageAlbum(key) {
   return withHeadPlay(p, p.querySelector(".hero"));
 }
 
+/** artists that share songs or genres with this one ("Fans might also like") */
+function similarArtists(name, songs) {
+  const k = name.toLowerCase();
+  const genres = new Set(songs.flatMap(genresOf).map((g) => g.toLowerCase()));
+  const out = [];
+  for (const a of lib.artists()) {
+    if (a.name.toLowerCase() === k) continue;
+    let collab = false, genre = false;
+    for (const s of a.songs) {
+      if (!collab && artistNames(s).some((n) => n.toLowerCase() === k)) collab = true;
+      if (!genre && genres.size && genresOf(s).some((g) => genres.has(g.toLowerCase()))) genre = true;
+      if (collab && genre) break;
+    }
+    const score = (collab ? 3 : 0) + (genre ? 1 : 0);
+    if (score) out.push({ a, score });
+  }
+  return out.sort((x, y) => y.score - x.score || x.a.name.localeCompare(y.a.name)).slice(0, 12).map((x) => x.a);
+}
+
+// The artist page, laid out like YouTube Music's: a full-width photo with the name over it, Shuffle / Radio buttons,
+// the songs, then Albums, Singles & EPs, "Featured on", "Fans might also like" and About.
 function pageArtist(name) {
   const k = name.toLowerCase();
+  const info = lib.artistInfo(name) || {};
   const songs = [...lib.songs.values()].filter((s) => (s.albumartist || "").toLowerCase() === k || (s.artist || "").split(/\s*,\s*/).some((x) => x.toLowerCase() === k))
     .sort((a, b) => (a.album || "").localeCompare(b.album || "") || (a.track || 0) - (b.track || 0));
   const p = pageShell("");
   const albums = [...new Set(songs.map((s) => albumKey(s)))].map((key) => lib.albumMap.get(key)).filter(Boolean);
-  p.append(detailHero(art(songs.find((s) => s.cover)?.cover, { small: false, label: name, cls: "bigart" }), name, "",
-    `${plural(albums.length, "album")} · ${plural(songs.length, "song")}`, songs, name, null, true));
-  if (albums.length) { p.append(h("div", { class: "section-t" }, "Albums"), h("div", { class: "hscroll" }, albums.map(albumCard))); }
-  p.append(h("div", { class: "section-t" }, "Songs"), songList(songs, { ctx: name }));
-  return withHeadPlay(p, p.querySelector(".hero"));
+  const newest = (x, y) => String(y.year || "").localeCompare(String(x.year || "")) || x.title.localeCompare(y.title);
+  const own = albums.filter((a) => a.artist.toLowerCase() === k).sort(newest);
+  const featured = albums.filter((a) => a.artist.toLowerCase() !== k).sort(newest);
+  const full = own.filter((a) => a.tracks.length > 6), small = own.filter((a) => a.tracks.length <= 6);
+
+  const img = info.image && lib.cover(info.image) ? info.image : songs.find((s) => s.cover)?.cover;
+  const col = lib.cover(img)?.color;
+  if (col) p.style.setProperty("--accent", col);
+  const hero = h("div", { class: "ah" }, art(img, { small: false, label: name, cls: "ah-art" }),
+    h("div", { class: "ah-txt" }, h("h2", {}, name),
+      h("div", { class: "info" }, [plural(albums.length, "album"), plural(songs.length, "song"), totalTime(songs)].join(" · "))));
+  const pb = playButtons(songs, name);
+  hero._head = pb.head;                                   // (shown in the top bar when sideways)
+  const shuffle = () => { player.playList(songs.map((s) => s.id), 0, { shuffle: true }); ctxLabel = name; };
+  const radio = () => playWithMix(songs, 0, name);
+  const acts = h("div", { class: "ah-acts" },
+    h("button", { class: "pill solid", onclick: shuffle }, icon("shuffle"), "Shuffle"),
+    h("button", { class: "pill", onclick: radio }, icon("spark"), "Radio"),
+    native && h("button", { class: "pill round", onclick: () => artistFromYouTube(name), "aria-label": info.channel ? "Get more from YouTube Music" : "Link to YouTube Music" }, icon("globe")));
+  p.append(hero, acts);
+
+  // songs: the first five, then "Show all" (favourites first, otherwise album order)
+  const ordered = [...songs].sort((a, b) => (lib.isFav(b.id) ? 1 : 0) - (lib.isFav(a.id) ? 1 : 0));
+  const box = h("div", { class: "list" });
+  const SHOWN = 5;
+  ordered.slice(0, SHOWN).forEach((s, i) => box.append(songRow(s, i, ordered, { ctx: name })));
+  p.append(h("div", { class: "section-t" }, "Songs"), box);
+  if (ordered.length > SHOWN) {
+    const more = h("button", { class: "pill more-songs" }, `Show all ${ordered.length} songs`);
+    more.onclick = () => { ordered.slice(SHOWN).forEach((s, i) => box.append(songRow(s, SHOWN + i, ordered, { ctx: name }))); more.remove(); };
+    p.append(h("div", { class: "ah-more" }, more));
+  }
+
+  const kind = (a) => (a.tracks.length <= 3 ? "Single" : a.tracks.length <= 6 ? "EP" : "Album");
+  const shelf = (title, list, sub) => {
+    if (!list.length) return;
+    p.append(h("div", { class: "section-t" }, title), h("div", { class: "hscroll" }, list.map((a) => {
+      const c = albumCard(a), t = c.querySelector(".s");
+      if (t && sub) t.textContent = sub(a);
+      return c;
+    })));
+  };
+  shelf("Albums", full, (a) => [a.year, "Album"].filter(Boolean).join(" · "));
+  shelf("Singles & EPs", small, (a) => [a.year, kind(a)].filter(Boolean).join(" · "));
+  shelf("Featured on", featured, null);
+
+  const like = similarArtists(name, songs);
+  if (like.length) p.append(h("div", { class: "section-t" }, "Fans might also like"), h("div", { class: "hscroll" }, like.map(artistCard)));
+
+  const about = (info.about || "").trim();
+  const genres = [...new Set(songs.flatMap(genresOf))].slice(0, 6);
+  if (about || genres.length) {
+    p.append(h("div", { class: "section-t" }, "About"));
+    if (about) { const t = h("div", { class: "ah-about clamp" }, about); t.onclick = () => t.classList.toggle("clamp"); p.append(t); }
+    if (genres.length) p.append(h("div", { class: "ah-genres" }, genres.map((g) => h("span", { class: "chip" }, g))));
+  }
+  return withHeadPlay(p, hero);
 }
 
 function pagePlaylist(name) {
@@ -1150,7 +1061,7 @@ function settingsModel(sizeText) {
     { title: "Your Music", rows: [
       { id: "add", type: "action", symbol: "plus", title: "Add Songs", subtitle: "Pick music files from your phone" },
       { id: "pack", type: "action", symbol: "shippingbox", title: "Add Music Pack", subtitle: "Add a …-musicpack.zip someone shared with you" },
-      { id: "link", type: "action", symbol: "link", title: "Add from Link (Experimental)", subtitle: "Paste a YouTube or YouTube Music song, album or playlist link" },
+      { id: "link", type: "action", symbol: "link", title: "Add from Link (Experimental)", subtitle: "Paste a YouTube or YouTube Music song, album, playlist or artist link" },
       { id: "ytacct", type: "action", symbol: "person.crop.circle", title: "YouTube Account", subtitle: ytSignedInNow() ? "Signed in · used by Add from Link · tap to sign out" : "Sign in if YouTube asks you to (for Add from Link)" },
       { id: "covers", type: "action", symbol: "globe", title: "Find Missing Covers", subtitle: "Look up album art online" },
       { id: "genres", type: "action", symbol: "magnifyingglass", title: "Find Genres", subtitle: missingGenres ? `Look up genres online for ${plural(missingGenres, "song")} that don't have one` : "Every song has a genre" },
@@ -1210,52 +1121,22 @@ async function settingAction(id) {
 function pageSettings() {
   const p = pageShell("Settings");
   const s = lib.meta.settings;
-  const item = (ic, t, sub, on, right) =>
-    h("button", { class: "item", onclick: on }, icon(ic), h("div", { class: "meta" }, h("div", { class: "t" }, t), sub && h("div", { class: "s" }, sub)), right);
-  const group = (title, ...kids) => h("div", { class: "group" }, title && h("h4", {}, title), ...kids.filter(Boolean));
-  const toggle = (on) => h("span", { class: "switch" + (on ? " on" : "") });
-  /** a row that folds open to show more (keeps the page short) */
-  const fold = (ic, t, sub, panel) => {
-    const val = h("span", { class: "val" }, sub());
-    const chev = h("span", { class: "chev" }, icon("down"));
-    const box = h("div", { class: "fold" }, panel);
-    const row = h("button", { class: "item", onclick: () => { const open = !box.classList.contains("open"); box.classList.toggle("open", open); chev.classList.toggle("open", open); } },
-      icon(ic), h("div", { class: "meta" }, h("div", { class: "t" }, t)), val, chev);
-    return [row, box, () => (val.textContent = sub())];
+  const item = (ic, t, sub, on, right) => {
+    const b = h("button", { class: "item", onclick: on }, icon(ic), h("div", { class: "meta" }, h("div", { class: "t" }, t), sub && h("div", { class: "s" }, sub)), right);
+    return b;
   };
+  const libGroup = h("div", { class: "group" }, h("h4", {}, "Your Music"),
+    item("add", "Add Songs", "Pick music files from your phone", pickSongs),
+    item("pack", "Add Music Pack", "Add a …-musicpack.zip someone shared with you", pickPacks),
+    item("globe", "Add from Link (Experimental)", "Paste a YouTube or YouTube Music song, album, playlist or artist link", addFromLink),
+    item("artist", "YouTube Account", ytSignedInNow() ? "Signed in · tap to sign out" : "Sign in if YouTube asks you to (for Add from Link)", () => youtubeAccount()),
+    item("globe", "Find Missing Covers", "Look up album art online", () => findCovers(true)),
+    item("search", "Find Genres", (() => { const n = [...lib.songs.values()].filter((x) => !genresOf(x).length).length; return n ? `Look up genres online for ${plural(n, "song")} that don't have one` : "Every song has a genre"; })(), () => findGenres()));
+  const sizeLine = h("div", { class: "s" }, "…");
+  usage().then((u) => { sizeLine.textContent = `${plural(lib.songs.size, "song")} · ${plural(lib.albums.length, "album")}` + (u.usage ? ` · ${fmtSize(u.usage)} used` : ""); });
+  libGroup.append(h("div", { class: "item" }, icon("folder"), h("div", { class: "meta" }, h("div", { class: "t" }, "Library"), sizeLine)));
+  libGroup.append(item("info", "Diagnostics", "What the app did recently, for troubleshooting", showDiagnostics));
 
-  // ---- your library at a glance
-  const stat = (n, label) => h("div", { class: "stat" }, h("b", {}, String(n)), h("span", {}, label));
-  const used = h("div", { class: "used" }, "…");
-  usage().then((u) => { used.textContent = u.usage ? `${fmtSize(u.usage)} on this phone` : ""; });
-  const summary = h("div", { class: "group libcard" },
-    h("div", { class: "stats" }, stat(lib.songs.size, "songs"), stat(lib.albums.length, "albums"), stat(new Set([...lib.songs.values()].map((x) => (x.albumartist || x.artist || "").toLowerCase()).filter(Boolean)).size, "artists"),
-      stat(Object.keys(lib.meta.playlists).length, "playlists")), used);
-
-  // ---- adding music
-  const add = group("Add Music",
-    item("add", "Add Songs", "Music files from your phone", pickSongs),
-    item("pack", "Add Music Pack", "A …-musicpack.zip someone shared with you", pickPacks),
-    item("globe", "Add from Link", "YouTube or YouTube Music song, album or playlist · experimental", addFromLink));
-
-  // ---- library health: only what needs doing
-  const noCover = lib.albums.filter((a) => !a.cover).length;
-  const noGenre = [...lib.songs.values()].filter((x) => !genresOf(x).length).length;
-  const afSw = toggle(s.autofill !== false);
-  const health = group("Library Health",
-    noCover ? item("globe", "Find Missing Covers", `${plural(noCover, "album")} without a cover`, () => findCovers(true), h("span", { class: "badge" }, String(noCover))) : null,
-    noGenre ? item("search", "Find Genres", `${plural(noGenre, "song")} without a genre`, () => findGenres(), h("span", { class: "badge" }, String(noGenre))) : null,
-    !noCover && !noGenre && lib.songs.size ? h("div", { class: "item" }, icon("check"), h("div", { class: "meta" }, h("div", { class: "t" }, "All set"), h("div", { class: "s" }, "Every album has a cover and every song a genre"))) : null,
-    item("spark", "Fill In Info Automatically", "Look up missing albums, years, genres and covers when you add songs", () => {
-      s.autofill = s.autofill === false; lib.saveMeta(); afSw.classList.toggle("on", s.autofill !== false);
-    }, afSw));
-
-  // ---- playback
-  const xfVal = h("span", { class: "val" });
-  const xf = h("input", { type: "range", min: "0", max: "12", step: "1", value: String(s.crossfade || 0), class: "slider" });
-  const showXf = () => { const v = +xf.value; xfVal.textContent = v ? `${v} s` : "Off"; xf.style.setProperty("--f", (v / 12) * 100 + "%"); };
-  xf.addEventListener("input", () => { s.crossfade = +xf.value; lib.saveMeta(); showXf(); });
-  showXf();
   const eqViz = h("div", { class: "eqviz" });
   const drawEq = () => {
     eqViz.innerHTML = "";
@@ -1266,64 +1147,53 @@ function pageSettings() {
         h("small", {}, EQ_BANDS[i] >= 1000 ? EQ_BANDS[i] / 1000 + "k" : String(EQ_BANDS[i]))));
     });
   };
+  drawEq();
   const chips = h("div", { class: "chips", style: { padding: "6px 18px 16px" } });
-  let eqLabel = () => {};
   const drawChips = () => {
     chips.innerHTML = "";
-    for (const name of Object.keys(EQ_PRESETS)) chips.append(h("button", { class: "chip" + (s.eq === name ? " on" : ""), onclick: () => { player.applyEq(name); drawEq(); drawChips(); eqLabel(); } }, s.eq === name && icon("check"), name));
+    for (const name of Object.keys(EQ_PRESETS)) chips.append(h("button", { class: "chip" + (s.eq === name ? " on" : ""), onclick: () => { player.applyEq(name); drawEq(); drawChips(); } }, s.eq === name && icon("check"), name));
   };
-  drawEq(); drawChips();
-  const [eqRow, eqBox, eqUpd] = fold("eq", "Equalizer", () => s.eq || "Flat", h("div", {}, eqViz, chips));
-  eqLabel = eqUpd;
-  const play = group("Playback",
-    h("div", { class: "item" }, icon("queue"), h("div", { class: "meta" }, h("div", { class: "t" }, "Crossfade"), h("div", { class: "s" }, "Blend the end of each song into the next")), xfVal),
-    h("div", { class: "sl-wrap" }, xf),
-    eqRow, eqBox);
-
-  // ---- look & feel
-  const mSw = toggle(motion()), pinSw = toggle(!!s.tuckPinned);
+  drawChips();
+  const eqGroup = h("div", { class: "group" }, h("h4", {}, "Equalizer"), eqViz, chips);
+  const xfVal = h("span", { class: "val" });
+  const xf = h("input", { type: "range", min: "0", max: "12", step: "1", value: String(s.crossfade || 0), class: "slider" });
+  const showXf = () => { const v = +xf.value; xfVal.textContent = v ? `${v} s` : "Off"; xf.style.setProperty("--f", (v / 12) * 100 + "%"); };
+  xf.addEventListener("input", () => { s.crossfade = +xf.value; lib.saveMeta(); showXf(); });
+  showXf();
   const lrChips = h("div", { class: "chips", style: { padding: "2px 18px 14px" } });
-  let lrLabel = () => {};
   const drawLr = () => {
     lrChips.innerHTML = "";
     const cur = +s.lyricReturn || 1.5;
-    for (const v of [1, 1.5, 2, 3, 5, 10]) lrChips.append(h("button", { class: "chip" + (cur === v ? " on" : ""), onclick: () => { s.lyricReturn = v; lib.saveMeta(); drawLr(); lrLabel(); } }, cur === v && icon("check"), `${v} s`));
+    for (const v of [1, 1.5, 2, 3, 5, 10]) lrChips.append(h("button", { class: "chip" + (cur === v ? " on" : ""), onclick: () => { s.lyricReturn = v; lib.saveMeta(); drawLr(); } }, cur === v && icon("check"), `${v} s`));
   };
   drawLr();
-  const [lrRow, lrBox, lrUpd] = fold("lyrics", "Scroll Timers", () => `${+s.lyricReturn || 1.5} s`,
-    h("div", {}, h("div", { class: "s fold-note" }, "After you stop scrolling, lyrics glide back to the current line, and sideways the player comes back, after:"), lrChips));
-  lrLabel = lrUpd;
-  const look = group("Look & Feel",
+  const playGroup = h("div", { class: "group" }, h("h4", {}, "Playback"),
+    h("div", { class: "item" }, icon("queue"), h("div", { class: "meta" }, h("div", { class: "t" }, "Crossfade"), h("div", { class: "s" }, "Blend the end of each song into the next")), xfVal),
+    h("div", { class: "sl-wrap" }, xf),
+    h("div", { class: "item", style: { paddingBottom: "6px" } }, icon("lyrics"), h("div", { class: "meta" }, h("div", { class: "t" }, "Scroll Timers"),
+      h("div", { class: "s" }, "After you stop scrolling, lyrics glide back to the current line and the player comes back (sideways) after"))), lrChips);
+
+  const sw = h("span", { class: "switch" + (motion() ? " on" : "") });
+  const afSw = h("span", { class: "switch" + (s.autofill !== false ? " on" : "") });
+  libGroup.append(item("search", "Fill In Song Info Automatically", "When you add songs, look up missing albums, years, genres and covers", () => {
+    s.autofill = s.autofill === false; lib.saveMeta(); afSw.classList.toggle("on", s.autofill !== false);
+  }, afSw));
+  const pinSw = h("span", { class: "switch" + (s.tuckPinned ? " on" : "") });
+  playGroup.append(item("folder", "Keep Media Bar Tucked", "Sideways: keep the media bar tucked under the tabs as just the album cover", () => {
+    miniTuck.pin(!s.tuckPinned); pinSw.classList.toggle("on", !!s.tuckPinned);
+  }, pinSw));
+  const look = h("div", { class: "group" }, h("h4", {}, "Look & Feel"),
     item("spark", "Motion Effects", "Sliding pages, glow, living background", () => {
-      s.motion = !motion(); lib.saveMeta(); mSw.classList.toggle("on", motion()); document.body.classList.toggle("nomotion", !motion());
-    }, mSw),
-    item("folder", "Keep Media Bar Tucked", "Sideways: just the album cover, tucked under the tabs", () => {
-      miniTuck.pin(!s.tuckPinned); pinSw.classList.toggle("on", !!s.tuckPinned);
-    }, pinSw),
-    lrRow, lrBox);
-
-  // ---- sharing & accounts
-  const ovVal = h("span", { class: "val" }, "");
-  const share = group("Sharing & Accounts",
-    canDragOut() && item("pack", "Drag to Other Apps", "Hold a song, album or playlist, then drag it into Files, Messages… Albums and playlists become music packs.", async () => {
-      const { granted } = await DragOut.canOverlay();
-      if (granted) return snack("Naming packs when you drop them is on");
-      lib.meta.settings.overlayAsked = false; askOverlayOnce();
-    }, ovVal),
-    item("artist", "YouTube Account", ytSignedInNow() ? "Signed in · tap to sign out" : "Sign in if YouTube asks you to (for Add from Link)", () => youtubeAccount()));
-  if (canDragOut()) DragOut.canOverlay().then(({ granted }) => (ovVal.textContent = granted ? "Names on" : "Names off")).catch(() => {});
-
-  // ---- help & storage
-  const help = group("Help & Storage",
-    item("info", "Diagnostics", "What the app did recently — share it when something goes wrong", showDiagnostics),
+      s.motion = !motion(); lib.saveMeta(); sw.classList.toggle("on", motion()); document.body.classList.toggle("nomotion", !motion());
+    }, sw));
+  const danger = h("div", { class: "group" }, h("h4", {}, "Storage"),
     item("trash", "Remove All Music", "Deletes the songs stored in this app", async () => {
       if (!lib.songs.size) return;
       if (await confirmBox("Remove all music?", `This deletes all ${plural(lib.songs.size, "song")} from this app. Music packs and files on your phone aren't touched.`, "Remove All")) {
         player.pause(); await lib.removeSongs([...lib.songs.keys()]); player.queue = []; player.index = -1; updateMini(); refresh(); snack("Removed all music");
       }
     }));
-  p.append(...[summary, add, lib.songs.size ? health : null, play, look, share, help].filter(Boolean),
-    h("div", { class: "empty", style: { padding: "10px 30px 40px", fontSize: "12px" } }, "AuraOS Music · music packs work on iPhone, Android and the desktop app"));
+  p.append(libGroup, playGroup, eqGroup, look, danger, h("div", { class: "empty", style: { padding: "10px 30px 40px", fontSize: "12px" } }, "AuraOS Music for Android · music packs work with the desktop app too"));
   return p;
 }
 
@@ -1554,7 +1424,7 @@ async function autoFill(songs) {
   const pause = () => new Promise((r) => setTimeout(r, 350));
   try {
     // songs with no album name: find which album they're from
-    for (const s of songs.filter((x) => !x.album || !x.year || !x.genre).slice(0, 200)) {     // (a whole imported playlist, paced: one lookup at a time)
+    for (const s of songs.filter((x) => !x.album || !x.year || !x.genre).slice(0, 40)) {
       if (s.album && lib.albumOf(s)?.tracks.length > 1) continue;      // whole albums are done below, in one go
       asked++;
       const m = await bestSongMatch(s);
@@ -1632,221 +1502,6 @@ async function sharePack(songs, defTitle, playlist) {
     pb.close();
     snack("Couldn't make the pack: " + (e.message || e));
   }
-}
-
-// ---- YouTube / YouTube Music › Share › Add to AuraOS Music: the link comes straight in, no copying and pasting
-if (native && Capacitor.getPlatform() === "android") {
-  const ShareIn = registerPlugin("ShareIn");
-  const take = (t) => { if (!t) return; diag.log("shared to the app: " + String(t).slice(0, 120)); setTimeout(() => addFromLink(String(t)), 300); };
-  ShareIn.addListener("shared", ({ text }) => take(text));
-  setTimeout(() => ShareIn.take().then(({ text }) => take(text)).catch(() => {}), 900);   // (shared while the app was closed)
-}
-
-// ---- drag out to other apps (Android): hold a song, album or playlist, then move your finger. A song goes as its
-// real audio file; an album or playlist becomes a music pack, made when you drop it (a small window over the other
-// app asks its name and shows progress: the only time the app draws over other apps, and only with permission).
-const DragOut = native && Capacitor.getPlatform() === "android" ? registerPlugin("DragOut") : null;
-const canDragOut = () => !!DragOut;
-const dragJobs = new Map();
-let dragWired = false;
-function wireDragOut() {
-  if (dragWired || !DragOut) return;
-  dragWired = true;
-  DragOut.addListener("packRequest", ({ token, title }) => makeDroppedPack(token, title));
-  DragOut.addListener("packCancel", ({ token }) => { dragJobs.delete(token); nc.haptic("soft"); });
-  DragOut.addListener("dropped", ({ token }) => { const j = dragJobs.get(token); if (j && !j.inApp) { nc.haptic("success"); snack(`Sent “${j.label}”`); } });
-  // following the drag over our own screen: the drop targets light up under it
-  DragOut.addListener("dragMove", ({ x, y }) => dropBar.hover(x, y));
-  DragOut.addListener("dragLeave", () => dropBar.hover(-1, -1));
-  DragOut.addListener("dragDrop", ({ token, x, y }) => dropBar.drop(token, x, y));
-  DragOut.addListener("dragEnd", ({ token, result, here }) => {
-    dropBar.hide();
-    const j = dragJobs.get(token);
-    if (j?.kind === "pack" && result && !here) askOverlayOnce();      // dropped into another app: offer to name packs there next time
-  });
-}
-
-/** the targets that slide down while you drag: Save to Downloads, then the apps you share with most */
-const targetCache = new Map();
-const dropBar = {
-  el: null, hot: null,
-  async show(job) {
-    this.hide(true);
-    const save = h("div", { class: "dt", "data-save": "1" }, h("div", { class: "ic" }, icon("folder")), h("span", {}, "Save to Downloads"));
-    const row = h("div", { class: "dts" }, save);
-    this.el = h("div", { id: "dropbar" }, h("div", { class: "hint" }, `Drop “${job.label}” on an app`), row,
-      h("div", { class: "sub" }, "…or into another app open beside this one"));
-    document.body.append(this.el);
-    requestAnimationFrame(() => this.el?.classList.add("on"));
-    const key = job.mime;
-    let list = targetCache.get(key);
-    if (!list || Date.now() - list.at > 60000) {
-      try { list = { at: Date.now(), t: (await DragOut.targets({ mime: job.mime, max: 6 })).targets || [] }; targetCache.set(key, list); }
-      catch { list = { t: [] }; }
-    }
-    if (!this.el) return;
-    for (const t of list.t) {
-      const d = h("div", { class: "dt" }, h("div", { class: "ic" }, t.icon ? h("img", { src: t.icon, alt: "" }) : icon("share")), h("span", {}, t.label));
-      d._t = t;
-      row.append(d);
-    }
-  },
-  at(x, y) {
-    if (!this.el) return null;
-    for (const d of this.el.querySelectorAll(".dt")) {
-      const r = d.getBoundingClientRect();
-      if (x >= r.left - 6 && x <= r.right + 6 && y >= r.top - 10 && y <= r.bottom + 10) return d;
-    }
-    return null;
-  },
-  hover(x, y) {
-    const d = this.at(x, y);
-    if (d === this.hot) return;
-    this.hot?.classList.remove("hot");
-    this.hot = d;
-    if (d) { d.classList.add("hot"); nc.haptic("tick"); }
-  },
-  drop(token, x, y) {
-    const d = this.at(x, y);
-    const job = dragJobs.get(token);
-    this.hide();
-    if (!job) return;
-    if (!d) return snack("Drop it on one of the apps at the top (or into an app open beside this one)");
-    nc.haptic("thud");
-    job.inApp = true;
-    runDropTarget(token, job, d.dataset.save ? null : d._t);
-  },
-  hide(now) {
-    const el = this.el;
-    this.el = null; this.hot = null;
-    if (!el) return;
-    if (now) return el.remove();
-    el.classList.remove("on");
-    setTimeout(() => el.remove(), 320);
-  },
-};
-
-/** dropped on one of our targets: save it, or hand it to that app (a pack is named and made here first) */
-async function runDropTarget(token, job, target) {
-  try {
-    if (job.kind === "song") {
-      if (!target) {
-        const blob = await lib.fileBlob(job.song);
-        const r = await saveFile(blob, job.name);
-        return snack(`Saved “${job.label}”${r?.where ? " to " + r.where : ""}`);
-      }
-      await job.ready;                                   // (the file is written as soon as the drag starts)
-      await DragOut.send({ token, pkg: target.pkg, cls: target.cls });
-      return;
-    }
-    const name = await prompt("Name your music pack", `${plural(job.songs.length, "song")} from “${job.label}”`, job.label, "Pack name", target ? `Send to ${target.label}` : "Save");
-    if (!name) return;
-    const pb = progressBox(`Making “${name}”`);
-    try {
-      const pack = await lib.buildPack(name, job.songs, job.playlist ? name : null, (f, t) => pb.set(f * 0.7, t || `Packing ${plural(job.songs.length, "song")}…`));
-      const file = `${safeFile(name)}-musicpack.zip`;
-      if (!target) {
-        pb.set(0.75, "Saving…");
-        const r = await saveFile(pack.blob, file, (f) => pb.set(0.75 + f * 0.25, "Saving…"));
-        pb.close();
-        return snack(`Saved the music pack “${name}”${r?.where ? " to " + r.where : ""}`);
-      }
-      const uri = await writeCacheFile(`dragout/${token}/pack.zip`, pack.blob, (f) => pb.set(0.7 + f * 0.3, `Handing it to ${target.label}…`));
-      await DragOut.ready({ token, path: uri, name: file });
-      pb.close();
-      await DragOut.send({ token, pkg: target.pkg, cls: target.cls });
-    } catch (e) { pb.close(); throw e; }
-  } catch (e) {
-    diag.log("drop: " + (e.message || e));
-    snack("Couldn't share that: " + (e.message || e));
-  }
-}
-
-async function writeCacheFile(path, blob, onProgress) {
-  const { Filesystem, Directory } = await import("@capacitor/filesystem");
-  const CH = 3 * 1024 * 1024;
-  for (let off = 0; off < blob.size || off === 0; off += CH) {
-    const data = await toBase64(blob.slice(off, off + CH));
-    if (off === 0) await Filesystem.writeFile({ directory: Directory.Cache, path, data, recursive: true });
-    else await Filesystem.appendFile({ directory: Directory.Cache, path, data });
-    onProgress?.(Math.min(1, (off + CH) / Math.max(1, blob.size)));
-    if (blob.size === 0) break;
-  }
-  return (await Filesystem.getUri({ directory: Directory.Cache, path })).uri;
-}
-async function smallArt(coverId) {
-  const c = lib.cover(coverId);
-  if (!c?.smallBlob) return null;
-  try { return await toBase64(c.smallBlob); } catch { return null; }
-}
-async function startDragOut(info) {
-  if (!DragOut || !info) return;
-  wireDragOut();
-  nc.haptic("thud");
-  try {
-    if (info.kind === "song") {
-      const s = info.song;
-      const ext = (s.file?.match(/\.([a-z0-9]+)$/i)?.[1] || "mp3").toLowerCase();
-      const name = `${s.artist ? s.artist + " - " : ""}${s.title}.${ext}`.replace(/[\\/:*?"<>|]+/g, "_");
-      const mime = s.type || mimeFor(ext) || "audio/mpeg";
-      const job = { kind: "song", song: s, label: s.title, name, mime };
-      dropBar.show(job);
-      const { token, started } = await DragOut.start({ kind: "song", name, mime, label: s.title, sub: s.artist || s.album || "",
-        size: s.size || 0, art: await smallArt(s.cover) });
-      if (!started) { dropBar.hide(); return snack("Couldn't pick that up"); }
-      dragJobs.set(token, job);
-      job.ready = (async () => {                          // the real file, written while you drag
-        try {
-          const blob = await lib.fileBlob(s);
-          if (!blob) throw new Error("the song's file is missing");
-          const uri = await writeCacheFile(`dragout/${token}/${name}`, blob);
-          await DragOut.ready({ token, path: uri });
-        } catch (e) { DragOut.fail({ token, error: e.message || String(e) }); diag.log("drag out: " + (e.message || e)); throw e; }
-      })();
-      job.ready.catch(() => {});
-    } else {
-      const songs = info.songs().filter(Boolean);
-      if (!songs.length) return snack("There's nothing in it to share");
-      const job = { kind: "pack", label: info.title, songs, playlist: info.playlist || null, mime: "application/zip" };
-      dropBar.show(job);
-      const { token, started } = await DragOut.start({ kind: "pack", name: `${safeFile(info.title)}-musicpack.zip`, mime: "application/zip",
-        title: info.title, label: info.title, sub: info.sub || plural(songs.length, "song"), art: await smallArt(info.cover || songs.find((x) => x.cover)?.cover) });
-      if (!started) { dropBar.hide(); return snack("Couldn't pick that up"); }
-      dragJobs.set(token, job);
-    }
-  } catch (e) {
-    dropBar.hide();
-    diag.log("drag out: " + (e.message || e));
-    snack("Couldn't drag that out: " + (e.message || e));
-  }
-}
-const safeFile = (t) => String(t || "Music").replace(/[\\/:*?"<>|]+/g, "_").trim().slice(0, 80) || "Music";
-async function makeDroppedPack(token, title) {
-  const j = dragJobs.get(token);
-  if (!j) return DragOut.fail({ token, error: "that drag has expired" });
-  try {
-    const pack = await lib.buildPack(title || j.label, j.songs, j.playlist ? (title || j.playlist) : null,
-      (f) => DragOut.progress({ token, f: f * 0.6, text: `Packing ${plural(j.songs.length, "song")}…` }));
-    const uri = await writeCacheFile(`dragout/${token}/pack.zip`, pack.blob, (f) => DragOut.progress({ token, f: 0.6 + f * 0.4, text: "Handing it over…" }));
-    await DragOut.ready({ token, path: uri });
-    nc.haptic("success");
-    snack(`Sent the music pack “${title || j.label}” (${plural(pack.count, "song")})`);
-  } catch (e) {
-    DragOut.fail({ token, error: e.message || String(e) });
-    nc.haptic("error");
-    diag.log("drag out pack: " + (e.message || e));
-  }
-}
-/** the "display over other apps" permission, asked for once, with the reason, before the first album/playlist drag */
-async function askOverlayOnce() {
-  if (!DragOut || lib.meta.settings.overlayAsked) return;
-  try {
-    const { granted } = await DragOut.canOverlay();
-    if (granted) return;
-    lib.meta.settings.overlayAsked = true; lib.saveMeta();
-    if (await confirmBox("Name packs as you drop them?", "When you drag an album or playlist into another app, AuraOS Music can show a small window over that app to ask the pack's name and show its progress. That window is the only thing it ever shows over other apps. Android calls this permission “Display over other apps”.", "Allow"))
-      await DragOut.askOverlay();
-  } catch {}
 }
 
 async function saveFile(blob, name, onProgress) {
@@ -2036,19 +1691,24 @@ async function youtubeAccount() {
   }
 }
 
-// ---- EXPERIMENTAL: add a song / album / playlist from a YouTube or YouTube Music link (see youtube.js)
+// ---- EXPERIMENTAL: add a song / album / playlist / artist from a YouTube or YouTube Music link (see youtube.js)
 let linkBusy = false;
-async function addFromLink(shared) {
+async function addFromLink(kind) {
   if (linkBusy) return snack("Already adding from a link…");
-  const text = typeof shared === "string" ? shared
-    : await prompt("Add from Link", "Paste a YouTube or YouTube Music link to a song, album or playlist. Experimental: YouTube sometimes blocks this.", "", "", "Add");
+  const artistMode = kind === "artist";
+  const text = await prompt(artistMode ? "Add an Artist" : "Add from Link",
+    artistMode ? "Paste a YouTube Music artist link (in the YouTube Music app: the artist's page › ⋮ › Share › Copy link). Experimental: YouTube sometimes blocks this."
+      : "Paste a YouTube or YouTube Music link to a song, album, playlist or artist. Experimental: YouTube sometimes blocks this.", "", "", artistMode ? "Continue" : "Add");
   if (!text) return;
   const yt = await import("./youtube.js");
-  if (!yt.parseLink(text)) { snack("That isn't a YouTube or YouTube Music link"); return; }
+  const link = yt.parseLink(text);
+  if (!link) { snack("That isn't a YouTube or YouTube Music link"); return; }
+  if (yt.isArtistLink(link)) return addArtist(yt, link);
+  if (artistMode) { snack("That isn't an artist link — open the artist's page in YouTube Music and copy its link"); return; }
   linkBusy = true;
   const pb = progressBox("Adding from YouTube");
   try {
-    const r = await yt.importLink(text, lib, (f, t, sub) => pb.set(f, t, sub));
+    const r = await yt.importLink(text, lib, (f, t) => pb.set(f, t));
     pb.close();
     setTimeout(() => autoFill(r.songs || []), 4600);
     if (!r.added && !r.skipped) { snack(`Couldn't add from that link${r.firstError ? ": " + r.firstError : ""}`, "Details", showDiagnostics, 12000); return; }
@@ -2065,6 +1725,82 @@ async function addFromLink(shared) {
     linkBusy = false;
     refresh();
   }
+}
+
+/** a sheet with a few big choices; resolves with the chosen value, or null if it is dismissed */
+function chooseSheet(head, options, note) {
+  return new Promise((res) => {
+    const box = h("div");
+    box.append(head);
+    for (const o of options) {
+      box.append(h("button", { class: "act", onclick: () => { closeSheet(true); res(o.value); } }, icon(o.icon),
+        h("div", { class: "meta" }, h("div", { class: "t" }, o.label), o.sub && h("div", { class: "s" }, o.sub))));
+    }
+    if (note) box.append(h("div", { class: "suffix", style: { margin: "8px 24px 4px" } }, note));
+    openSheet(box, { onClose: () => res(null) });
+  });
+}
+
+/** an artist link: read the artist's page, ask what to download, then download album by album */
+async function addArtist(yt, link) {
+  if (linkBusy) return snack("Already adding from a link…");
+  linkBusy = true;
+  try {
+    let pb = progressBox("Reading the artist");
+    let a;
+    try { a = await yt.readArtist(link, (t) => pb.set(0, t)); }
+    catch (e) {
+      pb.close();
+      diag.log("YouTube: " + (e.message || e));
+      snack("Couldn't read that artist: " + (e.message || e), "Details", showDiagnostics, 12000);
+      return;
+    }
+    pb.close();
+    const nAlb = a.albums.length, nSin = a.singles.length;
+    const options = [];
+    if (nAlb + nSin) options.push({ value: "all", icon: "album", label: "Albums, singles & EPs", sub: [nAlb && plural(nAlb, "album"), nSin && plural(nSin, "single / EP")].filter(Boolean).join(" · ") });
+    if (nAlb && nSin) options.push({ value: "albums", icon: "album", label: "Albums only", sub: plural(nAlb, "album") });
+    if (a.top.length) options.push({ value: "top", icon: "playlist", label: "Top songs", sub: plural(a.top.length, "song") + " · quickest" });
+    if (!options.length) { snack(`Found ${a.name}, but there is nothing to download on that page`); return; }
+    const what = await chooseSheet(
+      h("div", { class: "sh-head" }, art(null, { label: a.name, round: true }), h("div", { class: "meta" }, h("div", { class: "t" }, a.name), h("div", { class: "s" }, "YouTube Music artist · what should I download?"))),
+      options, "Songs you already have are skipped. Keep the app open while it downloads. Only add music you have the right to.");
+    if (!what) return;
+    const ctl = { stop: false };
+    pb = progressBox(`Adding ${a.name}`, () => { ctl.stop = true; });
+    try {
+      const r = await yt.importArtist(a, what, lib, (f, t) => pb.set(f, t), ctl);
+      pb.close();
+      setTimeout(() => autoFill(r.songs || []), 4600);
+      let msg = r.added || r.skipped ? `Added ${plural(r.added, "song")} by ${a.name}` : `Couldn't download anything by ${a.name}${r.firstError ? ": " + r.firstError : ""}`;
+      if (r.skipped) msg += ` · ${r.skipped} already in your library`;
+      if (r.failed && (r.added || r.skipped)) msg += ` · ${r.failed} couldn't be downloaded (${r.firstError})`;
+      if (r.stopped && ctl.stop) msg += " · stopped";
+      const here = stack.at(-1);
+      snack(msg, "Open", () => { if (!(here?.type === "artist" && here.name === a.name)) push({ type: "artist", name: a.name }); }, 10000);
+    } catch (e) {
+      pb.close();
+      diag.log("YouTube: " + (e.message || e));
+      snack("Couldn't add that artist: " + (e.message || e), "Details", showDiagnostics, 12000);
+    }
+  } finally {
+    linkBusy = false;
+    lib.rebuild();
+    refresh();
+  }
+}
+
+/** from an Artist page: get more from the same YouTube Music artist (or link one first) */
+async function artistFromYouTube(name) {
+  if (linkBusy) return snack("Already adding from a link…");
+  const yt = await import("./youtube.js");
+  const known = lib.artistInfo(name)?.channel;
+  if (known) return addArtist(yt, { channel: known });
+  const text = await prompt(`Link ${name} to YouTube Music`, `Paste ${name}'s YouTube Music link to get their photo and download more of their music.`, "", "", "Continue");
+  if (!text) return;
+  const link = yt.parseLink(text);
+  if (!yt.isArtistLink(link)) { snack("That isn't a YouTube Music artist link"); return; }
+  return addArtist(yt, link);
 }
 
 // ============================================================ browse: search your library, with recent searches
@@ -2238,8 +1974,6 @@ function setupMiniGestures() {
     coverMode = false;
     m.setPointerCapture(e.pointerId);
   });
-  const miniEdge = edge();
-  m.addEventListener("pointerdown", () => miniEdge.reset());
   m.addEventListener("pointermove", (e) => {
     if (!down) return;
     dx = e.clientX - sx; dy = e.clientY - sy;
@@ -2258,7 +1992,6 @@ function setupMiniGestures() {
       a.style.transform = `translateX(${ok ? dx * 0.45 : dx * 0.06}px)`;
       return;
     }
-    if (Math.abs(dx) > Math.abs(dy)) miniEdge(Math.abs(dx) > 60);
     if (Math.abs(dx) > Math.abs(dy)) for (const el of parts()) { el.style.transition = "none"; el.style.transform = `translateX(${dx * 0.7}px) scale(var(--artz, 1))`; el.style.opacity = String(1 - Math.min(0.7, Math.abs(dx) / 220)); }
   });
   const EASE_OUT = "cubic-bezier(.22,1,.36,1)";          // smooth glide, no overshoot
@@ -2277,7 +2010,7 @@ function setupMiniGestures() {
       a.style.transition = "transform .3s cubic-bezier(.22,1,.36,1)"; a.style.transform = "";
       if (!moved) return openNp();
       const ok = miniTuck.tucked ? dx < 0 : dx > 0;
-      if (ok && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) { nc.haptic("soft"); miniTuck.pin(!miniTuck.tucked); }    // pinned tucked / back out
+      if (ok && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) miniTuck.pin(!miniTuck.tucked);    // pinned tucked / back out
       return;
     }
     const els = parts();
@@ -2294,7 +2027,6 @@ function setupMiniGestures() {
       return;
     }
     // keep going the way the finger went, then the next song slides in from the other side
-    nc.haptic("tap");
     const dir = dx < 0 ? 1 : -1;
     const W = m.clientWidth;
     const id = m.dataset.id;
@@ -2353,7 +2085,7 @@ function buildNp() {
   np.stage = h("div", { class: "stage" }, np.cover);
   np.title = h("div", { class: "t" });
   np.artist = h("div", { class: "s" });
-  np.fav = ib("heart", () => { const s = player.current; if (s) { const on = lib.toggleFav([s.id]); updateNpFav(); nc.haptic(on ? "success" : "soft"); snack(on ? "Added to Favorites" : "Removed from Favorites"); refresh(); } });
+  np.fav = ib("heart", () => { const s = player.current; if (s) { const on = lib.toggleFav([s.id]); updateNpFav(); nc.haptic(on ? "success" : "tap"); snack(on ? "Added to Favorites" : "Removed from Favorites"); refresh(); } });
   np.fill = h("div", { class: "fillb" });
   np.seek = h("div", { class: "seek" }, h("div", { class: "track" }, np.fill));
   np.t0 = h("span", {}, "0:00"); np.t1 = h("span", {}, "0:00");
@@ -2385,7 +2117,7 @@ function buildNp() {
     h("div", { class: "ctrls" }, np.shuffle, ib("prev", () => player.prev()), np.pp, ib("next", () => player.next()), np.repeat),
     h("div", { class: "extras" }, np.lyrBtn, ib("eq", () => { closeNp(); push({ type: "settings" }); }, "", "Equalizer"), ib("queue", () => showQueue(), "", "Queue")));
   np.wrapEl = wrap;
-  el.append(np.bg, np.bg2l, fog.el(), h("div", { class: "bg2" }), np.glow, np.viz, wrap);
+  el.append(np.bg, np.bg2l, h("div", { class: "bg2" }), np.glow, np.viz, wrap);
   lyrView = new LyricsView(np.lyrCanvas);
   np.artist.onclick = () => { const s = player.current; if (s?.artist) { closeNp(); push({ type: "artist", name: s.artist.split(",")[0].trim() }); } };
 
@@ -2399,9 +2131,8 @@ function buildNp() {
     return f;
   };
   np.seek.addEventListener("pointerdown", (e) => { seeking = true; np.seek.classList.add("active"); np.seek.setPointerCapture(e.pointerId); seekTo(e); e.stopPropagation(); });
-  let seekStep = -1;
-  np.seek.addEventListener("pointermove", (e) => { if (!seeking) return; const f = seekTo(e); const st = Math.floor(f * 10); if (st !== seekStep) { if (seekStep >= 0) nc.haptic("tick"); seekStep = st; } });
-  np.seek.addEventListener("pointerup", (e) => { if (!seeking) return; const f = seekTo(e); seeking = false; np.seek.classList.remove("active"); seekStep = -1; player.seek(f * (player.audio.duration || 0)); nc.haptic("soft"); });
+  np.seek.addEventListener("pointermove", (e) => seeking && seekTo(e));
+  np.seek.addEventListener("pointerup", (e) => { if (!seeking) return; const f = seekTo(e); seeking = false; np.seek.classList.remove("active"); player.seek(f * (player.audio.duration || 0)); nc.haptic("tick"); });
 
   // cover: tap to flip, swipe to skip
   let sx = 0, sy = 0, dx = 0, dy = 0, down = false, axis = "";
@@ -2412,8 +2143,6 @@ function buildNp() {
     down = true; sx = e.clientX; sy = e.clientY; dx = dy = 0; axis = ""; trail.length = 0;
     np.cover.setPointerCapture(e.pointerId); np.cover.style.transition = "none"; e.stopPropagation();
   });
-  const coverEdge = edge();
-  np.cover.addEventListener("pointerdown", () => coverEdge.reset());
   np.cover.addEventListener("pointermove", (e) => {
     if (!down) return;
     dx = e.clientX - sx; dy = e.clientY - sy;
@@ -2425,7 +2154,7 @@ function buildNp() {
       morph.drag(dy);
       return;
     }
-    if (axis === "x" && !flipped) { np.cover.style.transform = `translateX(${dx}px) rotate(${dx / 40}deg)`; coverEdge(Math.abs(dx) > 80); }   // flipped: no sideways swipe
+    if (axis === "x" && !flipped) np.cover.style.transform = `translateX(${dx}px) rotate(${dx / 40}deg)`;   // flipped: no sideways swipe
   });
   const glideBack = () => {        // smooth return to the middle, no bounce
     np.cover.style.transition = "transform .32s cubic-bezier(.22,1,.36,1)";
@@ -2440,20 +2169,11 @@ function buildNp() {
     np.cover.style.transform = "";
     if (axis === "y") morph.release(0); else glideBack();
   });
-  // one tap flips the cover (after a moment, in case it's a double tap); two quick taps like the song
-  let coverT = 0, coverLast = 0;
-  const coverTap = (e) => {
-    const now = performance.now();
-    if (now - coverLast < 300) { clearTimeout(coverT); coverLast = 0; likeSong(player.current, e.clientX, e.clientY); return; }
-    coverLast = now;
-    clearTimeout(coverT);
-    coverT = setTimeout(() => { nc.haptic("soft"); flip(); }, 260);
-  };
   np.cover.addEventListener("pointerup", (e) => {
     if (detTap) {
       const moved = Math.hypot(e.clientX - detTap.x, e.clientY - detTap.y);
       detTap = null;
-      if (moved < 8) coverTap(e);
+      if (moved < 8) { nc.haptic("soft"); flip(); }
       return;
     }
     if (!down) return;
@@ -2470,7 +2190,7 @@ function buildNp() {
     if (Math.abs(dx) < 8) {
       np.cover.style.transform = "";
       if ($("#np").classList.contains("lyrics")) return toggleLyrics(false);   // lyrics on: tapping the cover turns them off
-      coverTap(e); return;
+      nc.haptic("soft"); flip(); return;
     }
     if (Math.abs(dx) <= 70) return glideBack();
     if (player.peek(dx < 0 ? 1 : -1) < 0) { glideBack(); dx < 0 ? player.next() : player.prev(); return; }  // same song again
@@ -2514,7 +2234,6 @@ function openNp() {
   }
   openNpNow(false);
 }
-let openingT = 0;
 function openNpNow(native) {
   if (!player.current || npOpen) return;
   prepareNp();
@@ -2523,12 +2242,7 @@ function openNpNow(native) {
   if (native) { morph.native = true; morph.active = true; document.documentElement.classList.add("native-morph"); }
   morph.set(1);                                  // start as the bubble…
   morph.v = 0;
-  // the controls wait until it has finished opening (else the tap that opened it can land on the growing play button)
-  const npEl = $("#np");
-  npEl.classList.add("opening");
-  clearTimeout(openingT);
-  if (!nc.on) nc.haptic("soft");
-  requestAnimationFrame(() => morph.animate(0, SPRING_OPEN, () => { morph.clear(); openingT = setTimeout(() => npEl.classList.remove("opening"), 120); }));   // …and grow out of it, overshooting a touch
+  requestAnimationFrame(() => morph.animate(0, SPRING_OPEN, () => morph.clear()));   // …and grow out of it, overshooting a touch
 }
 function prepareNp() {
   unflipNow();                                   // always reopen on the artwork, not the details
@@ -2537,8 +2251,6 @@ function prepareNp() {
   npTrack(0);
   updateProgress();
   const el = $("#np");
-  el.classList.toggle("fogged", motion());         // the storm-in-fog background (motion off: the still, blurred cover)
-  if (!motion()) el.style.removeProperty("--accent");
   el.getAnimations().forEach((a) => a.cancel());
   el.style.transform = "";
   el.setAttribute("aria-hidden", "false");
@@ -2658,11 +2370,9 @@ const morph = {
     const pieces = this.pieces();
     for (const x of [np.stage, ...pieces.flip.map((f) => f.el), ...pieces.fade]) { x.style.transform = ""; x.style.opacity = ""; x.style.transformOrigin = ""; }
   },
-  /** arrive: finish the moment it reaches `to` and hand its speed to done(v) (for momentum into the bubble) */
-  animate(to, sp, done, arrive = false) {
+  animate(to, sp, done) {
     cancelAnimationFrame(this.raf);
     let last = performance.now();
-    const side = Math.sign(this.p - to);
     const step = (ts) => {
       let t = Math.min(0.064, (ts - last) / 1000); last = ts;
       let p = this.p;
@@ -2671,25 +2381,22 @@ const morph = {
         this.v += (-sp.k * (p - to) - sp.c * this.v) * dt;       // a spring: overshoots a little, then settles
         p += this.v * dt;
       }
-      if (arrive && side && Math.sign(p - to) !== side) { const v = this.v; this.set(to); this.v = 0; return done?.(Math.abs(v)); }
       this.set(p);
-      if (Math.abs(this.p - to) < 0.003 && Math.abs(this.v) < 0.05) { this.set(to); this.v = 0; return done?.(Math.abs(this.v)); }
+      if (Math.abs(this.p - to) < 0.003 && Math.abs(this.v) < 0.05) { this.set(to); this.v = 0; return done?.(); }
       this.raf = requestAnimationFrame(step);
     };
     this.raf = requestAnimationFrame(step);
   },
-  grab() { this.dragEdge.reset(); cancelAnimationFrame(this.raf); this.rect = anchorRect(); this.start = this.p || 0; this.v = 0; npPlayButton(); if (npOpen) this.goNative(true); },
-  dragEdge: edge(),
+  grab() { cancelAnimationFrame(this.raf); this.rect = anchorRect(); this.start = this.p || 0; this.v = 0; npPlayButton(); if (npOpen) this.goNative(true); },
   drag(dy) {                         // dy > 0: towards the bubble
     let p = (this.start || 0) + dy / this.dist();
-    if (!nc.on) this.dragEdge(p > 0.32);
     if (p < 0) p = p * 0.25;         // pulling the other way just stretches a little
     this.set(Math.min(1.05, p));
   },
   release(vPxPerMs) {               // finish whichever way it was going
     this.v = (vPxPerMs * 1000) / this.dist();
     if (this.p > 0.32 || vPxPerMs > 0.5) closeNp({ fromDrag: true });
-    else { if (!nc.on) nc.haptic("tick"); this.animate(0, SPRING_BACK, () => this.clear()); }
+    else this.animate(0, SPRING_BACK, () => this.clear());
   },
 };
 
@@ -2719,27 +2426,6 @@ function anchorParts(r) {
     bar: tucked ? { x: r.left + 10, y: r.top + 78, w: 48, h: 2 } : { x: r.left + 14, y: (side ? r.bottom - 3 : r.top + 60), w: w - 28, h: 2 } };
 }
 const clipFor = (r, rad) => `inset(${Math.round(r.top)}px ${Math.round(innerWidth - r.right)}px ${Math.round(innerHeight - r.bottom)}px ${Math.round(r.left)}px round ${rad}px)`;
-/** the player lands in the bubble with whatever speed it had: the bubble gives a little under it (squashes and dips,
- *  more for a fast flick, barely for a gentle close) and springs back — one continuous motion, no separate bounce */
-let impulseRaf = 0;
-function bubbleImpulse(v) {
-  if (!motion()) return;
-  const side = matchMedia("(orientation: landscape) and (min-width: 640px)").matches;
-  const el = side ? $("#mini") : $("#dock");
-  if (!el || el.hidden) return;
-  cancelAnimationFrame(impulseRaf);
-  let x = 0, xv = Math.min(9, Math.max(2.2, v * 1.4)), last = performance.now();
-  el.style.transformOrigin = "50% 100%";
-  const step = (ts) => {
-    let t = Math.min(0.05, (ts - last) / 1000); last = ts;
-    while (t > 0) { const dt = Math.min(t, 1 / 240); t -= dt; xv += (-420 * x - 13 * xv) * dt; x += xv * dt; }
-    el.style.translate = `0 ${(x * 18).toFixed(2)}px`;
-    el.style.scale = `${(1 + x * 0.05).toFixed(4)} ${(1 - x * 0.09).toFixed(4)}`;
-    if (Math.abs(x) < 0.002 && Math.abs(xv) < 0.02) { el.style.translate = el.style.scale = el.style.transformOrigin = ""; return; }
-    impulseRaf = requestAnimationFrame(step);
-  };
-  impulseRaf = requestAnimationFrame(step);
-}
 function bounceBubble() {
   if (!motion()) return;
   const side = matchMedia("(orientation: landscape) and (min-width: 640px)").matches;
@@ -2751,18 +2437,8 @@ function bounceBubble() {
     { duration: 420, easing: "cubic-bezier(.3,1,.5,1)" });
 }
 let pageDirty = false;
-/** the playing song changed: redo only the row/card that stopped and the one that started (not the whole page) */
-function markNow() {
-  if (!pageEl) return;
-  const id = player.current?.id;
-  for (const el of pageEl.querySelectorAll(".row[data-id], .song-card[data-id]")) {
-    const now = el.dataset.id === id;
-    if (now !== el.classList.contains("now")) { const n = el._make?.(); if (n) el.replaceWith(n); }
-  }
-}
 function closeNp(opts = {}) {
   if (!npOpen) return false;
-  clearTimeout(openingT); $("#np").classList.remove("opening");
   npOpen = false;
   if (pageDirty) { pageDirty = false; setTimeout(refresh, 470); }
   const el = $("#np");
@@ -2774,14 +2450,14 @@ function closeNp(opts = {}) {
   else morph.rect = morph.rect || anchorRect();
   npPlayButton();
   morph.goNative(true);
-  const done = (v = 0) => {
+  const done = () => {
     if (npOpen) return;
     el.classList.remove("open");
     morph.clear();
     unflipNow();
-    if (nc.on) { nc.show(true); nc.haptic("thud"); } else { nc.haptic(v > 6 ? "thud" : "soft"); bubbleImpulse(v); }
+    if (nc.on) { nc.show(true); nc.haptic("thud"); } else bounceBubble();
   };
-  morph.animate(1, SPRING_CLOSE, done, !nc.on);           // (no stop-and-bounce: it lands with its speed)
+  morph.animate(1, SPRING_CLOSE, done);
   return true;
 }
 /** back to the front of the cover at once (no turning animation) — the player always reopens on the artwork */
@@ -2863,7 +2539,6 @@ function npTrack(dir) {
   nc.tint(color);
   // the blurred backdrops use the small cover (looks the same blurred, far cheaper) and crossfade into each other
   setBackdrop(cov ? cov.small : null, color);
-  fog.setCover(s.cover);
   np.cover.querySelector(".back .blur").style.backgroundImage = cov ? `url(${cov.small})` : "none";
   np.ctx.replaceChildren(document.createTextNode(ctxLabel ? "PLAYING FROM" : "NOW PLAYING"), h("b", {}, ctxLabel || s.album || ""));
   np.title.textContent = s.title;
@@ -3015,92 +2690,9 @@ function showQueue() {
   openSheet(box);
 }
 
-// ---- the player's "storm in fog": two clouds in the cover's two main colours drift behind everything, swell with the
-// bass and flash on hard hits like lightning in fog; the player's accent colour slides between the two with the beat.
-// Drawn tiny (40×72) and stretched by the screen, so it's soft as fog and nearly free to draw.
-const toHsl = ([r, g, b]) => {
-  r /= 255; g /= 255; b /= 255;
-  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
-  let h = 0, s = 0;
-  if (mx !== mn) { const d = mx - mn; s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn); h = (mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4) / 6; }
-  return [h, s, l];
-};
-const fromHsl = ([h, s, l]) => {
-  const f = (n) => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l); return 255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))); };
-  return [f(0), f(8), f(4)];
-};
-/** a version of a colour that reads well as text / controls */
-const accentSafe = (c) => { const [h, s, l] = toHsl(c); return fromHsl([h, Math.min(0.85, Math.max(s < 0.12 ? s : 0.38, s)), Math.min(0.74, Math.max(0.6, l))]); };
-const FOG_DEFAULT = [[150, 110, 140], [70, 70, 95]];
-const fog = {
-  cv: null, g: null, pal: FOG_DEFAULT, cur: null, acc: [accentSafe(FOG_DEFAULT[0]), accentSafe(FOG_DEFAULT[1])], accH: [toHsl(accentSafe(FOG_DEFAULT[0])), toHsl(accentSafe(FOG_DEFAULT[1]))],
-  t0: performance.now(), flash: 0, fx: 0.5, fy: 0.3, avg: 0, accStr: "", accAt: 0, cache: new Map(), want: null,
-  el() {
-    if (!this.cv) { this.cv = h("canvas", { class: "fog", width: 40, height: 72 }); this.g = this.cv.getContext("2d", { alpha: false }); }
-    return this.cv;
-  },
-  async setCover(id) {
-    this.want = id;
-    let p = id ? this.cache.get(id) : FOG_DEFAULT;
-    if (!p) {
-      const c = lib.cover(id);
-      p = (c?.smallBlob && (await coverPalette(c.smallBlob))) || FOG_DEFAULT;
-      if (this.cache.size > 200) this.cache.clear();
-      this.cache.set(id, p);
-    }
-    if (this.want !== id) return;
-    this.pal = p;
-    this.acc = [accentSafe(p[0]), accentSafe(p[1])];
-    this.accH = this.acc.map(toHsl);
-  },
-  draw(bass, bassS, playing) {
-    const g = this.g, W = 40, H = 72;
-    if (!g) return;
-    const now = performance.now(), t = (now - this.t0) / 1000;
-    if (!this.cur) this.cur = this.pal.map((c) => [...c]);
-    for (let k = 0; k < 2; k++) for (let i = 0; i < 3; i++) this.cur[k][i] += (this.pal[k][i] - this.cur[k][i]) * 0.05;   // new song: colours drift over
-    // a hit: the bass jumps well above its recent level
-    const spike = bass - this.avg;
-    this.avg += (bass - this.avg) * 0.06;
-    if (playing && spike > 0.13 && bass > 0.42 && this.flash < 0.25) { this.flash = Math.min(1, 0.55 + spike * 2.2); this.fx = 0.15 + Math.random() * 0.7; this.fy = 0.08 + Math.random() * 0.55; }
-    this.flash *= 0.9;
-    const e = playing ? bassS : 0;
-    const [A, B] = this.cur;
-    const rgb = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a.toFixed(3)})`;
-    g.globalCompositeOperation = "source-over";
-    g.fillStyle = rgb([A[0] * 0.1 + B[0] * 0.06, A[1] * 0.1 + B[1] * 0.06, A[2] * 0.1 + B[2] * 0.06], 1);
-    g.fillRect(0, 0, W, H);
-    g.globalCompositeOperation = "lighter";
-    const blob = (x, y, r, c, a) => {
-      const gr = g.createRadialGradient(x, y, 0, x, y, r);
-      gr.addColorStop(0, rgb(c, a)); gr.addColorStop(0.55, rgb(c, a * 0.45)); gr.addColorStop(1, rgb(c, 0));
-      g.fillStyle = gr; g.fillRect(0, 0, W, H);
-    };
-    blob(W * (0.5 + 0.34 * Math.sin(t * 0.13)), H * (0.28 + 0.12 * Math.sin(t * 0.17 + 1)), W * (0.95 + 0.3 * e), A, 0.34 + 0.46 * e);
-    blob(W * (0.5 + 0.36 * Math.cos(t * 0.11 + 2)), H * (0.64 + 0.14 * Math.cos(t * 0.09)), W * (1.0 + 0.25 * e), B, 0.3 + 0.42 * e);
-    for (let i = 0; i < 3; i++) {                              // wisps of fog drifting through
-      const c = i % 2 ? A : B;
-      blob(W * (0.5 + 0.5 * Math.sin(t * (0.21 + i * 0.07) + i * 2.1)), H * (0.5 + 0.42 * Math.sin(t * (0.15 + i * 0.05) + i)), W * 0.45, c, 0.07 + 0.08 * e);
-    }
-    if (this.flash > 0.02) blob(W * this.fx, H * this.fy, W * (0.55 + 0.4 * this.flash), [Math.min(255, A[0] * 0.6 + 110), Math.min(255, A[1] * 0.6 + 110), Math.min(255, A[2] * 0.6 + 110)], this.flash * 0.5);
-    // the player's accent rides between the two colours with the music (at most ~20 times a second)
-    if (now - this.accAt > 50) {
-      this.accAt = now;
-      const m = Math.max(0, Math.min(1, 0.15 + e * 1.3 + this.flash * 0.35));
-      // round the colour wheel (the short way), not straight across it: orange → blue goes through vivid colours, never grey
-      const [a, b] = this.accH;
-      let dh = b[0] - a[0]; if (dh > 0.5) dh -= 1; if (dh < -0.5) dh += 1;
-      const c = fromHsl([(a[0] + dh * m + 1) % 1, a[1] + (b[1] - a[1]) * m, a[2] + (b[2] - a[2]) * m]);
-      const s = `rgb(${Math.round(c[0])}, ${Math.round(c[1])}, ${Math.round(c[2])})`;
-      if (s !== this.accStr) { this.accStr = s; $("#np").style.setProperty("--accent", s); }
-    }
-  },
-};
-
 // visualizer + bass glow
 let vizOn = false, vizCol = "", vizColAt = 0, glowFade = 0;
 function vizColor() {
-  if (npOpen && fog.accStr && document.querySelector("#np.fogged")) return fog.accStr;
   const t = performance.now();
   if (t - vizColAt > 120) { vizColAt = t; vizCol = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#ff7aa0"; }
   return vizCol;
@@ -3110,12 +2702,9 @@ function startViz() {
   vizOn = true;
   const bins = new Uint8Array(1024);
   let smooth = new Float32Array(40), bassS = 0;
-  let cvAt = 0, cvPick = null;
   const loop = () => {
     // upright the little visualizer plays along the bottom of the bubble behind the tabs; sideways, in the player bar
-    // (which little canvas is showing: looked up a few times a second, not every frame — that forced a layout each time)
-    if (performance.now() - cvAt > 250) { cvAt = performance.now(); cvPick = [$("#dock .tviz"), $("#mini canvas")].find((c) => c && c.offsetParent !== null && c.clientWidth > 0 && !$("#mini").hidden) || null; }
-    const miniCv = cvPick;
+    const miniCv = [$("#dock .tviz"), $("#mini canvas")].find((c) => c && c.offsetParent !== null && c.clientWidth > 0 && !$("#mini").hidden);
     if (!npOpen && !miniCv) {
       // nothing visible to draw into right now (e.g. mid-rotation): check back shortly instead of stopping for good
       vizOn = false;
@@ -3160,9 +2749,7 @@ function startViz() {
       }
     };
     const draw = (cv, alphaTop, full) => {
-      const dpr = devicePixelRatio || 1;
-      if (!cv._sz || performance.now() - cv._szAt > 500) { cv._sz = [cv.clientWidth, cv.clientHeight]; cv._szAt = performance.now(); }
-      const [W, H] = cv._sz;
+      const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
       if (!W) return;
       if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
       const g = cv.getContext("2d");
@@ -3182,7 +2769,6 @@ function startViz() {
       }
     };
     if (npOpen) {
-      if (motion()) fog.draw(bass, bassS, playing);
       draw(np.viz, 0.75, true);
       if (motion()) {
         const fade = Math.min(1, (performance.now() - glowFade) / 700);      // new colour: the glow eases back in
@@ -3209,7 +2795,7 @@ player.addEventListener("track", (e) => {
   updateMini();
   npTrack(e.detail?.dir ?? 0);
   if (!npOpen) { const c = lib.colorOf(player.current) || "hsl(345 90% 72%)"; document.documentElement.style.setProperty("--accent", c); nc.tint(c); }
-  markNow();                                      // just the rows that changed, not the whole page
+  if (pageEl?.querySelector(".row")) { if (npOpen) pageDirty = true; else requestAnimationFrame(() => setTimeout(refresh, 380)); }
   startViz();
   saveSession();
 });
@@ -3321,17 +2907,10 @@ async function boot() {
     player.addEventListener("time", () => prog());
     for (const ev of ["state", "track"]) player.addEventListener(ev, () => prog(true));
     for (const el of player.els) el.addEventListener("seeked", () => prog(true));
-    // sliders tick at each step, checkboxes and pickers when they change
-    let lastRange = null;
-    document.addEventListener("input", (e) => { const t = e.target; if (t.type === "range" && t.value !== lastRange) { lastRange = t.value; nc.haptic("tick"); } }, true);
-    document.addEventListener("change", (e) => { const t = e.target; if ((t.type === "checkbox" && !t.closest(".switch, label")) || t.tagName === "SELECT") nc.haptic("tick"); }, true);
     // a light tap for every button, row and card you touch (programmatic clicks don't count)
     document.addEventListener("click", (e) => {
       if (!e.isTrusted) return;
-      const t = e.target.closest("button, .row, .arow, .card, .chip, .item, [role=button], .switch, label");
-      if (!t || t.closest("[data-haptic=own]")) return;      // (those make their own, e.g. favorite = success)
-      nc.haptic(t.matches(".pp") ? "press" : t.matches(".danger, .btn.danger") ? "thud"
-        : t.matches(".chip, .switch, label, .seg button") ? "tick" : t.matches(".back") ? "soft" : "tap");
+      if (e.target.closest("button, .row, .arow, .card, .chip, .item, [role=button], .switch")) nc.haptic("tap");
     }, true);
     nc.tint(getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
     nc.update({ tab: stack[0].type });
@@ -3374,6 +2953,6 @@ async function boot() {
     const audio = files.filter((f) => !/\.zip$/i.test(f.name));
     if (audio.length) importAudio(audio);
   });
-  window.__app = { nc, progressBox, DiskFile, miniTuck, morph, filt, findGenres, filterSheet, get lyr() { return lyrView; }, np, browse, similarSongs, playWithMix, lyricsPicker, lookupDialog, autoFill, lib, player, push, goTab, openNp, closeNp, toggleLyrics, sharePack, importPacks, importAudio, startSelect, refresh, back, stack: () => stack };
+  window.__app = { DiskFile, miniTuck, morph, filt, findGenres, filterSheet, get lyr() { return lyrView; }, np, browse, similarSongs, playWithMix, lyricsPicker, lookupDialog, autoFill, lib, player, push, goTab, openNp, closeNp, toggleLyrics, sharePack, importPacks, importAudio, startSelect, refresh, back, stack: () => stack };
 }
 boot();
