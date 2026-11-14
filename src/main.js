@@ -225,7 +225,7 @@ function buildTabs() {
   nav.append(h("div", { class: "ind" }));
   if (!$("#dock .tviz")) $("#dock").prepend(h("canvas", { class: "tviz" }));
   for (const t of TABS) {
-    nav.append(h("button", { "data-tab": t.id, onclick: () => goTab(t.id) }, h("span", { class: "ahp" }, icon(t.icon)), h("span", { class: "lbl" }, t.label)));
+    nav.append(h("button", { "data-tab": t.id, onclick: () => goTab(t.id) }, h("span", { class: "pill" }, icon(t.icon)), h("span", { class: "lbl" }, t.label)));
   }
   setupTabDrag();
 }

@@ -257,13 +257,16 @@ class Library extends EventTarget {
       onProgress?.(i / audio.length, e.name.replace(/^.*\//, ""));
       try {                                // one unreadable song doesn't stop the rest of the pack
         const rel = e.name.replace(/^Music\//, "");
-        const fields = { ...(info.get(rel) || {}) };
-        delete fields.file; delete fields.duration;
+        const meta = info.get(rel);
+        const fields = { ...(meta || {}) };
+        delete fields.file;
         const dir = e.name.replace(/[^/]*$/, "");
         const cov = covers.get(dir) ? await covers.get(dir).blob() : null;
         const raw = await e.blob();
         const blob = new Blob([raw], { type: mimeFor(extOf(e.name)) });
-        const r = await this.addAudio(blob, e.name.replace(/^.*\//, ""), fields, cov, raw.source);
+        // Packs already carry title, artist, album, year, genre and duration in musicpack.json.
+        // Skip reading the audio tags. A song with no manifest entry still falls back to the file.
+        const r = await this.addAudio(blob, e.name.replace(/^.*\//, ""), fields, cov, raw.source, meta ? { trusted: true } : {});
         r.skipped ? skipped++ : added++;
         order.push(r.song.id);
       } catch (err) {
