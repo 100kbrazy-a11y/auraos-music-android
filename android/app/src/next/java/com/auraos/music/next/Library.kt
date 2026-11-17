@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 
 package com.auraos.music.next
 
@@ -7,28 +7,88 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items as gitems
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.Dispatchers
+import coil.compose.AsyncImage
+import com.auraos.music.NativePlayer
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.util.Calendar
+
+val LocalBottom = compositionLocalOf { 100.dp }
+@Composable fun topPad(): Dp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 60.dp
+val LazyListState.scrolled get() = firstVisibleItemIndex > 0 || firstVisibleItemScrollOffset > 4
+val LazyGridState.scrolled get() = firstVisibleItemIndex > 0 || firstVisibleItemScrollOffset > 4
+
+/** the Filter sheet's choices (genre, artist, decade, length, favorites only, added this month) */
+object Filt {
+    val genre = mutableStateListOf<String>(); val artist = mutableStateListOf<String>(); val decade = mutableStateListOf<String>(); val length = mutableStateListOf<String>()
+    val favs = mutableStateOf(false); val recent = mutableStateOf(false)
+    fun active() = genre.isNotEmpty() || artist.isNotEmpty() || decade.isNotEmpty() || length.isNotEmpty() || favs.value || recent.value
+    fun clear() { genre.clear(); artist.clear(); decade.clear(); length.clear(); favs.value = false; recent.value = false }
+    fun dec(s: Song) = s.year.take(4).toIntOrNull()?.let { "${it / 10 * 10}s" } ?: ""
+    fun len(s: Song) = (s.durMs / 60000).let { if (it < 3) "Under 3 min" else if (it < 5) "3 – 5 min" else if (it < 8) "5 – 8 min" else "8 min +" }
+    fun pass(s: Song, favSet: Set<String>): Boolean {
+        if (genre.isNotEmpty() && s.genre !in genre) return false
+        if (artist.isNotEmpty() && primaryArtist(s.artist).ifBlank { s.albumArtist } !in artist && s.albumArtist !in artist) return false
+        if (decade.isNotEmpty() && dec(s) !in decade) return false
+        if (length.isNotEmpty() && len(s) !in length) return false
+        if (favs.value && s.id !in favSet) return false
+        if (recent.value && System.currentTimeMillis() - s.added > 31L * 86400000) return false
+        return true
+    }
+}
+
+@Composable
+fun FilterSheet() {
+    val songs by Store.songs.collectAsState()
+    val favs by Store.favs.collectAsState()
+    fun counts(f: (Song) -> String) = songs.map(f).filter { it.isNotBlank() }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.take(16)
+    val n = songs.count { Filt.pass(it, favs.keys) }
+    SheetScroll {
+        Row(Modifier.padding(start = 24.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { Icon(Ic.Filter, tint = accent); T("Filter", 22.sp, W700, modifier = Modifier.weight(1f)); if (Filt.active()) Box(Modifier.clip(RoundedCornerShape(10.dp)).clickable { Filt.clear() }.padding(10.dp)) { T("Clear", 15.sp, W700, accent) } }
+        @Composable fun group(title: String, list: List<Map.Entry<String, Int>>, sel: MutableList<String>) {
+            if (list.isEmpty()) return
+            T(title.uppercase(), 12.sp, W750, C.sub, spacing = 0.8.sp, modifier = Modifier.padding(start = 24.dp, top = 10.dp, bottom = 6.dp))
+            FlowRow(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for ((k, c) in list) Chip(k, k in sel, c) { if (k in sel) sel.remove(k) else sel.add(k) }
+            }
+        }
+        group("Genre", counts { it.genre }, Filt.genre)
+        group("Artist", counts { primaryArtist(it.artist).ifBlank { it.albumArtist } }, Filt.artist)
+        group("Decade", counts { Filt.dec(it) }, Filt.decade)
+        group("Length", counts { Filt.len(it) }, Filt.length)
+        T("OTHER", 12.sp, W750, C.sub, spacing = 0.8.sp, modifier = Modifier.padding(start = 24.dp, top = 10.dp, bottom = 6.dp))
+        Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Favorites only", Filt.favs.value, ic = Ic.Heart) { Filt.favs.value = !Filt.favs.value }
+            Chip("Added this month", Filt.recent.value) { Filt.recent.value = !Filt.recent.value }
+        }
+        Btn("Show ${plural(n, "song")}", modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 22.dp)) { Dialogs.close() }
+    }
+}
 
 private fun sortSongs(l: List<Song>, sort: Int): List<Song> = when (sort) {
     1 -> l.sortedWith(compareBy({ it.artist.lowercase() }, { it.album.lowercase() }, { it.disc }, { it.track }))
@@ -39,67 +99,26 @@ private fun sortSongs(l: List<Song>, sort: Int): List<Song> = when (sort) {
     else -> l.sortedWith(compareBy({ it.title.lowercase() }, { it.artist.lowercase() }))
 }
 
-/** filter chips by genre / decade, shared by Songs and Albums */
 @Composable
-fun Filters(songs: List<Song>, genre: String, onGenre: (String) -> Unit) {
-    val genres = remember(songs) { songs.map { it.genre }.filter { it.isNotBlank() }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.take(12).map { it.key } }
-    if (genres.isEmpty()) return
-    Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(selected = genre.isEmpty(), onClick = { onGenre("") }, label = { Text("All") })
-        for (g in genres) FilterChip(selected = genre == g, onClick = { onGenre(if (genre == g) "" else g) }, label = { Text(g) })
-    }
-}
-
-@Composable
-fun SortButton() {
-    val sort by Prefs.sort.collectAsState()
-    var m by remember { mutableStateOf(false) }
-    Box {
-        IconBtn(Ic.Sort) { m = true }
-        DropdownMenu(expanded = m, onDismissRequest = { m = false }) {
-            Prefs.SORTS.forEachIndexed { i, n -> DropdownMenuItem(leadingIcon = { if (i == sort) Icon(Ic.Check, size = 18.dp) else Spacer(Modifier.size(18.dp)) }, text = { Text(n) }, onClick = { Prefs.setSort(i); m = false }) }
-        }
-    }
-}
-
-@Composable
-fun SongsScreen() {
-    val songs by Store.songs.collectAsState()
-    val sort by Prefs.sort.collectAsState()
-    var genre by remember { mutableStateOf("") }
-    val list = remember(songs, sort, genre) { sortSongs(songs.filter { genre.isEmpty() || it.genre == genre }, sort) }
-    LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            Header("Songs", "${plural(list.size, "song")} · ${fmt(list.sumOf { it.durMs })}") {
-                IconBtn(Ic.Search) { Nav.open(Page.Search) }; IconBtn(Ic.Select) { if (Sel.ids.isEmpty() && list.isNotEmpty()) Sel.ids.add(list[0].id) else Sel.ids.clear() }; SortButton()
-            }
-            Filters(songs, genre) { genre = it }
-            PlayShuffle(list, "Songs")
-            if (songs.isEmpty()) Empty(Ic.Note, "No music yet. Add some in Settings › Add Music, or find some in Get.")
-        }
-        items(list, key = { it.id }) { s -> SongRow(s, list, "Songs") }
-        item { Spacer(Modifier.height(24.dp)) }
-    }
-}
+fun AddMusicEmpty() = Empty(Ic.Note, "Add your music", "Add songs from your phone, a music pack someone shared with you, or a YouTube link.", "Add Music" to { Dialogs.sheet { AddMusicSheet() } })
 
 @Composable
 fun AlbumsScreen() {
     val songs by Store.songs.collectAsState()
+    val favs by Store.favs.collectAsState()
     val sort by Prefs.sort.collectAsState()
-    var genre by remember { mutableStateOf("") }
-    val albums = remember(songs, sort, genre) {
-        val a = Store.albums(songs.filter { genre.isEmpty() || it.genre == genre })
-        when (sort) { 1 -> a.sortedBy { it.artist.lowercase() }; 3 -> a.sortedByDescending { it.added }; 4 -> a.sortedByDescending { it.durMs }; 5 -> a.sortedByDescending { x -> x.songs.sumOf { it.j.optInt("plays") } }; else -> a }
+    val gs = rememberLazyGridState()
+    val albums = remember(songs, sort, favs, Filt.active(), Filt.genre.toList(), Filt.artist.toList(), Filt.decade.toList(), Filt.length.toList(), Filt.favs.value, Filt.recent.value) {
+        val a = Store.albums(songs.filter { Filt.pass(it, favs.keys) })
+        when (sort) { 1 -> a.sortedBy { it.artist.lowercase() }; 3 -> a.sortedByDescending { it.added }; else -> a }
     }
-    LazyVerticalGrid(GridCells.Adaptive(150.dp), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Column {
-                Header("Albums", "${plural(albums.size, "album")} · ${plural(songs.size, "song")}") { IconBtn(Ic.Search) { Nav.open(Page.Search) }; SortButton() }
-                Filters(songs, genre) { genre = it }
-                if (songs.isEmpty()) Empty(Ic.Disc, "Nothing here yet")
-            }
+    Box(Modifier.fillMaxSize()) {
+        LazyVerticalGrid(GridCells.Adaptive(150.dp), state = gs, contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = topPad() + 6.dp, bottom = LocalBottom.current),
+            horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            if (songs.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { AddMusicEmpty() }
+            gitems(albums, key = { it.key }) { AlbumCard(it) }
         }
-        gitems(albums, key = { it.key }) { a -> AlbumCard(a) }
+        Head("Albums", gs.scrolled) { Tools() }
     }
 }
 
@@ -107,23 +126,41 @@ fun AlbumsScreen() {
 fun ArtistsScreen() {
     val songs by Store.songs.collectAsState()
     val favA by Store.favArtists.collectAsState()
+    val favs by Store.favs.collectAsState()
     Store.ver.collectAsState().value
-    val artists = remember(songs) { Store.artists(songs).entries.toList() }
-    val sorted = remember(artists, favA) { artists.sortedWith(compareBy({ it.key.lowercase() !in favA }, { it.key.lowercase() })) }
-    LazyVerticalGrid(GridCells.Adaptive(110.dp), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Column { Header("Artists", plural(artists.size, "artist")) { IconBtn(Ic.Search) { Nav.open(Page.Search) } }; if (songs.isEmpty()) Empty(Ic.Person, "Nothing here yet") }
-        }
-        gitems(sorted, key = { it.key }) { (name, l) ->
-            Column(Modifier.clickable { Nav.open(Page.ArtistP(name)) }, horizontalAlignment = Alignment.CenterHorizontally) {
-                CoverId(Store.artistInfo(name)?.optString("image")?.takeIf { Store.coverFile(it).exists() } ?: l.firstOrNull { it.cover.isNotEmpty() }?.cover ?: "", Modifier.fillMaxWidth(), CircleShape, Ic.Person)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                    if (name.lowercase() in favA) Icon(Ic.HeartFill, size = 12.dp, tint = accentC)
-                    Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+    val ls = rememberLazyListState()
+    val artists = remember(songs, favA, favs, Filt.active()) { Store.artists(songs.filter { Filt.pass(it, favs.keys) }).entries.toList().sortedWith(compareBy({ it.key.lowercase() !in favA }, { it.key.lowercase() })) }
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
+            if (songs.isEmpty()) item { AddMusicEmpty() }
+            items(artists, key = { it.key }) { (name, l) ->
+                Row(Modifier.fillMaxWidth().press(0.98f) { Nav.open(Page.ArtistP(name)) }.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Art(Store.artistInfo(name)?.optString("image")?.takeIf { Store.coverFile(it).exists() } ?: l.firstOrNull { it.cover.isNotEmpty() }?.cover ?: "", 56.dp, shape = CircleShape, ph = Ic.Person, phName = name)
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) { T(name, 15.sp, W700); if (name.lowercase() in favA) Icon(Ic.HeartFill, size = 14.dp, tint = accent) }
+                        T(plural(l.size, "song"), 13.sp, color = C.sub)
+                    }
                 }
-                Text(plural(l.size, "song"), fontSize = 12.sp, color = dim)
             }
         }
+        Head("Artists", ls.scrolled) { Tools() }
+    }
+}
+
+@Composable
+fun SongsScreen() {
+    val songs by Store.songs.collectAsState()
+    val favs by Store.favs.collectAsState()
+    val sort by Prefs.sort.collectAsState()
+    val ls = rememberLazyListState()
+    val list = remember(songs, sort, favs, Filt.active(), Filt.genre.toList(), Filt.artist.toList(), Filt.decade.toList(), Filt.length.toList(), Filt.favs.value, Filt.recent.value) { sortSongs(songs.filter { Filt.pass(it, favs.keys) }, sort) }
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
+            if (songs.isEmpty()) item { AddMusicEmpty() }
+            else item { Plays(list, "Songs", if (Filt.active()) "${plural(list.size, "song")} · ${fmtLong(list.sumOf { it.durMs })} · filtered" else null) }
+            items(list, key = { it.id }) { s -> SongRow(s, list, "Songs") }
+        }
+        Head("Songs", ls.scrolled) { Tools() }
     }
 }
 
@@ -133,75 +170,105 @@ fun PlaylistsScreen() {
     val favs by Store.favs.collectAsState()
     val songs by Store.songs.collectAsState()
     val by = remember(songs) { songs.associateBy { it.id } }
-    LazyColumn(Modifier.fillMaxSize()) {
-        item { Header("Playlists", plural(pls.size, "playlist")) { IconBtn(Ic.Plus) { Dialogs.show { Prompt("New Playlist", "", "Create") { Store.newPlaylist(it) } } } } }
-        item {
-            Row(Modifier.fillMaxWidth().clickable { Nav.open(Page.Favorites) }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) { Icon(Ic.HeartFill, tint = accentC) }
-                Column(Modifier.padding(start = 14.dp)) { Text("Favorites", fontWeight = FontWeight.Medium); Text(plural(favs.keys.count { it in by }, "song"), fontSize = 12.sp, color = dim) }
+    val ls = rememberLazyListState()
+    val a = accent
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
+            item {
+                PlRow({ Box(Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)).background(mix(a, 0.18f, C.surface2)), contentAlignment = Alignment.Center) { Icon(Ic.Plus, tint = a) } }, "New Playlist", null) {
+                    Dialogs.show { Prompt("New Playlist", "", "Create") { n -> Store.newPlaylist(n) } }
+                }
+                PlRow({ Box(Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)).background(Brush.linearGradient(listOf(a, mix(a, 0.6f, Color(0xFF7A1A3A))))), contentAlignment = Alignment.Center) { Icon(Ic.HeartFill, tint = C.onAccent) } },
+                    "Favorite Songs", plural(favs.keys.count { it in by }, "song")) { Nav.open(Page.Favorites) }
+            }
+            items(pls.keys.toList(), key = { it }) { name ->
+                val ids = pls[name] ?: emptyList()
+                PlRow({ Art(ids.firstNotNullOfOrNull { by[it]?.cover?.takeIf { c -> c.isNotEmpty() } } ?: "", 56.dp, shape = RoundedCornerShape(10.dp), ph = Ic.List, phName = name) },
+                    name, plural(ids.count { it in by }, "song")) { Nav.open(Page.PlaylistP(name)) }
             }
         }
-        items(pls.keys.toList(), key = { it }) { name ->
-            val ids = pls[name] ?: emptyList()
-            Row(Modifier.fillMaxWidth().clickable { Nav.open(Page.PlaylistP(name)) }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                CoverId(ids.firstNotNullOfOrNull { by[it]?.cover?.takeIf { c -> c.isNotEmpty() } } ?: "", Modifier.size(56.dp), placeholder = Ic.List)
-                Column(Modifier.padding(start = 14.dp)) { Text(name, fontWeight = FontWeight.Medium); Text("${plural(ids.count { it in by }, "song")} · ${fmt(ids.sumOf { by[it]?.durMs ?: 0 })}", fontSize = 12.sp, color = dim) }
-            }
-        }
+        Head("Playlists", ls.scrolled) { Tools() }
+    }
+}
+@Composable
+private fun PlRow(art: @Composable () -> Unit, title: String, sub: String?, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().press(0.98f) { onClick() }.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        art(); Column { T(title, 15.sp, W700); if (sub != null) T(sub, 13.sp, color = C.sub) }
     }
 }
 
 // ------------------------------------------------------------------ pages
+/** an album / artist page takes its own cover's colour, and a soft wash of it at the top */
+@Composable
+fun Tinted(cover: String, content: @Composable () -> Unit) {
+    val c = remember(cover) { Accents.of(if (cover.isEmpty()) null else Store.coverFile(cover)) } ?: accent
+    CompositionLocalProvider(LocalAccent provides c) {
+        Box(Modifier.fillMaxSize().background(C.bg)) {
+            Box(Modifier.fillMaxWidth().height(460.dp).background(Brush.verticalGradient(listOf(mix(c, 0.32f, C.bg), C.bg))))
+            content()
+        }
+    }
+}
+
+@Composable
+fun Hero(cover: String, phName: String, title: String, by: String?, info: String, round: Boolean = false, onBy: () -> Unit = {}, acts: @Composable RowScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 4.dp, bottom = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.fillMaxWidth(0.64f).widthIn(max = 280.dp).shadow(30.dp, if (round) CircleShape else RoundedCornerShape(20.dp))) {
+            Art(cover, null, Modifier.fillMaxWidth(), if (round) CircleShape else RoundedCornerShape(20.dp), if (round) Ic.Person else Ic.Disc, phName)
+        }
+        T(title, 24.sp, W800, lines = 2, align = TextAlign.Center, modifier = Modifier.padding(top = 18.dp, bottom = 2.dp))
+        if (by != null) T(by, 15.sp, W650, accent, modifier = Modifier.clickable { onBy() })
+        T(info, 13.sp, color = C.sub, modifier = Modifier.padding(top = 4.dp))
+        Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), content = acts)
+    }
+}
+
 @Composable
 fun AlbumPage(key: String) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val songs by Store.songs.collectAsState()
     val a = remember(songs, key) { Store.albums(songs.filter { it.albumKey == key }).firstOrNull() }
-    var menu by remember { mutableStateOf(false) }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { u ->
-        if (u != null && a != null) Store.scope.launch { try { ctx.contentResolver.openInputStream(u)?.use { Store.setCover(a.songs.map { it.id }, it.readBytes()) }; Toasts.show("Cover updated") } catch (_: Exception) { } }
+        if (u != null && a != null) Store.scope.launch { try { ctx.contentResolver.openInputStream(u)?.use { Store.setCover(a.songs.map { it.id }, it.readBytes()) }; Accents.forget(); Toasts.show("Cover updated") } catch (_: Exception) { } }
     }
     if (a == null) { LaunchedEffect(Unit) { Nav.back() }; return }
+    val ls = rememberLazyListState()
     val multiDisc = a.songs.map { it.disc }.distinct().size > 1
-    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        item {
-            Header("", back = true) {
-                Box {
-                    IconBtn(Ic.More) { menu = true }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        Item(Ic.Play, "Play Next") { menu = false; Ctl.playNext(ctx, a.songs) }
-                        Item(Ic.Queue, "Add to Queue") { menu = false; Ctl.addToQueue(ctx, a.songs) }
-                        Item(Ic.List, "Add to Playlist…") { menu = false; Dialogs.show { PlaylistPicker(a.songs.map { it.id }) } }
-                        Item(Ic.HeartFill, "Favorite All Songs") { menu = false; Store.setFav(a.songs.map { it.id }, true); Toasts.show("Added to Favorites") }
-                        Item(Ic.Person, "Go to Artist") { menu = false; Nav.open(Page.ArtistP(a.artist)) }
-                        Item(Ic.Wand, "Look Up Album Info…") { menu = false; Dialogs.show { LookupAlbum(a, false) } }
-                        Item(Ic.Image, "Find Cover Online…") { menu = false; Dialogs.show { LookupAlbum(a, true) } }
-                        Item(Ic.Folder, "Choose Cover from Phone…") { menu = false; pick.launch("image/*") }
-                        Item(Ic.Pack, "Share as Music Pack…") { menu = false; scope.launch { sharePack(ctx, a.title, a.songs, null) } }
-                        Item(Ic.Trash, "Remove Album…") { menu = false; Dialogs.show { Confirm("Remove “${a.title}”?", "${plural(a.songs.size, "song")} are deleted from this phone.", "Remove") { Store.remove(a.songs.map { it.id }); Nav.back() } } }
+    Tinted(a.cover?.cover ?: "") {
+        LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
+            item {
+                Hero(a.cover?.cover ?: "", a.title, a.title, a.artist, listOf(a.year, plural(a.songs.size, "song"), fmtLong(a.durMs)).filter { it.isNotBlank() }.joinToString(" · "), onBy = { Nav.open(Page.ArtistP(a.artist)) }) {
+                    Btn("Play", Ic.Play, modifier = Modifier.widthIn(min = 130.dp)) { Ctl.play(ctx, a.songs, 0, a.title, false) }
+                    Btn("Shuffle", Ic.Shuffle, tonal = true, modifier = Modifier.widthIn(min = 130.dp)) { Ctl.shuffleAll(ctx, a.songs, a.title) }
+                }
+            }
+            var lastDisc = -1
+            a.songs.forEach { s ->
+                if (multiDisc && s.disc != lastDisc) { val d = s.disc; item(key = "disc$d") { T("Disc ${if (d > 0) d else 1}", 13.sp, W700, C.sub, modifier = Modifier.padding(start = 18.dp, top = 12.dp, bottom = 4.dp)) } }
+                lastDisc = s.disc
+                item(key = s.id) { SongRow(s, a.songs, a.title, number = s.track) }
+            }
+            item { a.songs.firstNotNullOfOrNull { it.j.optString("copyright").ifBlank { null } }?.let { T(it, 12.sp, color = C.faint, lines = 3, modifier = Modifier.padding(18.dp)) } }
+        }
+        Head(if (ls.scrolled) a.title else "", ls.scrolled, back = true) {
+            IB(Ic.More) {
+                Dialogs.sheet {
+                    SheetScroll {
+                        SheetHead(a.cover?.cover ?: "", a.title, "${a.artist} · ${plural(a.songs.size, "song")}")
+                        Act(Ic.PlayNext, "Play Next") { Ctl.playNext(ctx, a.songs) }
+                        Act(Ic.AddQ, "Add to Queue") { Ctl.addToQueue(ctx, a.songs) }
+                        Act(Ic.List, "Add to Playlist…") { Dialogs.sheet { PlaylistPicker(a.songs.map { it.id }) } }
+                        Act(Ic.HeartFill, "Favorite All Songs") { Store.setFav(a.songs.map { it.id }, true); Toasts.show("Added to Favorites") }
+                        Act(Ic.Person, "Go to Artist") { Nav.open(Page.ArtistP(a.artist)) }
+                        Act(Ic.Search, "Look Up Album Info…") { Dialogs.sheet { LookupAlbum(a, false) } }
+                        Act(Ic.Image, "Find Cover Online") { Dialogs.sheet { LookupAlbum(a, true) } }
+                        Act(Ic.Folder, "Choose Cover from Phone…") { pick.launch("image/*") }
+                        Act(Ic.Pack, "Share as Music Pack…") { scope.launch { sharePack(ctx, a.title, a.songs, null) } }
+                        Act(Ic.Trash, "Remove Album…", danger = true) { Dialogs.show { Confirm("Remove “${a.title}”?", "${plural(a.songs.size, "song")} are deleted from this phone.", "Remove") { Store.remove(a.songs.map { it.id }); Nav.back() } } }
                     }
                 }
             }
-            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                CoverId(a.cover?.cover ?: "", Modifier.fillMaxWidth(0.72f))
-                Spacer(Modifier.height(14.dp))
-                Text(a.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(a.artist, color = accentC, modifier = Modifier.clickable { Nav.open(Page.ArtistP(a.artist)) }.padding(4.dp))
-                Text(listOf(a.songs.firstOrNull { it.genre.isNotBlank() }?.genre ?: "", a.year, plural(a.songs.size, "song"), fmt(a.durMs)).filter { it.isNotBlank() }.joinToString(" · "), color = dim, fontSize = 13.sp)
-            }
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { PlayShuffle(a.songs, a.title) }
-        }
-        var lastDisc = -1
-        a.songs.forEach { s ->
-            if (multiDisc && s.disc != lastDisc) { val d = s.disc; item(key = "disc$d") { Text("Disc ${if (d > 0) d else 1}", color = dim, fontSize = 13.sp, modifier = Modifier.padding(start = 16.dp, top = 10.dp)) } }
-            lastDisc = s.disc
-            item(key = s.id) { SongRow(s, a.songs, a.title, showCover = false, number = s.track) }
-        }
-        item {
-            val c = a.songs.firstNotNullOfOrNull { it.j.optString("copyright").ifBlank { null } }
-            if (c != null) Text(c, fontSize = 11.sp, color = dim, modifier = Modifier.padding(16.dp))
-            Spacer(Modifier.height(24.dp))
         }
     }
 }
@@ -213,43 +280,43 @@ fun ArtistPage(name: String) {
     val favA by Store.favArtists.collectAsState()
     Store.ver.collectAsState().value
     val mine = remember(songs, name) { Store.artists(songs)[name] ?: emptyList() }
-    val own = remember(mine) { Store.albums(mine.filter { it.albumArtist.equals(name, true) }).sortedBy { it.year.ifBlank { "9999" } } }
+    val own = remember(mine) { Store.albums(mine.filter { it.albumArtist.equals(name, true) }).sortedByDescending { it.year.ifBlank { "0" } } }
     val featured = remember(mine) { Store.albums(mine.filter { !it.albumArtist.equals(name, true) }) }
     val info = Store.artistInfo(name)
-    var all by remember { mutableStateOf(false) }
+    val photo = info?.optString("image")?.takeIf { Store.coverFile(it).exists() } ?: mine.firstOrNull { it.cover.isNotEmpty() }?.cover ?: ""
     val top = remember(mine) { mine.sortedWith(compareByDescending<Song> { it.j.optInt("plays") }.thenByDescending { Store.isFav(it.id) }.thenByDescending { it.added }) }
-    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        item {
-            Header("", back = true) {
-                IconBtn(if (name.lowercase() in favA) Ic.HeartFill else Ic.Heart, if (name.lowercase() in favA) accentC else MaterialTheme.colorScheme.onSurface) { Store.toggleFavArtist(name) }
+    var all by remember { mutableStateOf(false) }
+    val ls = rememberLazyListState()
+    val fav = name.lowercase() in favA
+    Tinted(photo) {
+        LazyColumn(state = ls, contentPadding = PaddingValues(bottom = LocalBottom.current)) {
+            item {
+                Box(Modifier.fillMaxWidth().aspectRatio(1.05f)) {
+                    Art(photo, null, Modifier.fillMaxSize(), RoundedCornerShape(0.dp), Ic.Person, name)
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.35f), 0.35f to Color.Transparent, 1f to C.bg)))
+                    T(name, 36.sp, W800, lines = 2, spacing = (-0.6).sp, modifier = Modifier.align(Alignment.BottomStart).padding(start = 18.dp, end = 18.dp, bottom = 8.dp))
+                }
+                T("${plural(mine.size, "song")} · ${plural(own.size, "album")}", 13.sp, color = C.sub, modifier = Modifier.padding(start = 18.dp, bottom = 14.dp))
+                Row(Modifier.padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Btn("Shuffle", Ic.Shuffle, modifier = Modifier.weight(1f)) { Ctl.shuffleAll(ctx, mine, name) }
+                    Btn("Radio", Ic.Spark, tonal = true, modifier = Modifier.weight(1f)) { Radio.artist(ctx, name, mine) }
+                }
+                Shelf("Songs") {}
             }
-            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                CoverId(info?.optString("image")?.takeIf { Store.coverFile(it).exists() } ?: mine.firstOrNull { it.cover.isNotEmpty() }?.cover ?: "", Modifier.fillMaxWidth(0.55f), CircleShape, Ic.Person)
-                Text(name, fontSize = 26.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp), textAlign = TextAlign.Center)
-                Text("${plural(mine.size, "song")} · ${plural(own.size, "album")}", color = dim, fontSize = 13.sp)
+            items(if (all) top else top.take(5), key = { it.id }) { s -> SongRow(s, top, name) }
+            item {
+                if (top.size > 5) Box(Modifier.padding(start = 10.dp).clip(RoundedCornerShape(10.dp)).clickable { all = !all }.padding(10.dp)) { T(if (all) "Show fewer" else "See all ${top.size}", 15.sp, W700, accent) }
+                AlbumShelf("Albums", own.filter { it.songs.size > 3 })
+                AlbumShelf("Singles & EPs", own.filter { it.songs.size <= 3 })
+                AlbumShelf("Featured on", featured)
+                Shelf("More from $name") {
+                    Box(Modifier.padding(horizontal = 18.dp)) { Btn("Find on YouTube Music", Ic.Globe, tonal = true, modifier = Modifier.fillMaxWidth()) { Yt.findArtist(name, info?.optString("channel") ?: ""); Nav.open(Page.Search); Yt.mode.value = true } }
+                }
+                val about = info?.optString("about") ?: ""
+                if (about.isNotBlank()) { var more by remember { mutableStateOf(false) }; Shelf("About") { T(about, 15.sp, color = C.sub, lines = if (more) 400 else 5, lh = 22.sp, modifier = Modifier.clickable { more = !more }.padding(horizontal = 18.dp)) } }
             }
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                PlayShuffle(mine, name) { OutlinedButton(onClick = { Radio.artist(ctx, name, mine) }) { Icon(Ic.Radio, size = 18.dp); Spacer(Modifier.width(6.dp)); Text("Radio") } }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                TextButton(onClick = { GetState.findArtist(name, info?.optString("channel") ?: ""); Nav.stack.clear(); Nav.tab.value = 4 }) { Icon(Ic.Download, size = 18.dp); Spacer(Modifier.width(6.dp)); Text("More from $name on YouTube Music") }
-            }
-            Text("Songs", fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp))
         }
-        items(if (all) top else top.take(5), key = { it.id }) { s -> SongRow(s, top, name) }
-        if (top.size > 5) item { TextButton(onClick = { all = !all }, modifier = Modifier.padding(start = 8.dp)) { Text(if (all) "Show fewer" else "See all ${top.size}") } }
-        item {
-            AlbumRow("Albums", own.filter { it.songs.size > 3 })
-            AlbumRow("Singles & EPs", own.filter { it.songs.size <= 3 })
-            AlbumRow("Featured on", featured)
-            val about = info?.optString("about") ?: ""
-            if (about.isNotBlank()) {
-                var more by remember { mutableStateOf(false) }
-                Text("About", fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 16.dp))
-                Text(about, color = dim, fontSize = 14.sp, maxLines = if (more) 200 else 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable { more = !more }.padding(16.dp))
-            }
-            Spacer(Modifier.height(32.dp))
-        }
+        Head(if (ls.scrolled) name else "", ls.scrolled, back = true) { IB(if (fav) Ic.HeartFill else Ic.Heart, on = fav) { Store.toggleFavArtist(name) } }
     }
 }
 
@@ -259,92 +326,133 @@ fun PlaylistPage(name: String) {
     val scope = rememberCoroutineScope()
     val pls by Store.playlists.collectAsState()
     val songs by Store.songs.collectAsState()
-    var menu by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     val ids = pls[name]
     if (ids == null) { LaunchedEffect(Unit) { Nav.back() }; return }
     val by = remember(songs) { songs.associateBy { it.id } }
     val list = ids.mapNotNull { by[it] }
-    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        item {
-            Header(name, "${plural(list.size, "song")} · ${fmt(list.sumOf { it.durMs })}", back = true) {
-                IconBtn(Ic.Edit, if (editing) accentC else MaterialTheme.colorScheme.onSurface) { editing = !editing }
-                Box {
-                    IconBtn(Ic.More) { menu = true }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        Item(Ic.Play, "Play Next") { menu = false; Ctl.playNext(ctx, list) }
-                        Item(Ic.Queue, "Add to Queue") { menu = false; Ctl.addToQueue(ctx, list) }
-                        Item(Ic.Edit, "Rename…") { menu = false; Dialogs.show { Prompt("Rename Playlist", name, "Rename") { n -> Store.renamePlaylist(name, n); Nav.back() } } }
-                        Item(Ic.Pack, "Share as Music Pack…") { menu = false; scope.launch { sharePack(ctx, name, list, name) } }
-                        Item(Ic.Trash, "Delete Playlist") { menu = false; Dialogs.show { Confirm("Delete “$name”?", "The songs stay in your library.", "Delete") { Store.deletePlaylist(name); Nav.back() } } }
+    val ls = rememberLazyListState()
+    val cover = list.firstOrNull { it.cover.isNotEmpty() }?.cover ?: ""
+    Tinted(cover) {
+        LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
+            item {
+                Hero(cover, name, name, null, "${plural(list.size, "song")} · ${fmtLong(list.sumOf { it.durMs })}") {
+                    Btn("Play", Ic.Play, modifier = Modifier.widthIn(min = 130.dp), enabled = list.isNotEmpty()) { Ctl.play(ctx, list, 0, name, false) }
+                    Btn("Shuffle", Ic.Shuffle, tonal = true, modifier = Modifier.widthIn(min = 130.dp), enabled = list.isNotEmpty()) { Ctl.shuffleAll(ctx, list, name) }
+                }
+                if (list.isEmpty()) T("Empty. Use ⋮ › Add to Playlist on any song.", 15.sp, color = C.sub, align = TextAlign.Center, lines = 2, modifier = Modifier.fillMaxWidth().padding(24.dp))
+            }
+            if (editing) itemsIndexed(list, key = { i, s -> "$i${s.id}" }) { i, s ->
+                Row(Modifier.fillMaxWidth().height(64.dp).padding(start = 18.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Art(s.cover, 48.dp, phName = s.album)
+                    Column(Modifier.weight(1f)) { T(s.title, 15.sp, W650); T(s.artist, 13.sp, color = C.sub) }
+                    IB(Ic.Up, if (i > 0) C.text else C.faint, 20.dp) { if (i > 0) Store.setPlaylist(name, list.map { it.id }.toMutableList().also { java.util.Collections.swap(it, i, i - 1) }) }
+                    IB(Ic.Down, if (i < list.size - 1) C.text else C.faint, 20.dp) { if (i < list.size - 1) Store.setPlaylist(name, list.map { it.id }.toMutableList().also { java.util.Collections.swap(it, i, i + 1) }) }
+                    IB(Ic.Close, C.sub, 20.dp) { Store.setPlaylist(name, list.map { it.id }.filterIndexed { k, _ -> k != i }) }
+                }
+            } else items(list, key = { it.id }) { s -> SongRow(s, list, name, playlist = name) }
+        }
+        Head(if (ls.scrolled) name else "", ls.scrolled, back = true) {
+            IB(Ic.Edit, on = editing) { editing = !editing }
+            IB(Ic.More) {
+                Dialogs.sheet {
+                    SheetScroll {
+                        SheetHead(cover, name, plural(list.size, "song"), name)
+                        Act(Ic.PlayNext, "Play Next") { Ctl.playNext(ctx, list) }
+                        Act(Ic.AddQ, "Add to Queue") { Ctl.addToQueue(ctx, list) }
+                        Act(Ic.Edit, "Rename…") { Dialogs.show { Prompt("Rename Playlist", name, "Rename") { n -> Store.renamePlaylist(name, n); Nav.back() } } }
+                        Act(Ic.Pack, "Share as Music Pack…") { scope.launch { sharePack(ctx, name, list, name) } }
+                        Act(Ic.Trash, "Delete Playlist", danger = true) { Dialogs.show { Confirm("Delete “$name”?", "The songs stay in your library.", "Delete") { Store.deletePlaylist(name); Nav.back() } } }
                     }
                 }
             }
-            PlayShuffle(list, name)
-            if (list.isEmpty()) Empty(Ic.List, "Empty. Use ⋯ › Add to Playlist on any song.")
         }
-        if (editing) itemsIndexed(list, key = { i, s -> "$i${s.id}" }) { i, s ->
-            Row(Modifier.fillMaxWidth().padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Cover(s, 40.dp)
-                Text(s.title, Modifier.weight(1f).padding(horizontal = 10.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                IconBtn(Ic.Up, if (i > 0) MaterialTheme.colorScheme.onSurface else dim, 20.dp) { if (i > 0) Store.setPlaylist(name, list.map { it.id }.toMutableList().also { java.util.Collections.swap(it, i, i - 1) }) }
-                IconBtn(Ic.Down, if (i < list.size - 1) MaterialTheme.colorScheme.onSurface else dim, 20.dp) { if (i < list.size - 1) Store.setPlaylist(name, list.map { it.id }.toMutableList().also { java.util.Collections.swap(it, i, i + 1) }) }
-                IconBtn(Ic.Close, dim, 20.dp) { Store.setPlaylist(name, list.map { it.id }.filterIndexed { k, _ -> k != i }) }
-            }
-        } else items(list, key = { it.id }) { s -> SongRow(s, list, name, playlist = name) }
     }
 }
 
 @Composable
 fun FavoritesPage() {
-    Store.favs.collectAsState().value
+    val favs by Store.favs.collectAsState()
     val songs by Store.songs.collectAsState()
-    val list = remember(songs, Store.favs.value) { Store.favorites() }
-    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        item { Header("Favorites", "${plural(list.size, "song")} · ${fmt(list.sumOf { it.durMs })}", back = true); PlayShuffle(list, "Favorites"); if (list.isEmpty()) Empty(Ic.Heart, "Swipe a song right, or double-tap the cover in the player, to add it here.") }
-        items(list, key = { it.id }) { s -> SongRow(s, list, "Favorites") }
+    val list = remember(songs, favs) { Store.favorites() }
+    val ls = rememberLazyListState()
+    Tinted(list.firstOrNull { it.cover.isNotEmpty() }?.cover ?: "") {
+        LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
+            item {
+                val a = accent
+                Column(Modifier.fillMaxWidth().padding(bottom = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.fillMaxWidth(0.5f).aspectRatio(1f).shadow(30.dp, RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp)).background(Brush.linearGradient(listOf(a, mix(a, 0.6f, Color(0xFF7A1A3A))))), contentAlignment = Alignment.Center) { Icon(Ic.HeartFill, size = 72.dp, tint = C.onAccent) }
+                    T("Favorite Songs", 24.sp, W800, modifier = Modifier.padding(top = 18.dp)); T("${plural(list.size, "song")} · ${fmtLong(list.sumOf { it.durMs })}", 13.sp, color = C.sub, modifier = Modifier.padding(top = 4.dp))
+                }
+                Plays(list, "Favorite Songs")
+                if (list.isEmpty()) T("Swipe a song to the right, or double-tap the cover in the player, to add it here.", 15.sp, color = C.sub, lines = 3, align = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(24.dp))
+            }
+            items(list, key = { it.id }) { s -> SongRow(s, list, "Favorite Songs") }
+        }
+        Head(if (ls.scrolled) "Favorite Songs" else "", ls.scrolled, back = true)
     }
 }
 
-/** search your library, with recent searches */
+/** Search: your library (songs, albums, artists, playlists as card rows), with recent searches; and YouTube Music */
 @Composable
 fun SearchPage() {
     var q by remember { mutableStateOf("") }
     val songs by Store.songs.collectAsState()
     val pls by Store.playlists.collectAsState()
     var recent by remember { mutableStateOf(Store.recent()) }
+    val yt by Yt.mode
     val t = q.trim()
-    val hitSongs = remember(songs, t) { if (t.isEmpty()) emptyList() else songs.filter { it.title.contains(t, true) || it.artist.contains(t, true) || it.album.contains(t, true) || it.genre.contains(t, true) }.take(60) }
+    LaunchedEffect(t) { kotlinx.coroutines.delay(1800); if (t.length > 1 && !yt) { Store.addRecent(t); recent = Store.recent() } }
+    val hitSongs = remember(songs, t) { if (t.isEmpty()) emptyList() else songs.filter { it.title.contains(t, true) || it.artist.contains(t, true) || it.album.contains(t, true) || it.genre.contains(t, true) }.take(40) }
     val hitAlbums = remember(songs, t) { if (t.isEmpty()) emptyList() else Store.albums(songs).filter { it.title.contains(t, true) || it.artist.contains(t, true) }.take(20) }
-    val hitArtists = remember(songs, t) { if (t.isEmpty()) emptyList() else Store.artists(songs).keys.filter { it.contains(t, true) }.take(20) }
+    val hitArtists = remember(songs, t) { if (t.isEmpty()) emptyList() else Store.artists(songs).entries.filter { it.key.contains(t, true) }.take(20) }
     val hitPls = pls.keys.filter { t.isNotEmpty() && it.contains(t, true) }
-    fun keep() { Store.addRecent(t); recent = Store.recent() }
-    LaunchedEffect(t) { kotlinx.coroutines.delay(1800); if (t.length > 1) { Store.addRecent(t); recent = Store.recent() } }
-    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 12.dp, top = 6.dp)) {
-                IconBtn(Ic.Back) { Nav.back() }
-                OutlinedTextField(q, { q = it }, Modifier.weight(1f), placeholder = { Text("Songs, albums, artists, genres") }, singleLine = true,
-                    leadingIcon = { Icon(Ic.Search, size = 20.dp, tint = dim) }, trailingIcon = { if (q.isNotEmpty()) IconBtn(Ic.Close, dim, 18.dp) { q = "" } })
-            }
-            if (t.isEmpty() && recent.isNotEmpty()) {
-                Row(Modifier.padding(start = 16.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Recent", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f)); TextButton(onClick = { Store.clearRecent(); recent = emptyList() }) { Text("Clear") }
+    val ctx = LocalContext.current
+    Box(Modifier.fillMaxSize().background(C.bg)) {
+        LazyColumn(contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
+            item {
+                SearchBox(if (yt) Yt.q.value else q, { if (yt) Yt.q.value = it else q = it }, if (yt) "Search YouTube Music, or paste a link" else "Songs, albums, artists, genres", { if (yt) Yt.run() }, Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp))
+                Row(Modifier.padding(start = 18.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("Your Library", !yt, ic = Ic.Note) { Yt.mode.value = false }
+                    Chip("YouTube Music", yt, ic = Ic.Globe) { Yt.mode.value = true; if (Yt.q.value.isEmpty()) Yt.q.value = q }
                 }
-                recent.forEach { r -> Row(Modifier.fillMaxWidth().clickable { q = r }.padding(horizontal = 16.dp, vertical = 10.dp)) { Icon(Ic.Timer, size = 18.dp, tint = dim); Spacer(Modifier.width(12.dp)); Text(r) } }
             }
-            if (t.isNotEmpty() && hitSongs.isEmpty() && hitAlbums.isEmpty() && hitArtists.isEmpty() && hitPls.isEmpty()) Empty(Ic.Search, "Nothing matches “$t”")
+            if (yt) { ytResults(this); return@LazyColumn }
+            if (t.isEmpty() && recent.isNotEmpty()) item {
+                Row(Modifier.padding(start = 18.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    T("Recent", 20.sp, W800, modifier = Modifier.weight(1f)); Box(Modifier.clip(RoundedCornerShape(10.dp)).clickable { Store.clearRecent(); recent = emptyList() }.padding(10.dp)) { T("Clear", 15.sp, W700, accent) }
+                }
+                recent.forEach { r -> Row(Modifier.fillMaxWidth().clickable { q = r }.padding(horizontal = 18.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) { Icon(Ic.History, tint = C.sub); T(r) } }
+            }
+            if (t.isNotEmpty() && hitSongs.isEmpty() && hitAlbums.isEmpty() && hitArtists.isEmpty() && hitPls.isEmpty()) item {
+                Empty(Ic.Search, "No matches", "Nothing in your library matches “$t”.", "Search YouTube Music" to { Yt.mode.value = true; Yt.q.value = t; Yt.run() })
+            }
+            if (hitSongs.isNotEmpty()) item {
+                Shelf("Songs") {
+                    androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        items(hitSongs, key = { it.id }) { s ->
+                            Column(Modifier.width(150.dp).press(0.96f) { Ctl.play(ctx, hitSongs, hitSongs.indexOf(s), "Search") }) {
+                                Art(s.cover, null, Modifier.fillMaxWidth(), RoundedCornerShape(14.dp), phName = s.album); T(s.title, 14.sp, W700, modifier = Modifier.padding(top = 8.dp)); T(s.artist, 13.sp, color = C.sub)
+                            }
+                        }
+                    }
+                }
+            }
+            if (hitArtists.isNotEmpty()) item {
+                Shelf("Artists") {
+                    androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        items(hitArtists, key = { it.key }) { (n, l) ->
+                            Column(Modifier.width(150.dp).press(0.96f) { Nav.open(Page.ArtistP(n)) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                                Art(Store.artistInfo(n)?.optString("image")?.takeIf { Store.coverFile(it).exists() } ?: l.firstOrNull { it.cover.isNotEmpty() }?.cover ?: "", null, Modifier.fillMaxWidth(), CircleShape, Ic.Person, n)
+                                T(n, 14.sp, W700, modifier = Modifier.padding(top = 8.dp)); T(plural(l.size, "song"), 13.sp, color = C.sub)
+                            }
+                        }
+                    }
+                }
+            }
+            if (hitAlbums.isNotEmpty()) item { AlbumShelf("Albums", hitAlbums) }
+            if (hitPls.isNotEmpty()) item { Shelf("Playlists") { hitPls.forEach { p -> PlRow({ Art("", 56.dp, shape = RoundedCornerShape(10.dp), ph = Ic.List, phName = p) }, p, null) { Nav.open(Page.PlaylistP(p)) } } } }
         }
-        if (hitArtists.isNotEmpty()) item {
-            Text("Artists", fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 12.dp))
-            hitArtists.forEach { a -> Row(Modifier.fillMaxWidth().clickable { keep(); Nav.open(Page.ArtistP(a)) }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Ic.Person, tint = dim); Spacer(Modifier.width(12.dp)); Text(a) } }
-        }
-        if (hitAlbums.isNotEmpty()) item { AlbumRow("Albums", hitAlbums) }
-        if (hitPls.isNotEmpty()) item {
-            Text("Playlists", fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 12.dp))
-            hitPls.forEach { p -> Row(Modifier.fillMaxWidth().clickable { keep(); Nav.open(Page.PlaylistP(p)) }.padding(horizontal = 16.dp, vertical = 10.dp)) { Icon(Ic.List, tint = dim); Spacer(Modifier.width(12.dp)); Text(p) } }
-        }
-        if (hitSongs.isNotEmpty()) item { Text("Songs", fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)) }
-        items(hitSongs, key = { "s" + it.id }) { s -> SongRow(s, hitSongs, "Search") }
+        Head("Search", false, back = true)
     }
 }

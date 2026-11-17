@@ -1,35 +1,58 @@
-@file:OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalFoundationApi::class)
 
 package com.auraos.music.next
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Text
 import coil.compose.AsyncImage
 import com.auraos.music.NativePlayer
 import kotlinx.coroutines.Dispatchers
@@ -41,17 +64,22 @@ import java.util.Date
 import kotlin.math.roundToInt
 
 fun fmt(ms: Long): String { val s = (ms / 1000).coerceAtLeast(0); return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60) }
+fun fmtLong(ms: Long): String { val m = ms / 60000; return if (m >= 60) "${m / 60} h ${m % 60} min" else "$m min" }
 fun plural(n: Int, w: String) = "$n $w" + if (n == 1) "" else "s"
-val dim @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
-val accentC @Composable get() = MaterialTheme.colorScheme.primary
+fun fmtSize(b: Long): String { var n = b.toDouble(); for (u in listOf("B", "KB", "MB", "GB")) { if (n < 1024 || u == "GB") return if (n < 10 && u != "B") "%.1f %s".format(n, u) else "${n.roundToInt()} $u"; n /= 1024 }; return "" }
 
-/** Pages opened on top of the tabs (back closes them) */
+@Composable
+fun T(text: String, size: TextUnit = 15.sp, weight: FontWeight = FontWeight.Normal, color: Color = C.text, modifier: Modifier = Modifier, lines: Int = 1, align: TextAlign? = null, spacing: TextUnit = TextUnit.Unspecified, lh: TextUnit = TextUnit.Unspecified) =
+    Text(text, modifier, color = color, fontSize = size, fontWeight = weight, maxLines = lines, overflow = TextOverflow.Ellipsis, textAlign = align, letterSpacing = spacing, lineHeight = lh)
+
+/** Pages opened over the tabs (back closes them) */
 sealed class Page {
     data class AlbumP(val key: String) : Page()
     data class ArtistP(val name: String) : Page()
     data class PlaylistP(val name: String) : Page()
     object Favorites : Page()
     object Search : Page()
+    object Settings : Page()
 }
 object Nav {
     val stack = mutableStateListOf<Page>()
@@ -59,128 +87,261 @@ object Nav {
     fun open(p: Page) { stack.add(p) }
     fun back(): Boolean { if (stack.isEmpty()) return false; stack.removeAt(stack.size - 1); return true }
 }
-
-/** Selecting several songs: long-press a song, then tap more */
 object Sel { val ids = mutableStateListOf<String>(); fun toggle(id: String) { if (id in ids) ids.remove(id) else ids.add(id) } }
 
-/** One dialog at a time, anywhere */
-object Dialogs { val cur = mutableStateOf<(@Composable () -> Unit)?>(null); fun show(d: @Composable () -> Unit) { cur.value = d }; fun close() { cur.value = null } }
-
-@Composable
-fun IconBtn(ic: Ic, tint: Color = MaterialTheme.colorScheme.onSurface, size: Dp = 24.dp, onClick: () -> Unit) {
-    Box(Modifier.size(size + 20.dp).clip(CircleShape).clickable { onClick() }, contentAlignment = Alignment.Center) { Icon(ic, size = size, tint = tint) }
+/** bottom sheets (#sheet) and centered dialogs (#sheet.dialog), one at a time */
+object Dialogs {
+    val cur = mutableStateOf<(@Composable () -> Unit)?>(null)
+    val isSheet = mutableStateOf(true)
+    fun show(d: @Composable () -> Unit) { isSheet.value = false; cur.value = d }
+    fun sheet(d: @Composable () -> Unit) { isSheet.value = true; cur.value = d }
+    fun close() { cur.value = null }
 }
 
 @Composable
-fun Header(title: String, sub: String = "", back: Boolean = false, actions: @Composable RowScope.() -> Unit = {}) {
-    Row(Modifier.fillMaxWidth().padding(start = if (back) 4.dp else 16.dp, end = 4.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (back) IconBtn(Ic.Back) { Nav.back() }
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = if (back) 20.sp else 28.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = dim, maxLines = 1)
+fun SheetHost() {
+    val d = Dialogs.cur.value
+    AnimatedVisibility(d != null, enter = fadeIn(tween(200)), exit = fadeOut(tween(200))) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)).clickable(remember { MutableInteractionSource() }, null) { Dialogs.close() })
+    }
+    if (d != null) BackHandler { Dialogs.close() }
+    val sheet = Dialogs.isSheet.value
+    AnimatedVisibility(d != null && sheet, enter = slideInVertically(tween(380, easing = Ease)) { it }, exit = slideOutVertically(tween(250)) { it }) {
+        var dy by remember { mutableStateOf(0f) }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+            Column(Modifier.fillMaxWidth().fillMaxHeight(0.86f).wrapContentHeight(Alignment.Bottom).offset { IntOffset(0, dy.coerceAtLeast(0f).roundToInt()) }
+                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(C.surface).clickable(remember { MutableInteractionSource() }, null) { }
+                .navigationBarsPadding().imePadding().padding(top = 8.dp, bottom = 14.dp)) {
+                Box(Modifier.fillMaxWidth().pointerInput(Unit) { detectVerticalDragGestures(onDragEnd = { if (dy > 120) Dialogs.close(); dy = 0f }) { c, a -> c.consume(); dy += a } }.padding(top = 4.dp, bottom = 10.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF55555C)))
+                }
+                Dialogs.cur.value?.invoke()
+            }
+        }
+    }
+    AnimatedVisibility(d != null && !sheet, enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.94f), exit = fadeOut(tween(150))) {
+        Box(Modifier.fillMaxSize().imePadding(), contentAlignment = Alignment.Center) {
+            Column(Modifier.padding(horizontal = 20.dp).fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).clickable(remember { MutableInteractionSource() }, null) { }.padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 14.dp)) {
+                Dialogs.cur.value?.invoke()
+            }
+        }
+    }
+}
+val Ease = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
+val Spring = CubicBezierEasing(0.34f, 1.4f, 0.64f, 1f)
+
+/** a pressable that shrinks a little, like the WebView's :active { transform: scale(.95) } */
+@Composable
+fun Modifier.press(scaleTo: Float = 0.95f, onLong: (() -> Unit)? = null, onClick: () -> Unit): Modifier {
+    val src = remember { MutableInteractionSource() }
+    val p by src.collectIsPressedAsState()
+    val s by animateFloatAsState(if (p) scaleTo else 1f, tween(150, easing = Spring), label = "p")
+    return this.scale(s).combinedClickable(src, null, onLongClick = onLong) { onClick() }
+}
+
+// ------------------------------------------------------------------ building blocks
+@Composable
+fun IB(ic: Ic, tint: Color = C.text, size: Dp = 24.dp, box: Dp = 44.dp, on: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val p by src.collectIsPressedAsState()
+    val s by animateFloatAsState(if (p) 0.92f else 1f, tween(150), label = "ib")
+    Box(modifier.size(box).scale(s).clip(CircleShape).background(if (p) Color.White.copy(alpha = 0.1f) else Color.Transparent).clickable(src, null) { onClick() }, contentAlignment = Alignment.Center) {
+        Icon(ic, size = size, tint = if (on) accent else tint)
+    }
+}
+
+/** .head: title (28 / 800) with the tool buttons; it gets a dark bar and the title shrinks once the page scrolls */
+@Composable
+fun Head(title: String, scrolled: Boolean = false, back: Boolean = false, actions: @Composable RowScope.() -> Unit = {}) {
+    val sc by animateFloatAsState(if (scrolled && !back) 0.72f else 1f, tween(220, easing = Ease), label = "h")
+    Row(Modifier.fillMaxWidth().background(if (scrolled) Color(0xB80B0B0E) else Color.Transparent).drawBehind { if (scrolled) drawLine(C.line, Offset(0f, size.height), Offset(size.width, size.height)) }
+        .statusBarsPadding().heightIn(min = 60.dp).padding(start = if (back) 8.dp else 18.dp, end = 8.dp, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (back) IB(Ic.Back) { Nav.back() }
+        Box(Modifier.weight(1f)) {
+            T(title, if (back) 20.sp else 28.sp, W800, spacing = (-0.02).em(if (back) 20f else 28f), modifier = Modifier.graphicsScale(sc))
         }
         actions()
     }
 }
+fun Double.em(px: Float): TextUnit = (this * px).sp
+fun Modifier.graphicsScale(s: Float): Modifier = this.graphicsLayer { scaleX = s; scaleY = s; transformOrigin = TransformOrigin(0f, 0.5f) }
 
+/** the glass pill of tool buttons at the top right: search, filter, settings */
 @Composable
-fun Empty(ic: Ic, text: String) {
-    Column(Modifier.fillMaxWidth().padding(40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(ic, size = 48.dp, tint = dim); Spacer(Modifier.height(12.dp)); Text(text, color = dim)
+fun Tools(filter: (() -> Unit)? = null) {
+    Row(Modifier.clip(RoundedCornerShape(22.dp)).background(Color.White.copy(alpha = 0.07f)).border(1.dp, Color.White.copy(alpha = 0.09f), RoundedCornerShape(22.dp)).padding(horizontal = 2.dp)) {
+        IB(Ic.Search, box = 42.dp) { Nav.open(Page.Search) }
+        IB(Ic.Filter, box = 42.dp, on = Filt.active()) { if (filter != null) filter() else Dialogs.sheet { FilterSheet() } }
+        IB(Ic.Gear, box = 42.dp) { Nav.open(Page.Settings) }
     }
 }
 
+/** .btn (accent) / .btn.tonal */
 @Composable
-fun Cover(s: Song?, size: Dp, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) {
-    val m = modifier.size(size).clip(shape).background(MaterialTheme.colorScheme.surfaceVariant)
-    val p = s?.coverPath ?: ""
-    if (p.isNotEmpty()) AsyncImage(File(Store.app.filesDir, p), null, m, contentScale = ContentScale.Crop)
-    else Box(m, contentAlignment = Alignment.Center) { Icon(Ic.Note, size = size / 2, tint = dim) }
-}
-@Composable
-fun CoverId(id: String, modifier: Modifier, shape: Shape = RoundedCornerShape(10.dp), placeholder: Ic = Ic.Disc) {
-    val m = modifier.aspectRatio(1f).clip(shape).background(MaterialTheme.colorScheme.surfaceVariant)
-    if (id.isNotEmpty()) AsyncImage(Store.coverFile(id), null, m, contentScale = ContentScale.Crop)
-    else Box(m, contentAlignment = Alignment.Center) { Icon(placeholder, size = 40.dp, tint = dim) }
-}
-
-@Composable
-fun PlayShuffle(list: List<Song>, label: String, extra: @Composable RowScope.() -> Unit = {}) {
-    val ctx = LocalContext.current
-    Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Button(onClick = { Ctl.play(ctx, list, 0, label, false) }, enabled = list.isNotEmpty()) { Icon(Ic.Play, size = 18.dp, tint = MaterialTheme.colorScheme.onPrimary); Spacer(Modifier.width(6.dp)); Text("Play") }
-        OutlinedButton(onClick = { Ctl.shuffleAll(ctx, list, label) }, enabled = list.isNotEmpty()) { Icon(Ic.Shuffle, size = 18.dp); Spacer(Modifier.width(6.dp)); Text("Shuffle") }
-        extra()
+fun Btn(text: String, ic: Ic? = null, tonal: Boolean = false, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+    val a = accent
+    Row(modifier.height(44.dp).press { if (enabled) onClick() }.clip(RoundedCornerShape(22.dp)).background(if (tonal) mix(a, 0.22f, C.surface2) else a).padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        val fg = if (tonal) C.text else C.onAccent
+        if (ic != null) { Icon(ic, size = 20.dp, tint = fg); Spacer(Modifier.width(8.dp)) }
+        T(text, 15.sp, W700, fg)
     }
 }
 
-// ------------------------------------------------------------------ song rows + the song menu
+/** .chip */
 @Composable
-fun SongRow(s: Song, list: List<Song>, label: String, showCover: Boolean = true, number: Int = 0, playlist: String? = null) {
-    val ctx = LocalContext.current
-    val st by NativePlayer.state.collectAsState()
-    val favs by Store.favs.collectAsState()
-    var menu by remember { mutableStateOf(false) }
-    val selecting = Sel.ids.isNotEmpty()
-    val picked = s.id in Sel.ids
-    val trig = with(LocalDensity.current) { 90.dp.toPx() }
-    var dx by remember { mutableStateOf(0f) }
-    val playing = Ctl.queue.value.getOrNull(st.index)?.id == s.id
-    Box(Modifier.fillMaxWidth()) {
-        if (dx > 8f) Box(Modifier.matchParentSize().background(MaterialTheme.colorScheme.secondaryContainer).padding(start = 20.dp), contentAlignment = Alignment.CenterStart) { Icon(if (s.id in favs) Ic.Heart else Ic.HeartFill, tint = accentC) }
-        if (dx < -8f) Box(Modifier.matchParentSize().background(MaterialTheme.colorScheme.secondaryContainer).padding(end = 20.dp), contentAlignment = Alignment.CenterEnd) { Icon(Ic.Queue, tint = accentC) }
-        Row(Modifier.fillMaxWidth().offset { IntOffset(dx.roundToInt(), 0) }
-            .background(if (picked) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.background)
-            .combinedClickable(onLongClick = { Sel.toggle(s.id) }) { if (selecting) Sel.toggle(s.id) else Ctl.play(ctx, list, list.indexOf(s).coerceAtLeast(0), label) }
-            .pointerInput(s.id) {
-                detectHorizontalDragGestures(
-                    onDragEnd = { if (dx > trig) Store.toggleFav(s.id) else if (dx < -trig) Ctl.playNext(ctx, listOf(s)); dx = 0f },
-                    onDragCancel = { dx = 0f },
-                ) { change, amount -> change.consume(); dx = (dx + amount).coerceIn(-trig * 1.6f, trig * 1.6f) }
-            }.padding(start = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (selecting) Box(Modifier.padding(end = 8.dp)) { Icon(if (picked) Ic.Select else Ic.Disc, size = 22.dp, tint = if (picked) accentC else dim) }
-            if (showCover) Cover(s, 46.dp)
-            else Box(Modifier.width(30.dp), contentAlignment = Alignment.Center) { if (playing) Icon(Ic.Play, size = 14.dp, tint = accentC) else Text(if (number > 0) "$number" else "–", color = dim, fontSize = 13.sp) }
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(s.title, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (playing) accentC else MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
-                Text((if (showCover) listOf(s.artist, s.album) else listOf(s.artist)).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp, color = dim)
-            }
-            if (s.id in favs) Icon(Ic.HeartFill, size = 14.dp, tint = accentC)
-            if (s.durMs > 0) Text(fmt(s.durMs), fontSize = 12.sp, color = dim, modifier = Modifier.padding(start = 8.dp))
-            Box {
-                IconBtn(Ic.More, dim, 20.dp) { menu = true }
-                SongMenu(s, menu, { menu = false }, playlist)
-            }
+fun Chip(label: String, on: Boolean, n: Int? = null, ic: Ic? = null, onClick: () -> Unit) {
+    val a = accent
+    Row(Modifier.height(34.dp).clip(RoundedCornerShape(10.dp)).background(if (on) mix(a, 0.30f, C.surface2) else Color.Transparent)
+        .then(if (on) Modifier else Modifier.border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(10.dp))).clickable { onClick() }.padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (ic != null) Icon(ic, size = 16.dp)
+        T(label, 13.5.sp, W650)
+        if (n != null) T("$n", 13.5.sp, W600, C.text.copy(alpha = 0.6f))
+    }
+}
+
+/** .switch */
+@Composable
+fun Switch(on: Boolean, onChange: (Boolean) -> Unit) {
+    val a = accent
+    val x by animateDpAsState(if (on) 20.dp else 0.dp, tween(200), label = "sw")
+    Box(Modifier.size(52.dp, 32.dp).clip(RoundedCornerShape(16.dp)).background(if (on) a else C.surface3).then(if (on) Modifier else Modifier.border(2.dp, Color(0xFF55555C), RoundedCornerShape(16.dp))).clickable { onChange(!on) }) {
+        Box(Modifier.padding(4.dp).offset(x = x).size(24.dp).clip(CircleShape).background(if (on) C.onAccent else Color(0xFF9A9AA2)))
+    }
+}
+
+/** cover art, or the placeholder: a gradient of a colour from the name with a note / disc / person */
+@Composable
+fun Art(cover: String, size: Dp?, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(9.dp), ph: Ic = Ic.Note, phName: String = "") {
+    val m = (if (size != null) modifier.size(size) else modifier.aspectRatio(1f)).clip(shape)
+    val f = if (cover.isNotEmpty()) Store.coverFile(cover) else null
+    if (f != null && f.exists()) AsyncImage(f, null, m.background(C.surface2), contentScale = ContentScale.Crop)
+    else {
+        val c = nameColor(phName.ifEmpty { cover })
+        BoxWithConstraints(m.background(Brush.linearGradient(listOf(mix(c, 0.7f, Color.Black), mix(c, 0.35f, Color.Black)))), contentAlignment = Alignment.Center) {
+            Icon(ph, size = maxWidth * 0.38f, tint = Color.White.copy(alpha = 0.55f))
         }
     }
 }
 
+/** .empty */
 @Composable
-fun Item(ic: Ic, label: String, onClick: () -> Unit) = DropdownMenuItem(leadingIcon = { Icon(ic, size = 20.dp) }, text = { Text(label) }, onClick = onClick)
+fun Empty(ic: Ic, title: String, text: String, action: Pair<String, () -> Unit>? = null) {
+    val a = accent
+    Column(Modifier.fillMaxWidth().padding(horizontal = 30.dp, vertical = 50.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(Modifier.size(96.dp).clip(RoundedCornerShape(28.dp)).background(mix(a, 0.18f, C.surface2)), contentAlignment = Alignment.Center) { Icon(ic, size = 46.dp, tint = a) }
+        T(title, 22.sp, W700, modifier = Modifier.padding(top = 6.dp))
+        T(text, 15.sp, color = C.sub, lines = 4, align = TextAlign.Center)
+        if (action != null) Btn(action.first, Ic.Plus, modifier = Modifier.padding(top = 10.dp).widthIn(max = 300.dp).fillMaxWidth()) { action.second() }
+    }
+}
+
+/** .plays: info line + Play / Shuffle */
+@Composable
+fun Plays(list: List<Song>, label: String, info: String? = null) {
+    val ctx = LocalContext.current
+    Column(Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp)) {
+        if (info != null) T(info, 13.sp, color = C.sub, modifier = Modifier.padding(start = 2.dp, end = 2.dp, bottom = 10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Btn("Play", Ic.Play, modifier = Modifier.weight(1f), enabled = list.isNotEmpty()) { Ctl.play(ctx, list, 0, label, false) }
+            Btn("Shuffle", Ic.Shuffle, tonal = true, modifier = Modifier.weight(1f), enabled = list.isNotEmpty()) { Ctl.shuffleAll(ctx, list, label) }
+        }
+    }
+}
+
+/** the little bars over the playing song's cover */
+@Composable
+fun EqBars(playing: Boolean, color: Color = Color.White) {
+    val t = rememberInfiniteTransition(label = "eq")
+    val hs = (0 until 3).map { i -> t.animateFloat(0.3f, 1f, infiniteRepeatable(tween(420 + i * 130, easing = LinearEasing), RepeatMode.Reverse), label = "b$i") }
+    Canvas(Modifier.size(13.dp, 14.dp)) {
+        val w = size.width / 4.3f
+        for (i in 0 until 3) { val h = size.height * (if (playing) hs[i].value else 0.3f); drawRoundRect(color, Offset(i * (w + w / 2.5f), size.height - h), Size(w, h), CornerRadius(w / 2)) }
+    }
+}
+
+// ------------------------------------------------------------------ song rows
+@Composable
+fun SongRow(s: Song, list: List<Song>, label: String, number: Int? = null, playlist: String? = null, showArt: Boolean = number == null) {
+    val ctx = LocalContext.current
+    val st by NativePlayer.state.collectAsState()
+    val favs by Store.favs.collectAsState()
+    val a = accent
+    val now = Ctl.queue.value.getOrNull(st.index)?.id == s.id
+    val selecting = Sel.ids.isNotEmpty(); val picked = s.id in Sel.ids
+    val trig = with(LocalDensity.current) { 90.dp.toPx() }
+    var dx by remember { mutableStateOf(0f) }
+    Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+        if (dx > 8f) Box(Modifier.matchParentSize().clip(RoundedCornerShape(14.dp)).background(mix(a, 0.25f, C.surface2)).padding(start = 20.dp), contentAlignment = Alignment.CenterStart) { Icon(if (s.id in favs) Ic.Heart else Ic.HeartFill, tint = a) }
+        if (dx < -8f) Box(Modifier.matchParentSize().clip(RoundedCornerShape(14.dp)).background(mix(a, 0.25f, C.surface2)).padding(end = 20.dp), contentAlignment = Alignment.CenterEnd) { Icon(Ic.PlayNext, tint = a) }
+        Row(Modifier.fillMaxWidth().height(64.dp).offset { IntOffset(dx.roundToInt(), 0) }.clip(RoundedCornerShape(14.dp))
+            .background(if (picked) mix(a, 0.35f, C.bg) else C.bg.copy(alpha = if (dx != 0f) 1f else 0f))
+            .combinedClickable(onLongClick = { Sel.toggle(s.id) }) { if (selecting) Sel.toggle(s.id) else Ctl.play(ctx, list, list.indexOf(s).coerceAtLeast(0), label) }
+            .pointerInput(s.id) {
+                detectHorizontalDragGestures(onDragEnd = { if (dx > trig) Store.toggleFav(s.id) else if (dx < -trig) Ctl.playNext(ctx, listOf(s)); dx = 0f }, onDragCancel = { dx = 0f }) { c, amt -> c.consume(); dx = (dx + amt).coerceIn(-trig * 1.6f, trig * 1.6f) }
+            }.padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (showArt) Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                Art(s.cover, 48.dp, phName = s.album.ifEmpty { s.title })
+                if (now) { Box(Modifier.matchParentSize().clip(RoundedCornerShape(9.dp)).background(Color.Black.copy(alpha = 0.45f))); EqBars(st.playing) }
+                if (picked) Box(Modifier.matchParentSize().clip(RoundedCornerShape(9.dp)).background(mix(a, 0.35f, Color.Transparent)).border(3.dp, a, RoundedCornerShape(9.dp)), contentAlignment = Alignment.Center) { Icon(Ic.Check, size = 18.dp, strokeWidth = 3f) }
+            } else Box(Modifier.width(30.dp), contentAlignment = Alignment.Center) { if (now) EqBars(st.playing, a) else T(if ((number ?: 0) > 0) "$number" else "–", 15.sp, W600, C.sub) }
+            Column(Modifier.weight(1f)) {
+                T(s.title, 15.sp, W650, if (now) a else C.text)
+                T((if (showArt) listOf(s.artist, s.album) else listOf(s.artist)).filter { it.isNotBlank() }.joinToString(" · ").ifEmpty { "Unknown Artist" }, 13.sp, color = C.sub)
+            }
+            if (s.id in favs) Icon(Ic.HeartFill, size = 16.dp, tint = a)
+            if (s.durMs > 0) T(fmt(s.durMs), 12.5.sp, color = C.faint)
+            IB(Ic.More, C.sub) { Dialogs.sheet { SongSheet(s, playlist) } }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ sheets
+@Composable
+fun SheetHead(cover: String, title: String, sub: String, phName: String = title, round: Boolean = false) {
+    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Art(cover, 52.dp, shape = if (round) CircleShape else RoundedCornerShape(10.dp), phName = phName)
+        Column(Modifier.weight(1f)) { T(title, 15.sp, W750); T(sub, 13.sp, color = C.sub) }
+    }
+    Box(Modifier.fillMaxWidth().height(1.dp).background(C.line)); Spacer(Modifier.height(6.dp))
+}
+@Composable
+fun Act(ic: Ic, label: String, sub: String = "", danger: Boolean = false, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable { Dialogs.close(); onClick() }.padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+        Icon(ic, tint = if (danger) C.danger else C.sub)
+        Column { T(label, 15.5.sp, W550, if (danger) C.danger else C.text); if (sub.isNotEmpty()) T(sub, 13.sp, color = C.sub, lines = 2) }
+    }
+}
+@Composable fun SheetScroll(content: @Composable ColumnScope.() -> Unit) = Column(Modifier.verticalScroll(rememberScrollState()), content = content)
 
 @Composable
-fun SongMenu(s: Song, open: Boolean, close: () -> Unit, playlist: String? = null) {
+fun SongSheet(s: Song, playlist: String? = null) {
     val ctx = LocalContext.current
-    DropdownMenu(expanded = open, onDismissRequest = close) {
-        Item(Ic.Play, "Play Next") { close(); Ctl.playNext(ctx, listOf(s)) }
-        Item(Ic.Queue, "Add to Queue") { close(); Ctl.addToQueue(ctx, listOf(s)) }
-        Item(if (Store.isFav(s.id)) Ic.HeartFill else Ic.Heart, if (Store.isFav(s.id)) "Remove from Favorites" else "Add to Favorites") { close(); Toasts.show(if (Store.toggleFav(s.id)) "Added to Favorites" else "Removed from Favorites") }
-        Item(Ic.List, "Add to Playlist…") { close(); Dialogs.show { PlaylistPicker(listOf(s.id)) } }
-        Item(Ic.Radio, "Start Radio") { close(); Radio.start(ctx, s) }
-        Item(Ic.Disc, "Go to Album") { close(); Nav.open(Page.AlbumP(s.albumKey)) }
-        Item(Ic.Person, "Go to Artist") { close(); Nav.open(Page.ArtistP(primaryArtist(s.artist).ifBlank { s.albumArtist })) }
-        Item(Ic.Edit, "Edit Info…") { close(); Dialogs.show { EditInfo(s) } }
-        Item(Ic.Wand, "Look Up Song Info…") { close(); Dialogs.show { LookupSong(s) } }
-        Item(Ic.Lyrics, "Lyrics…") { close(); Dialogs.show { LyricsSearch(s) } }
-        Item(Ic.Info, "Song Info") { close(); Dialogs.show { SongInfo(s) } }
-        Item(Ic.Share, "Share Song…") { close(); try { Packs.shareSong(ctx, s) } catch (e: Exception) { Toasts.show("Couldn't share: ${e.message}") } }
-        if (playlist != null) Item(Ic.Close, "Remove from This Playlist") { close(); Store.setPlaylist(playlist, (Store.playlists.value[playlist] ?: emptyList()).filter { it != s.id }) }
-        Item(Ic.Trash, "Remove Song…") { close(); Dialogs.show { Confirm("Remove “${s.title}”?", "It's deleted from this phone.", "Remove") { Store.remove(listOf(s.id)) } } }
+    val scope = rememberCoroutineScope()
+    SheetScroll {
+        SheetHead(s.cover, s.title, listOf(s.artist, s.album).filter { it.isNotBlank() }.joinToString(" · "), s.album)
+        Act(Ic.PlayNext, "Play Next") { Ctl.playNext(ctx, listOf(s)) }
+        Act(Ic.AddQ, "Add to Queue") { Ctl.addToQueue(ctx, listOf(s)) }
+        Act(Ic.Search, "Look Up Song Info…") { Dialogs.sheet { LookupSong(s) } }
+        Act(Ic.Select, "Select Songs") { Sel.ids.clear(); Sel.ids.add(s.id) }
+        Act(if (Store.isFav(s.id)) Ic.HeartFill else Ic.Heart, if (Store.isFav(s.id)) "Remove from Favorites" else "Add to Favorites") { Toasts.show(if (Store.toggleFav(s.id)) "Added to Favorites" else "Removed from Favorites") }
+        Act(Ic.List, "Add to Playlist…") { Dialogs.sheet { PlaylistPicker(listOf(s.id)) } }
+        if (playlist != null) Act(Ic.Close, "Remove from This Playlist") { Store.setPlaylist(playlist, (Store.playlists.value[playlist] ?: emptyList()).filter { it != s.id }) }
+        Act(Ic.Disc, "Go to Album") { Nav.open(Page.AlbumP(s.albumKey)) }
+        Act(Ic.Person, "Go to Artist") { Nav.open(Page.ArtistP(primaryArtist(s.artist).ifBlank { s.albumArtist })) }
+        Act(Ic.Spark, "Start Radio") { Radio.start(ctx, s) }
+        Act(Ic.Edit, "Edit Info…") { Dialogs.show { EditInfo(s) } }
+        Act(Ic.Lyrics, "Choose Lyrics…") { Dialogs.sheet { LyricsSearch(s) } }
+        Act(Ic.Info, "Song Info") { Dialogs.show { SongInfo(s) } }
+        Act(Ic.Share, "Share Song…") { try { Packs.shareSong(ctx, s) } catch (e: Exception) { Toasts.show("Couldn't share: ${e.message}") } }
+        Act(Ic.Pack, "Share as Music Pack…") { scope.launch { sharePack(ctx, s.title, listOf(s), null) } }
+        Act(Ic.Trash, "Remove Song…", danger = true) { Dialogs.show { Confirm("Remove “${s.title}”?", "It's deleted from this phone.", "Remove") { Store.remove(listOf(s.id)) } } }
     }
 }
 
 object Radio {
-    /** YouTube Music's radio for a song: similar songs are downloaded one by one and join the queue as they arrive */
+    /** YouTube Music's radio for a song: similar songs download one by one and join the queue as they arrive */
     fun start(ctx: Context, s: Song) {
         Ctl.play(ctx, listOf(s), 0, "Radio · ${s.title}", false)
         Toasts.show("Finding similar songs…")
@@ -188,130 +349,143 @@ object Radio {
             try {
                 val arg = org.json.JSONObject(); val yt = s.j.optString("yt")
                 if (yt.isNotBlank()) arg.put("id", yt) else arg.put("q", "${s.title} ${primaryArtist(s.artist)}")
-                val tr = Engine.radio(arg)
-                Downloader.enqueue(tr, play = true)
-                Toasts.show("Radio: ${tr.size} songs on the way")
+                val tr = Engine.radio(arg); Downloader.enqueue(tr, play = true); Toasts.show("Radio: ${tr.size} songs on the way")
             } catch (e: Exception) { Toasts.show("Radio: ${e.message}") }
         }
     }
     fun artist(ctx: Context, name: String, songs: List<Song>) { songs.shuffled().firstOrNull()?.let { start(ctx, it) } ?: Toasts.show("No songs by $name yet") }
 }
 
-// ------------------------------------------------------------------ dialogs
+// ------------------------------------------------------------------ dialogs (centered)
+@Composable fun DTitle(t: String) = T(t, 22.sp, W700, lines = 2, modifier = Modifier.padding(bottom = 6.dp))
+@Composable fun DText(t: String) = T(t, 15.sp, color = C.sub, lines = 6, modifier = Modifier.padding(bottom = 14.dp))
+@Composable
+fun DButtons(vararg b: Pair<String, () -> Unit>) {
+    Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.End) {
+        for ((l, f) in b) Box(Modifier.height(44.dp).clip(RoundedCornerShape(22.dp)).clickable { f() }.padding(horizontal = 14.dp), contentAlignment = Alignment.Center) { T(l, 15.sp, W700, accent) }
+    }
+}
+@Composable
+fun Field(v: String, onChange: (String) -> Unit, hint: String = "", number: Boolean = false, onDone: (() -> Unit)? = null, modifier: Modifier = Modifier) {
+    val a = accent
+    var focused by remember { mutableStateOf(false) }
+    BasicTextField(v, onChange, modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(14.dp)).background(C.surface2).then(if (focused) Modifier.border(2.dp, a, RoundedCornerShape(14.dp)) else Modifier)
+        .onFocusChangedCompat { focused = it }.padding(horizontal = 16.dp),
+        textStyle = TextStyle(color = C.text, fontSize = 16.sp), singleLine = true, cursorBrush = SolidColor(a),
+        keyboardOptions = KeyboardOptions(keyboardType = if (number) KeyboardType.Number else KeyboardType.Text, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
+        decorationBox = { inner -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) { if (v.isEmpty()) T(hint, 16.sp, color = C.faint); inner() } })
+}
+fun Modifier.onFocusChangedCompat(f: (Boolean) -> Unit): Modifier = this.onFocusChanged { f(it.isFocused) }
+
 @Composable
 fun Confirm(title: String, text: String, yes: String, onYes: () -> Unit) {
-    AlertDialog(onDismissRequest = { Dialogs.close() }, title = { Text(title) }, text = { Text(text) },
-        confirmButton = { TextButton(onClick = { Dialogs.close(); onYes() }) { Text(yes, color = MaterialTheme.colorScheme.error) } },
-        dismissButton = { TextButton(onClick = { Dialogs.close() }) { Text("Cancel") } })
+    DTitle(title); DText(text)
+    DButtons("Cancel" to { Dialogs.close() }, yes to { Dialogs.close(); onYes() })
 }
-
 @Composable
 fun Prompt(title: String, initial: String, yes: String, onYes: (String) -> Unit) {
     var t by remember { mutableStateOf(initial) }
-    AlertDialog(onDismissRequest = { Dialogs.close() }, title = { Text(title) }, text = { OutlinedTextField(t, { t = it }, singleLine = true) },
-        confirmButton = { TextButton(enabled = t.isNotBlank(), onClick = { Dialogs.close(); onYes(t.trim()) }) { Text(yes) } },
-        dismissButton = { TextButton(onClick = { Dialogs.close() }) { Text("Cancel") } })
+    DTitle(title); Field(t, { t = it }, onDone = { if (t.isNotBlank()) { Dialogs.close(); onYes(t.trim()) } })
+    DButtons("Cancel" to { Dialogs.close() }, yes to { if (t.isNotBlank()) { Dialogs.close(); onYes(t.trim()) } })
 }
 
 @Composable
 fun PlaylistPicker(ids: List<String>) {
     val pls by Store.playlists.collectAsState()
-    AlertDialog(onDismissRequest = { Dialogs.close() }, title = { Text("Add to Playlist") },
-        confirmButton = { TextButton(onClick = { Dialogs.show { Prompt("New Playlist", "", "Create") { n -> val name = Store.newPlaylist(n, ids); Toasts.show("Added to “$name”") } } }) { Text("New Playlist…") } },
-        dismissButton = { TextButton(onClick = { Dialogs.close() }) { Text("Cancel") } },
-        text = {
-            LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                if (pls.isEmpty()) item { Text("No playlists yet.", color = dim) }
-                items(pls.keys.toList()) { name ->
-                    Row(Modifier.fillMaxWidth().clickable { val n = Store.addToPlaylist(name, ids); Dialogs.close(); Toasts.show(if (n == 0) "Already in “$name”" else "Added to “$name”") }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Ic.List, size = 20.dp); Spacer(Modifier.width(12.dp)); Text(name, Modifier.weight(1f)); Text("${pls[name]?.size ?: 0}", color = dim)
-                    }
-                }
+    val songs by Store.songs.collectAsState()
+    val by = remember(songs) { songs.associateBy { it.id } }
+    SheetScroll {
+        T("Add to Playlist", 22.sp, W700, modifier = Modifier.padding(start = 24.dp, bottom = 8.dp))
+        Act(Ic.Plus, "New Playlist…") { Dialogs.show { Prompt("New Playlist", "", "Create") { n -> val name = Store.newPlaylist(n, ids); Toasts.show("Added to “$name”") } } }
+        for ((name, l) in pls) {
+            Row(Modifier.fillMaxWidth().clickable { val n = Store.addToPlaylist(name, ids); Dialogs.close(); Toasts.show(if (n == 0) "Already in “$name”" else "Added to “$name”") }.padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Art(l.firstNotNullOfOrNull { by[it]?.cover?.takeIf { c -> c.isNotEmpty() } } ?: "", 48.dp, shape = RoundedCornerShape(10.dp), ph = Ic.List, phName = name)
+                Column { T(name, 15.sp, W650); T(plural(l.count { it in by }, "song"), 13.sp, color = C.sub) }
             }
-        })
+        }
+    }
 }
 
 @Composable
 fun SongInfo(s: Song) {
     val f = File(Store.app.filesDir, s.path)
-    AlertDialog(onDismissRequest = { Dialogs.close() }, confirmButton = { TextButton(onClick = { Dialogs.close() }) { Text("Close") } }, title = { Text(s.title) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                @Composable fun r(k: String, v: String) { if (v.isNotBlank() && v != "0") Row { Text(k, color = dim, modifier = Modifier.width(96.dp)); Text(v) } }
-                r("Artist", s.artist); r("Album", s.album); r("Album artist", s.albumartist); r("Track", if (s.track > 0) "${s.track}" else ""); r("Disc", if (s.disc > 0) "${s.disc}" else "")
-                r("Year", s.year); r("Genre", s.genre); r("Length", fmt(s.durMs)); r("Format", s.j.optString("codec").ifBlank { s.ext.uppercase() })
-                r("Size", "%.1f MB".format(f.length() / 1048576.0)); r("Added", if (s.added > 0) DateFormat.getDateInstance().format(Date(s.added)) else "")
-                r("Played", if (s.j.optInt("plays") > 0) plural(s.j.optInt("plays"), "time") else "")
-                if (s.trimStart > 0 || s.trimEnd > 0) r("Silence cut", "%.1f s at the start · %.1f s at the end".format(s.trimStart, if (s.trimEnd > 0) s.durMs / 1000.0 - s.trimEnd else 0.0))
-                s.j.optJSONObject("tempo")?.optJSONArray("s")?.let { if (it.optDouble(0) > 0) r("Tempo", "%.0f BPM".format(it.optDouble(0))) }
-                Text(s.path, fontSize = 11.sp, color = dim)
-            }
-        })
+    DTitle(s.title)
+    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+        @Composable fun kv(k: String, v: String) { if (v.isNotBlank() && v != "0") Row(Modifier.fillMaxWidth().drawBehind { drawLine(Color.White.copy(alpha = 0.1f), Offset.Zero, Offset(size.width, 0f)) }.padding(vertical = 7.dp)) { T(k, 13.5.sp, color = C.text.copy(alpha = 0.6f)); Spacer(Modifier.weight(1f)); T(v, 13.5.sp, lines = 3, align = TextAlign.End) } }
+        kv("Artist", s.artist); kv("Album", s.album); kv("Album artist", s.albumartist); kv("Track", if (s.track > 0) "${s.track}" else ""); kv("Disc", if (s.disc > 0) "${s.disc}" else "")
+        kv("Year", s.year); kv("Genre", s.genre); kv("Length", fmt(s.durMs)); kv("Format", s.j.optString("codec").ifBlank { s.ext.uppercase() }); kv("Size", fmtSize(f.length()))
+        kv("Added", if (s.added > 0) DateFormat.getDateInstance().format(Date(s.added)) else ""); kv("Played", if (s.j.optInt("plays") > 0) plural(s.j.optInt("plays"), "time") else "")
+        s.j.optJSONObject("tempo")?.optJSONArray("s")?.let { if (it.optDouble(0) > 0) kv("Tempo", "%.0f BPM".format(it.optDouble(0))) }
+        if (s.trimStart > 0 || s.trimEnd > 0) kv("Silence cut", "%.1f s start · %.1f s end".format(s.trimStart, if (s.trimEnd > 0) s.durMs / 1000.0 - s.trimEnd else 0.0))
+    }
+    DButtons("Close" to { Dialogs.close() })
 }
 
 @Composable
 fun EditInfo(s: Song) {
     val keys = listOf("title" to "Title", "artist" to "Artist", "album" to "Album", "albumartist" to "Album artist", "track" to "Track", "disc" to "Disc", "year" to "Year", "genre" to "Genre")
     val vals = remember { mutableStateMapOf<String, String>().apply { for ((k, _) in keys) put(k, s.j.optString(k).let { if (it == "0") "" else it }) } }
-    AlertDialog(onDismissRequest = { Dialogs.close() }, title = { Text("Edit Info") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                for ((k, l) in keys) OutlinedTextField(vals[k] ?: "", { vals[k] = it }, label = { Text(l) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                    keyboardOptions = if (k == "track" || k == "disc") KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val f = HashMap<String, Any>()
-                for ((k, _) in keys) { val v = (vals[k] ?: "").trim(); f[k] = if (k == "track" || k == "disc") (v.toIntOrNull() ?: 0) else v }
-                Dialogs.close(); Store.scope.launch { Store.edit(s.id, f) }
-            }) { Text("Save") }
-        },
-        dismissButton = { TextButton(onClick = { Dialogs.close() }) { Text("Cancel") } })
+    DTitle("Edit Info")
+    Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((k, l) in keys) { T(l, 13.sp, color = C.faint, modifier = Modifier.padding(start = 4.dp)); Field(vals[k] ?: "", { vals[k] = it }, number = k == "track" || k == "disc") }
+    }
+    DButtons("Cancel" to { Dialogs.close() }, "Save" to {
+        val f = HashMap<String, Any>(); for ((k, _) in keys) { val v = (vals[k] ?: "").trim(); f[k] = if (k == "track" || k == "disc") (v.toIntOrNull() ?: 0) else v }
+        Dialogs.close(); Store.scope.launch { Store.edit(s.id, f); Toasts.show("Info updated") }
+    })
+}
+
+@Composable
+fun SearchBox(q: String, onChange: (String) -> Unit, hint: String, onGo: () -> Unit = {}, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(24.dp)).background(C.surface2).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Icon(Ic.Search, tint = C.sub)
+        BasicTextField(q, onChange, Modifier.weight(1f), textStyle = TextStyle(color = C.text, fontSize = 16.sp), singleLine = true, cursorBrush = SolidColor(accent),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { onGo() }),
+            decorationBox = { inner -> Box { if (q.isEmpty()) T(hint, 16.sp, color = C.faint); inner() } })
+        if (q.isNotEmpty()) Box(Modifier.clip(CircleShape).clickable { onChange("") }) { Icon(Ic.Close, size = 18.dp, tint = C.sub) }
+    }
 }
 
 @Composable
 fun LookupSong(s: Song) {
     var q by remember { mutableStateOf("${s.title} ${primaryArtist(s.artist)}".trim()) }
     var hits by remember { mutableStateOf<List<Online.Hit>?>(null) }
-    var cover by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     fun go() { hits = null; scope.launch { hits = withContext(Dispatchers.IO) { Online.songs(q) } } }
     LaunchedEffect(Unit) { go() }
-    AlertDialog(onDismissRequest = { Dialogs.close() }, title = { Text("Look Up Song Info") },
-        confirmButton = { TextButton(onClick = { Dialogs.close() }) { Text("Cancel") } },
-        text = {
-            Column {
-                OutlinedTextField(q, { q = it }, singleLine = true, trailingIcon = { IconBtn(Ic.Search, size = 20.dp) { go() } }, modifier = Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(cover, { cover = it }); Text("Use its cover too") }
-                if (hits == null) Text("Searching iTunes and Deezer…", color = dim)
-                else if (hits!!.isEmpty()) Text("Nothing found", color = dim)
-                LazyColumn(Modifier.heightIn(max = 380.dp)) {
-                    items(hits ?: emptyList()) { h ->
-                        Row(Modifier.fillMaxWidth().clickable {
-                            Dialogs.close()
-                            Store.scope.launch {
-                                val f = HashMap<String, Any>()
-                                if (h.title.isNotBlank()) f["title"] = h.title; if (h.artist.isNotBlank()) f["artist"] = h.artist; if (h.album.isNotBlank()) f["album"] = h.album
-                                if (h.year.isNotBlank()) f["year"] = h.year; if (h.genre.isNotBlank()) f["genre"] = h.genre; if (h.track > 0) f["track"] = h.track; if (h.disc > 0) f["disc"] = h.disc
-                                Store.edit(s.id, f)
-                                if (cover && h.cover.isNotBlank()) try { Store.setCover(listOf(s.id), Net.get(h.cover)) } catch (_: Exception) { }
-                                Toasts.show("Info updated")
-                            }
-                        }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            AsyncImage(h.cover, null, Modifier.size(44.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
-                            Column(Modifier.padding(start = 10.dp)) {
-                                Text(h.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(listOf(h.artist, h.album, h.year, h.src).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 12.sp, color = dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                    }
+    Column(Modifier.padding(horizontal = 20.dp)) {
+        T("Look Up Song Info", 22.sp, W700, modifier = Modifier.padding(bottom = 10.dp))
+        SearchBox(q, { q = it }, "Song and artist", { go() })
+        T(if (hits == null) "Searching iTunes and Deezer…" else if (hits!!.isEmpty()) "Nothing found" else "Best match first · tap to use", 13.sp, color = C.sub, modifier = Modifier.padding(vertical = 10.dp))
+    }
+    LazyColumn(Modifier.heightIn(max = 440.dp)) {
+        items(hits ?: emptyList()) { h ->
+            Row(Modifier.fillMaxWidth().clickable {
+                Dialogs.show {
+                    DTitle("Use This Info?"); DText(listOf(h.title, h.artist, h.album, h.year, h.genre).filter { it.isNotBlank() }.joinToString("\n"))
+                    DButtons("Cancel" to { Dialogs.close() }, "Info only" to { Dialogs.close(); apply(s, h, false) }, "Apply" to { Dialogs.close(); apply(s, h, true) })
                 }
+            }.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                AsyncImage(h.cover, null, Modifier.size(48.dp).clip(RoundedCornerShape(9.dp)).background(C.surface2), contentScale = ContentScale.Crop)
+                Column { T(h.title, 15.sp, W650); T(listOf(h.artist, h.album, h.year, h.src).filter { it.isNotBlank() }.joinToString(" · "), 13.sp, color = C.sub) }
             }
-        })
+        }
+    }
+}
+private fun apply(s: Song, h: Online.Hit, cover: Boolean) {
+    Store.scope.launch {
+        val f = HashMap<String, Any>()
+        if (h.title.isNotBlank()) f["title"] = h.title; if (h.artist.isNotBlank()) f["artist"] = h.artist; if (h.album.isNotBlank()) f["album"] = h.album
+        if (h.year.isNotBlank()) f["year"] = h.year; if (h.genre.isNotBlank()) f["genre"] = h.genre; if (h.track > 0) f["track"] = h.track; if (h.disc > 0) f["disc"] = h.disc
+        Store.edit(s.id, f)
+        if (cover && h.cover.isNotBlank()) try { Store.setCover(listOf(s.id), Net.get(h.cover)); Accents.forget() } catch (_: Exception) { }
+        Toasts.show("Info updated")
+    }
 }
 
-/** Look Up Album Info (all fields + cover) or Find Cover Online (cover only) */
+/** Look Up Album Info (everything + cover) or Find Cover Online (cover only) */
 @Composable
 fun LookupAlbum(a: Album, coverOnly: Boolean) {
     var q by remember { mutableStateOf("${a.title} ${a.artist}".trim()) }
@@ -319,33 +493,26 @@ fun LookupAlbum(a: Album, coverOnly: Boolean) {
     val scope = rememberCoroutineScope()
     fun go() { hits = null; scope.launch { hits = withContext(Dispatchers.IO) { Online.albums(q) } } }
     LaunchedEffect(Unit) { go() }
-    AlertDialog(onDismissRequest = { Dialogs.close() }, title = { Text(if (coverOnly) "Find Cover Online" else "Look Up Album Info") },
-        confirmButton = { TextButton(onClick = { Dialogs.close() }) { Text("Cancel") } },
-        text = {
-            Column {
-                OutlinedTextField(q, { q = it }, singleLine = true, trailingIcon = { IconBtn(Ic.Search, size = 20.dp) { go() } }, modifier = Modifier.fillMaxWidth())
-                if (hits == null) Text("Searching iTunes and Deezer…", color = dim) else if (hits!!.isEmpty()) Text("Nothing found", color = dim)
-                LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                    items(hits ?: emptyList()) { h ->
-                        Row(Modifier.fillMaxWidth().clickable {
-                            Dialogs.close()
-                            Store.scope.launch {
-                                try {
-                                    if (coverOnly) Store.setCover(a.songs.map { it.id }, Net.get(h.cover)) else Online.applyAlbum(a, h)
-                                    Toasts.show(if (coverOnly) "Cover updated" else "Album info updated")
-                                } catch (e: Exception) { Toasts.show("Couldn't: ${e.message}") }
-                            }
-                        }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            AsyncImage(h.cover, null, Modifier.size(64.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
-                            Column(Modifier.padding(start = 10.dp)) {
-                                Text(h.album, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(listOf(h.artist, h.year, h.genre, h.src).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 12.sp, color = dim, maxLines = 1)
-                            }
-                        }
-                    }
+    Column(Modifier.padding(horizontal = 20.dp)) {
+        T(if (coverOnly) "Find Cover Online" else "Look Up Album Info", 22.sp, W700, modifier = Modifier.padding(bottom = 10.dp))
+        SearchBox(q, { q = it }, "Album and artist", { go() })
+        T(if (hits == null) "Searching iTunes and Deezer…" else if (hits!!.isEmpty()) "Nothing found" else "Tap one to use it", 13.sp, color = C.sub, modifier = Modifier.padding(vertical = 10.dp))
+    }
+    LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        items(hits ?: emptyList()) { h ->
+            Column(Modifier.width(150.dp).press {
+                Dialogs.close()
+                Store.scope.launch {
+                    try { if (coverOnly) Store.setCover(a.songs.map { it.id }, Net.get(h.cover)) else Online.applyAlbum(a, h); Accents.forget(); Toasts.show(if (coverOnly) "Cover updated" else "Album info updated") }
+                    catch (e: Exception) { Toasts.show("Couldn't: ${e.message}") }
                 }
+            }) {
+                AsyncImage(h.cover, null, Modifier.size(150.dp).clip(RoundedCornerShape(14.dp)).background(C.surface2), contentScale = ContentScale.Crop)
+                T(h.album, 14.sp, W700, modifier = Modifier.padding(top = 8.dp)); T(listOf(h.artist, h.year).filter { it.isNotBlank() }.joinToString(" · "), 13.sp, color = C.sub)
             }
-        })
+        }
+    }
+    Spacer(Modifier.height(12.dp))
 }
 
 @Composable
@@ -355,48 +522,45 @@ fun LyricsSearch(s: Song) {
     val scope = rememberCoroutineScope()
     fun go() { hits = null; scope.launch { hits = withContext(Dispatchers.IO) { Online.searchLyrics(q) } } }
     LaunchedEffect(Unit) { go() }
-    AlertDialog(onDismissRequest = { Dialogs.close() }, title = { Text("Choose Lyrics") },
-        confirmButton = { TextButton(onClick = { Dialogs.close() }) { Text("Cancel") } },
-        dismissButton = { TextButton(onClick = { Online.save(s.id, null); Lyr.bump(); Dialogs.close() }) { Text("No lyrics") } },
-        text = {
-            Column {
-                OutlinedTextField(q, { q = it }, singleLine = true, trailingIcon = { IconBtn(Ic.Search, size = 20.dp) { go() } }, modifier = Modifier.fillMaxWidth())
-                if (hits == null) Text("Searching LRCLIB…", color = dim) else if (hits!!.isEmpty()) Text("Nothing found", color = dim)
-                LazyColumn(Modifier.heightIn(max = 380.dp)) {
-                    items(hits ?: emptyList()) { h ->
-                        Column(Modifier.fillMaxWidth().clickable { Online.save(s.id, h); Lyr.bump(); Dialogs.close(); Toasts.show("Lyrics saved") }.padding(vertical = 8.dp)) {
-                            Text(h.optString("trackName"), maxLines = 1)
-                            Text(listOf(h.optString("artistName"), h.optString("albumName"), fmt((h.optDouble("duration", 0.0) * 1000).toLong()), if (h.optString("syncedLyrics").let { it.isNotBlank() && it != "null" }) "synced" else "plain").filter { it.isNotBlank() }.joinToString(" · "), fontSize = 12.sp, color = dim, maxLines = 1)
-                        }
-                    }
-                }
+    Column(Modifier.padding(horizontal = 20.dp)) {
+        T("Wrong Lyrics?", 22.sp, W700, modifier = Modifier.padding(bottom = 10.dp))
+        SearchBox(q, { q = it }, "Song and artist", { go() })
+        T(if (hits == null) "Searching LRCLIB…" else if (hits!!.isEmpty()) "Nothing found" else "Pick the right ones", 13.sp, color = C.sub, modifier = Modifier.padding(vertical = 10.dp))
+    }
+    LazyColumn(Modifier.heightIn(max = 440.dp)) {
+        item { Act(Ic.Close, "This song has no lyrics") { Online.save(s.id, null); Lyr.bump() } }
+        items(hits ?: emptyList()) { h ->
+            val synced = h.optString("syncedLyrics").let { it.isNotBlank() && it != "null" }
+            Column(Modifier.fillMaxWidth().clickable { Online.save(s.id, h); Lyr.bump(); Dialogs.close(); Toasts.show("Lyrics saved") }.padding(horizontal = 24.dp, vertical = 10.dp)) {
+                T(h.optString("trackName"), 15.sp, W650)
+                T(listOf(h.optString("artistName"), h.optString("albumName"), fmt((h.optDouble("duration", 0.0) * 1000).toLong()), if (synced) "synced" else "plain").filter { it.isNotBlank() }.joinToString(" · "), 13.sp, color = C.sub)
             }
-        })
+        }
+    }
 }
-
-/** lyrics refresh signal */
 object Lyr { val v = mutableStateOf(0); fun bump() { v.value++ } }
 
-// ------------------------------------------------------------------ album card / grid helpers
+// ------------------------------------------------------------------ cards
 @Composable
 fun AlbumCard(a: Album, modifier: Modifier = Modifier) {
-    Column(modifier.clickable { Nav.open(Page.AlbumP(a.key)) }) {
-        CoverId(a.cover?.cover ?: "", Modifier.fillMaxWidth())
-        Text(a.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
-        Text(listOf(a.artist, a.year).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp, color = dim)
+    Column(modifier.press(0.96f) { Nav.open(Page.AlbumP(a.key)) }) {
+        Art(a.cover?.cover ?: "", null, Modifier.fillMaxWidth(), RoundedCornerShape(14.dp), Ic.Disc, a.title)
+        T(a.title, 14.sp, W700, modifier = Modifier.padding(top = 8.dp))
+        T(a.artist, 13.sp, color = C.sub)
     }
 }
-
 @Composable
-fun AlbumRow(title: String, albums: List<Album>) {
+fun Shelf(title: String, content: @Composable () -> Unit) {
+    T(title, 20.sp, W800, modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 22.dp, bottom = 10.dp))
+    content()
+}
+@Composable
+fun AlbumShelf(title: String, albums: List<Album>) {
     if (albums.isEmpty()) return
-    Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp))
-    LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(albums, key = { it.key }) { a -> AlbumCard(a, Modifier.width(140.dp)) }
-    }
+    Shelf(title) { LazyRow(contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(albums, key = { it.key }) { AlbumCard(it, Modifier.width(150.dp)) } } }
 }
 
-/** the bar shown while songs are selected */
+/** #selbar: across the top while songs are selected */
 @Composable
 fun SelectionBar() {
     val ctx = LocalContext.current
@@ -404,22 +568,23 @@ fun SelectionBar() {
     val songs by Store.songs.collectAsState()
     val by = songs.associateBy { it.id }
     val list = Sel.ids.mapNotNull { by[it] }
-    var more by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconBtn(Ic.Close) { Sel.ids.clear() }
-        Text("${list.size} selected", Modifier.weight(1f), fontWeight = FontWeight.Medium)
-        IconBtn(Ic.Play, accentC) { Ctl.play(ctx, list, 0, "Selection"); Sel.ids.clear() }
-        IconBtn(Ic.Queue) { Ctl.addToQueue(ctx, list); Sel.ids.clear() }
-        IconBtn(Ic.List) { val ids = list.map { it.id }; Dialogs.show { PlaylistPicker(ids) }; Sel.ids.clear() }
-        Box {
-            IconBtn(Ic.More) { more = true }
-            DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
-                Item(Ic.Play, "Play Next") { more = false; Ctl.playNext(ctx, list); Sel.ids.clear() }
-                Item(Ic.HeartFill, "Add to Favorites") { more = false; Store.setFav(list.map { it.id }, true); Sel.ids.clear() }
-                Item(Ic.Heart, "Remove from Favorites") { more = false; Store.setFav(list.map { it.id }, false); Sel.ids.clear() }
-                Item(Ic.Select, "Select All") { more = false; Sel.ids.clear(); Sel.ids.addAll(songs.map { it.id }) }
-                Item(Ic.Pack, "Share as Music Pack…") { more = false; val l = list; Sel.ids.clear(); Dialogs.show { Prompt("Name the Music Pack", "My Music", "Share") { n -> scope.launch { sharePack(ctx, n, l, null) } } } }
-                Item(Ic.Trash, "Remove…") { more = false; val ids = list.map { it.id }; Dialogs.show { Confirm("Remove ${plural(ids.size, "song")}?", "They're deleted from this phone.", "Remove") { Store.remove(ids); Sel.ids.clear() } } }
+    val a = accent
+    Row(Modifier.fillMaxWidth().shadow(20.dp).background(mix(a, 0.22f, C.surface)).statusBarsPadding().height(60.dp).padding(start = 4.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        IB(Ic.Close) { Sel.ids.clear() }
+        T("${list.size} selected", 17.sp, W750, modifier = Modifier.weight(1f).padding(start = 4.dp))
+        IB(Ic.HeartFill.takeIf { list.all { Store.isFav(it.id) } } ?: Ic.Heart) { Store.setFav(list.map { it.id }); Sel.ids.clear() }
+        IB(Ic.List) { val ids = list.map { it.id }; Dialogs.sheet { PlaylistPicker(ids) }; Sel.ids.clear() }
+        IB(Ic.More) {
+            Dialogs.sheet {
+                SheetScroll {
+                    T(plural(list.size, "song"), 22.sp, W700, modifier = Modifier.padding(start = 24.dp, bottom = 8.dp))
+                    Act(Ic.Play, "Play") { Ctl.play(ctx, list, 0, "Selection"); Sel.ids.clear() }
+                    Act(Ic.PlayNext, "Play Next") { Ctl.playNext(ctx, list); Sel.ids.clear() }
+                    Act(Ic.AddQ, "Add to Queue") { Ctl.addToQueue(ctx, list); Sel.ids.clear() }
+                    Act(Ic.Select, "Select All") { Sel.ids.clear(); Sel.ids.addAll(songs.map { it.id }) }
+                    Act(Ic.Pack, "Share as Music Pack…") { val l = list; Sel.ids.clear(); Dialogs.show { Prompt("Name the Music Pack", "My Music", "Share") { n -> scope.launch { sharePack(ctx, n, l, null) } } } }
+                    Act(Ic.Trash, "Remove…", danger = true) { val ids = list.map { it.id }; Dialogs.show { Confirm("Remove ${plural(ids.size, "song")}?", "They're deleted from this phone.", "Remove") { Store.remove(ids); Sel.ids.clear() } } }
+                }
             }
         }
     }
