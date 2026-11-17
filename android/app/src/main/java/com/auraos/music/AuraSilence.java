@@ -32,13 +32,18 @@ final class AuraSilence {
             if (track < 0) throw new Exception("no audio");
             ex.selectTrack(track);
             long durUs = fmt.containsKey(MediaFormat.KEY_DURATION) ? fmt.getLong(MediaFormat.KEY_DURATION) : (long) (knownDur * 1e6);
-            // the start: decode from 0 until the first sound
-            double first = pass(ex, fmt, 0, Math.min(WINDOW_US, durUs > 0 ? durUs : WINDOW_US), true);
-            // the end: decode the last 30 s, keep the last sound
+            int rate = fmt.containsKey(MediaFormat.KEY_SAMPLE_RATE) ? fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) : 44100;
+            // the start: the first 30 s (the first sound, and the beat a song coming in starts on)
+            AuraTempo tS = new AuraTempo(rate), tE = new AuraTempo(rate);
+            double first = pass(ex, fmt, 0, Math.min(WINDOW_US, durUs > 0 ? durUs : WINDOW_US), true, tS);
+            // the end: the last 30 s (the last sound, and the beat a song going out is on)
             long from = durUs > WINDOW_US ? durUs - WINDOW_US : 0;
-            double last = pass(ex, fmt, from, Long.MAX_VALUE, false);
+            double last = pass(ex, fmt, from, Long.MAX_VALUE, false, tE);
             double dur = durUs > 0 ? durUs / 1e6 : knownDur;
-            return new double[] { Math.max(0, first), last < 0 ? dur : last, dur };
+            double[] a = tS.analyze(), b = tE.analyze();
+            return new double[] { Math.max(0, first), last < 0 ? dur : last, dur,
+                a == null ? 0 : a[0], a == null ? 0 : a[1], a == null ? 0 : a[2],
+                b == null ? 0 : b[0], b == null ? 0 : b[1], b == null ? 0 : b[2] };
         } finally {
             ex.release();
         }
@@ -48,7 +53,8 @@ final class AuraSilence {
      * Decodes from fromUs (to untilUs). firstOnly: returns the time of the first loud slice (stops there), or -1;
      * otherwise returns the end time of the last loud slice, or -1 if it's all silent.
      */
-    private static double pass(MediaExtractor ex, MediaFormat fmt, long fromUs, long untilUs, boolean firstOnly) throws Exception {
+    private static double pass(MediaExtractor ex, MediaFormat fmt, long fromUs, long untilUs, boolean firstOnly, AuraTempo tempo) throws Exception {
+        double firstLoud = -1;
         MediaCodec dec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME));
         try {
             dec.configure(fmt, null, null, 0);
@@ -81,6 +87,7 @@ final class AuraSilence {
                     rate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE);
                     ch = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
                     if (Build.VERSION.SDK_INT >= 24 && of.containsKey(MediaFormat.KEY_PCM_ENCODING)) enc = of.getInteger(MediaFormat.KEY_PCM_ENCODING);
+                    tempo.setRate(rate);
                     continue;
                 }
                 if (o >= 0) {
@@ -94,6 +101,14 @@ final class AuraSilence {
                         int samples = bi.size / (flt ? 4 : 2), frames = samples / Math.max(1, ch);
                         if (flt) { if (f32.length < samples) f32 = new float[samples]; src.asFloatBuffer().get(f32, 0, samples); }
                         else { if (s16.length < samples) s16 = new short[samples]; src.asShortBuffer().get(s16, 0, samples); }
+                        // the beat finder hears every sample (channels averaged)
+                        double tb = bi.presentationTimeUs / 1e6;
+                        float inv = 1f / Math.max(1, ch);
+                        for (int k = 0; k < frames; k++) {
+                            float m = 0;
+                            for (int c = 0, j = k * ch; c < ch; c++, j++) m += flt ? f32[j] : s16[j] * (1f / 32768f);
+                            tempo.feed(m * inv, tb + k / (double) rate);
+                        }
                         int win = Math.max(1, rate / 100);                   // 10 ms slices
                         for (int k0 = 0; k0 < frames; k0 += win) {
                             int k1 = Math.min(frames, k0 + win);
@@ -104,7 +119,7 @@ final class AuraSilence {
                             }
                             if (peak > THRESH) {
                                 double t = bi.presentationTimeUs / 1e6 + k0 / (double) rate;
-                                if (firstOnly) { dec.releaseOutputBuffer(o, false); return t; }
+                                if (firstOnly) { if (firstLoud < 0) firstLoud = t; continue; }
                                 lastLoud = bi.presentationTimeUs / 1e6 + k1 / (double) rate;
                             }
                         }
@@ -117,7 +132,7 @@ final class AuraSilence {
                     Thread.sleep(0, 200_000);
                 } else idle = 0;
             }
-            return firstOnly ? -1 : lastLoud;
+            return firstOnly ? firstLoud : lastLoud;
         } finally {
             try { dec.stop(); } catch (Exception ignored) {}
             dec.release();

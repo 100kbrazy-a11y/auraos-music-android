@@ -28,7 +28,7 @@ class NativeAudio extends EventTarget {
   }
   get paused() { return !this._play; }
   get currentTime() {
-    const t = this._play ? this._pos + (performance.now() - this._at) / 1000 : this._pos;
+    const t = this._play ? this._pos + ((performance.now() - this._at) / 1000) * (this._speed || 1) : this._pos;
     return Math.max(0, isFinite(this._dur) ? Math.min(t, this._dur) : t);
   }
   set currentTime(t) {
@@ -52,6 +52,7 @@ class NativeAudio extends EventTarget {
   apply(d) {
     if (!d) return;
     this._pos = (d.pos || 0) / 1000; this._at = performance.now();
+    this._speed = d.speed > 0 ? d.speed : 1;
     const dur = d.dur > 0 ? d.dur / 1000 : NaN;
     if (dur !== this._dur && !(isNaN(dur) && isNaN(this._dur))) {
       this._dur = isNaN(dur) ? this._dur : dur;
@@ -166,7 +167,7 @@ class Player extends EventTarget {
     AuraPlayer.addListener("ended", (d) => { this.fa.apply(d); this.onEnded(); });
     AuraPlayer.addListener("error", (d) => this.natError(d));
     AuraPlayer.setRepeat({ mode: this.repeat }).catch(() => {});
-    AuraPlayer.setCrossfade({ secs: (this._xfSent = this.crossfade) }).catch(() => {});
+    this.sendXf();
     this.applyEq(lib.meta.settings.eq);
     this.addEventListener("queue", () => this.markQueue());
     diag.log(`native player: on${st?.count ? ` (already has ${st.count} songs, ${st.playing ? "playing" : "paused"})` : ""}`);
@@ -179,6 +180,10 @@ class Player extends EventTarget {
       const o = { id, path: songRelPath(s), title: s.title || "", artist: s.artist || "", album: s.album || "" };
       if (cut && s.trimStart > 0) o.start = Math.round(s.trimStart * 1000);           // silence cut from the start / end
       if (cut && s.trimEnd > 0) o.end = Math.round(s.trimEnd * 1000);
+      // its beat (only a clear, steady one): where it starts (coming in) and where it ends (going out)
+      const ok = (g) => g && g[0] > 0 && g[2] >= 3.5;
+      if (ok(s.tempo?.s)) { o.bs = s.tempo.s[0]; o.bb = Math.round(s.tempo.s[1] * 1000); }
+      if (ok(s.tempo?.e)) { o.be = s.tempo.e[0]; o.eb = Math.round(s.tempo.e[1] * 1000); }
       return o;
     });
   }
@@ -431,8 +436,10 @@ class Player extends EventTarget {
     const token = ++this._loadToken;
     this.loadedAt = performance.now();            // no crossfade may start while a song is being swapped in
     if (this.nat) {
+      // the native player is told first (its command leaves right now); the screen's own updates come after
+      const go = this.natLoad(autoplay);
       this.emit("track", { dir });
-      await this.natLoad(autoplay);
+      await go;
       return;
     }
     this.ensureGraph();
@@ -506,17 +513,17 @@ class Player extends EventTarget {
     const i = this.peek(1);
     if (i < 0) return this.restart();
     this.index = i;
+    this.load(1);                       // (native: the skip is sent before anything on screen starts moving)
     this.emit("willtrack", { dir: 1 });
-    this.load(1);
   }
   prev() {
     const i = this.peek(-1);
     if (i < 0) return this.restart();
     this.index = i;
-    this.emit("willtrack", { dir: -1 });
     this.load(-1);
+    this.emit("willtrack", { dir: -1 });
   }
-  jump(i) { if (i >= 0 && i < this.queue.length) { const d = i >= this.index ? 1 : -1; this.index = i; this.emit("willtrack", { dir: d }); this.load(d); } }
+  jump(i) { if (i >= 0 && i < this.queue.length) { const d = i >= this.index ? 1 : -1; this.index = i; this.load(d); this.emit("willtrack", { dir: d }); } }
   seek(t) { if (isFinite(t)) { this.cancelCrossfade(); this.audio.currentTime = Math.max(0, t); this.emit("time"); this.updatePosition(); } }
 
   onEnded() {
@@ -541,9 +548,13 @@ class Player extends EventTarget {
   }
 
   // ------------------------------------------------ crossfade
+  sendXf() {
+    this._xfSent = this.crossfade; this._bmSent = lib.meta.settings.beatMatch !== false;
+    AuraPlayer.setCrossfade({ secs: this._xfSent, match: this._bmSent }).catch(() => {});
+  }
   checkCrossfade() {
     if (this.nat) {                    // the native player crossfades by itself; just keep its setting current
-      if (this.crossfade !== this._xfSent) AuraPlayer.setCrossfade({ secs: (this._xfSent = this.crossfade) }).catch(() => {});
+      if (this.crossfade !== this._xfSent || (lib.meta.settings.beatMatch !== false) !== this._bmSent) this.sendXf();
       return;
     }
     const secs = this.crossfade, a = this.audio;

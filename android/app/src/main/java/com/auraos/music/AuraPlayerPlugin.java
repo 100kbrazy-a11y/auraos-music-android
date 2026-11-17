@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.BatteryManager;
 import android.os.Handler;
-import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Base64;
 import androidx.annotation.OptIn;
@@ -56,12 +55,18 @@ public class AuraPlayerPlugin extends Plugin {
 
     /** runs on the main thread once the service is up */
     private void withService(PluginCall call, Job job) {
-        main.post(() -> {
+        String m = call.getMethodName();
+        boolean now = "skipTo".equals(m) || "seek".equals(m) || "play".equals(m) || "pause".equals(m);
+        Runnable r = () -> {
             AuraPlaybackService s = AuraPlaybackService.instance;
             if (s == null) { call.reject("The player isn't started"); return; }
             try { job.run(s, call); } catch (Exception e) { call.reject(e.getMessage() != null ? e.getMessage() : e.toString()); }
-        });
+        };
+        // (only when nothing else of ours is still waiting: the order of commands never changes)
+        if (now && pending.get() == 0) main.postAtFrontOfQueue(r);
+        else { pending.incrementAndGet(); main.post(() -> { pending.decrementAndGet(); r.run(); }); }
     }
+    private final java.util.concurrent.atomic.AtomicInteger pending = new java.util.concurrent.atomic.AtomicInteger();
 
     @PluginMethod
     public void start(PluginCall call) {
@@ -128,7 +133,7 @@ public class AuraPlayerPlugin extends Plugin {
 
     @PluginMethod
     public void setCrossfade(PluginCall call) {
-        withService(call, (s, c) -> { s.crossfade = c.getFloat("secs", 0f); c.resolve(); });
+        withService(call, (s, c) -> { s.crossfade = c.getFloat("secs", 0f); s.beatMatch = c.getBoolean("match", true); c.resolve(); });
     }
 
     @PluginMethod
@@ -227,6 +232,10 @@ public class AuraPlayerPlugin extends Plugin {
                 double[] r = AuraSilence.scan(f, dur);
                 JSObject o = new JSObject();
                 o.put("start", r[0]); o.put("end", r[1]); o.put("dur", r[2]);
+                // the beat where a song starts and where it ends: [bpm, a beat's time (s), confidence]
+                JSArray ts = new JSArray(); ts.put(r[3]); ts.put(r[4]); ts.put(r[5]);
+                JSArray te = new JSArray(); te.put(r[6]); te.put(r[7]); te.put(r[8]);
+                o.put("tempoStart", ts); o.put("tempoEnd", te);
                 o.put("ms", android.os.SystemClock.elapsedRealtime() - t0);
                 call.resolve(o);
             } catch (Throwable e) {

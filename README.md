@@ -1,17 +1,17 @@
 <div align="center">
 
-<img src="public/icon-192.png" width="96" alt="AuraOS Music icon">
+<img src="public/icon-192.png" width="96" alt="Strata Music icon">
 
-# AuraOS Music for Android
+# Strata Music for Android
 
 **A music player for the songs you own: colourful, smooth, and full of little touches.**
 
-[**⬇ Download the APK**](https://github.com/100kbrazy-a11y/auraos-music-android/releases/latest/download/AuraOS-Music.apk)
+[**⬇ Download the APK**](https://github.com/100kbrazy-a11y/auraos-music-android/releases/latest/download/Strata-Music.apk)
 &nbsp;·&nbsp; [How to install](#install-in-3-steps)
 &nbsp;·&nbsp; [Features](#features)
 &nbsp;·&nbsp; [iPhone version](https://github.com/100kbrazy-a11y/auraos-music-ios)
 
-![AuraOS Music on Android](docs/images/hero.jpg)
+![Strata Music on Android](docs/images/hero.jpg)
 
 </div>
 
@@ -20,7 +20,7 @@
 ![Install on Android in 3 steps](docs/images/install.jpg)
 
 1. **Download.** On your Android phone, open
-   **[AuraOS-Music.apk](https://github.com/100kbrazy-a11y/auraos-music-android/releases/latest/download/AuraOS-Music.apk)**
+   **[Strata-Music.apk](https://github.com/100kbrazy-a11y/auraos-music-android/releases/latest/download/Strata-Music.apk)**
    in Chrome (or any browser). If the browser warns that the file might be harmful, tap **Download anyway**.
 2. **Allow the install.** Open the downloaded file. The first time, Android says installing unknown apps isn't
    allowed: tap **Settings**, turn on **Allow from this source** for your browser, then go back.
@@ -29,7 +29,7 @@
 **Updating:** download the same link again and install it. Every build is signed with the same key, so it
 installs right over the old one and **your music and playlists stay**.
 
-> If you had AuraOS Music on this phone from an older build made on your own computer, Android refuses to
+> If you had Strata Music on this phone from an older build made on your own computer, Android refuses to
 > install over it ("App not installed" / "conflicts with an existing package"). Uninstall the old one first.
 > That removes the music inside it, so make a **Music Pack** of your library beforehand and add it back after.
 
@@ -102,7 +102,7 @@ hand: **Actions › Build Android app › Run workflow**.
 ```bash
 git clone https://github.com/100kbrazy-a11y/auraos-music-android
 cd auraos-music-android
-./build-android.sh            # saves AuraOS-Music.apk in your Downloads folder
+./build-android.sh            # saves Strata-Music.apk in your Downloads folder
 ./build-android.sh --install  # also installs it on a phone plugged in by USB (USB debugging on)
 ./build-android.sh --clean    # rebuild the Android project from scratch
 ```

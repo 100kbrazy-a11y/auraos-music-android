@@ -1,4 +1,4 @@
-// Applies AuraOS Music's Android settings to the generated Capacitor project. Safe to run again and again.
+// Applies Strata Music's Android settings to the generated Capacitor project. Safe to run again and again.
 import fs from "node:fs";
 
 const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
@@ -31,9 +31,9 @@ edit("android/app/src/main/AndroidManifest.xml", (s) => {
     </queries>
 
     <application`);
-  // YouTube / YouTube Music › Share › AuraOS Music: the link comes straight in (Add from Link)
-  if (!s.includes("android.intent.action.SEND\"") || !s.includes('android:label="Add to AuraOS Music"')) {
-    s = s.replace(/(<activity[^>]*\.MainActivity[\s\S]*?)(<\/activity>)/, `$1    <intent-filter android:label="Add to AuraOS Music">
+  // YouTube / YouTube Music › Share › Strata Music: the link comes straight in (Add from Link)
+  if (!s.includes("android.intent.action.SEND\"") || !s.includes('android:label="Add to Strata Music"')) {
+    s = s.replace(/(<activity[^>]*\.MainActivity[\s\S]*?)(<\/activity>)/, `$1    <intent-filter android:label="Add to Strata Music">
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
@@ -122,7 +122,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AuraPoPlugin.class);             // YouTube proof-of-origin tokens (Add from Link)
         registerPlugin(DragOutPlugin.class);            // drag songs / albums / playlists out to other apps
-        registerPlugin(ShareInPlugin.class);            // links shared to the app (YouTube › Share › AuraOS Music)
+        registerPlugin(ShareInPlugin.class);            // links shared to the app (YouTube › Share › Strata Music)
         registerPlugin(AuraPlayerPlugin.class);         // the native music player + battery state
         super.onCreate(savedInstanceState);
         Window w = getWindow();
@@ -200,4 +200,4 @@ public class MainActivity extends BridgeActivity {
 }
 `);
 
-console.log("Android project configured for AuraOS Music " + pkg.version);
+console.log("Android project configured for Strata Music " + pkg.version);

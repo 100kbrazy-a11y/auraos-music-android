@@ -382,8 +382,8 @@ function showDiagnostics() {
   openSheet(h("div", {}, h("h3", {}, "Diagnostics"), h("p", {}, "What the app did recently. Copy it and send it along when something goes wrong."), pre,
     h("div", { class: "btns" },
       h("button", { class: "btn text", onclick: () => { diag.clear(); pre.textContent = "Cleared."; } }, "Clear"),
-      h("button", { class: "btn text", onclick: async () => { try { const { Share } = await import("@capacitor/share"); await Share.share({ title: "AuraOS diagnostics", text: "AuraOS diagnostics (newest first)\n" + diag.text().split("\n").reverse().join("\n") }); } catch {} } }, "Share"),
-      h("button", { class: "btn", onclick: async () => { try { await navigator.clipboard.writeText("AuraOS diagnostics (newest first)\n" + diag.text().split("\n").reverse().join("\n")); snack("Copied"); } catch { snack("Couldn't copy — select the text instead"); } } }, "Copy"))),
+      h("button", { class: "btn text", onclick: async () => { try { const { Share } = await import("@capacitor/share"); await Share.share({ title: "Strata diagnostics", text: "Strata diagnostics (newest first)\n" + diag.text().split("\n").reverse().join("\n") }); } catch {} } }, "Share"),
+      h("button", { class: "btn", onclick: async () => { try { await navigator.clipboard.writeText("Strata diagnostics (newest first)\n" + diag.text().split("\n").reverse().join("\n")); snack("Copied"); } catch { snack("Couldn't copy — select the text instead"); } } }, "Copy"))),
   { dialog: true });
   setTimeout(() => { pre.scrollTop = pre.scrollHeight; }, 30);
 }
@@ -401,7 +401,7 @@ const favGenres = new Set();
 function buildTabs() {
   const nav = $("#tabs");
   nav.innerHTML = "";
-  nav.append(h("div", { class: "brand" }, h("img", { src: "./icon-192.png", alt: "" }), "AuraOS Music"));
+  nav.append(h("div", { class: "brand" }, h("img", { src: "./icon-192.png", alt: "" }), "Strata Music"));
   nav.append(h("div", { class: "ind" }));
   if (!$("#dock .tviz")) $("#dock").prepend(h("canvas", { class: "tviz" }));
   for (const t of TABS) {
@@ -1553,7 +1553,7 @@ function settingsModel(sizeText) {
     { title: "Look & Feel", rows: [
       { id: "motion", type: "toggle", symbol: "sparkles", title: "Motion Effects", subtitle: "Sliding pages, glow, living background", value: motion() },
     ] },
-    { title: "Storage", footer: "AuraOS Music for iPhone · music packs work with the desktop and Android apps too", rows: [
+    { title: "Storage", footer: "Strata Music for iPhone · music packs work with the desktop and Android apps too", rows: [
       { id: "removeAll", type: "action", symbol: "trash", title: "Remove All Music", subtitle: "Deletes the songs stored in this app", destructive: true, stay: true },
     ] },
   ];
@@ -1645,7 +1645,7 @@ function pageSettings() {
   const [xfRow, xfBox, xfUpd] = fold("queue", "Crossfade", () => (+s.crossfade ? `${+s.crossfade} s` : "Off"),
     h("div", {}, h("div", { class: "s fold-note" }, "Blend the end of each song into the next"), h("div", { class: "sl-wrap" }, xf)));
   xf.addEventListener("input", () => xfUpd());
-  const natSw = toggle(s.nativePlayer !== false), svSw = toggle(s.autoSaver !== false);
+  const natSw = toggle(s.nativePlayer !== false), svSw = toggle(s.autoSaver !== false), bmSw = toggle(s.beatMatch !== false);
   const natSub = () => !nativePlayerAvailable ? "" : migr.running ? `Moving songs for it · ${migr.done} of ${migr.total}` : player.nat ? "On · Android's own audio engine (less crackling, better battery)" : s.nativePlayer === false ? "Off · using the old player" : "Starting…";
   const play = group("Playback",
     nativePlayerAvailable && item("eq", "Native Player", natSub(), async () => {
@@ -1654,6 +1654,10 @@ function pageSettings() {
       else snack("The old player comes back the next time you open the app");
     }, natSw),
     xfRow, xfBox,
+    player.nat && item("queue", "Match Beats", "In crossfades, the song playing eases to the next song's tempo so their beats line up (only when they're close)", () => {
+      s.beatMatch = s.beatMatch === false; lib.saveMeta(); bmSw.classList.toggle("on", s.beatMatch !== false); player.checkCrossfade();
+      if (s.beatMatch !== false) scheduleSilence(500);
+    }, bmSw),
     eqRow, eqBox);
 
   // ---- look & feel
@@ -1694,7 +1698,7 @@ function pageSettings() {
   if (canDragOut()) DragOut.canOverlay().then(({ granted }) => (ovVal.textContent = granted ? "Names on" : "Names off")).catch(() => {});
 
   p.append(...[summary, mine, play, look, share].filter(Boolean),
-    h("div", { class: "empty", style: { padding: "10px 30px 40px", fontSize: "12px" } }, "AuraOS Music · music packs work on iPhone, Android and the desktop app"));
+    h("div", { class: "empty", style: { padding: "10px 30px 40px", fontSize: "12px" } }, "Strata Music · music packs work on iPhone, Android and the desktop app"));
   return p;
 }
 
@@ -2092,7 +2096,7 @@ async function sharePack(songs, defTitle, playlist) {
   }
 }
 
-// ---- YouTube / YouTube Music › Share › Add to AuraOS Music: the link comes straight in, no copying and pasting
+// ---- YouTube / YouTube Music › Share › Add to Strata Music: the link comes straight in, no copying and pasting
 if (native && Capacitor.getPlatform() === "android") {
   const ShareIn = registerPlugin("ShareIn");
   const take = (t) => { if (!t) return; diag.log("shared to the app: " + String(t).slice(0, 120)); setTimeout(() => addFromLink(String(t)), 300); };
@@ -2302,7 +2306,7 @@ async function askOverlayOnce() {
     const { granted } = await DragOut.canOverlay();
     if (granted) return;
     lib.meta.settings.overlayAsked = true; lib.saveMeta();
-    if (await confirmBox("Name packs as you drop them?", "When you drag an album or playlist into another app, AuraOS Music can show a small window over that app to ask the pack's name and show its progress. That window is the only thing it ever shows over other apps. Android calls this permission “Display over other apps”.", "Allow"))
+    if (await confirmBox("Name packs as you drop them?", "When you drag an album or playlist into another app, Strata Music can show a small window over that app to ask the pack's name and show its progress. That window is the only thing it ever shows over other apps. Android calls this permission “Display over other apps”.", "Allow"))
       await DragOut.askOverlay();
   } catch {}
 }
@@ -2317,7 +2321,7 @@ async function saveFile(blob, name, onProgress) {
   const { Filesystem, Directory } = await import("@capacitor/filesystem");
   try { await Filesystem.requestPermissions(); } catch {}
   const places = ios
-    ? [[Directory.Documents, "", "Files › On My iPhone › AuraOS Music"], [Directory.Cache, "", "this app"]]
+    ? [[Directory.Documents, "", "Files › On My iPhone › Strata Music"], [Directory.Cache, "", "this app"]]
     : [[Directory.ExternalStorage, "Download/", "Downloads"], [Directory.Documents, "", "Documents"], [Directory.Cache, "", "this app"]];
   let lastErr;
   for (const [dir, prefix, where] of places) {
@@ -4255,6 +4259,13 @@ function startViz() {
     if (npOpen) {
       if (fx()) fog.draw(bass, bassS, playing);
       if (!power.saver && !(morph.active && morph.p > 0.42)) draw(np.viz, 0.75, true);     // (not while it's still invisible mid-grow)
+      // the bar's own little visualizer keeps playing in its copy as the bar fades in / out (no pop when it lands), and
+      // in the real one hidden underneath, so it's already current the frame the real bar takes over
+      const gcv = morph.active && morph.p > 0.55 && morph.ghost?.isConnected ? morph.ghost.querySelector("canvas.tviz, canvas") : null;
+      if (gcv && !power.saver) {
+        draw(gcv, 0.5);
+        if (miniCv && miniCv.width === gcv.width && miniCv.height === gcv.height) { const mg = miniCv.getContext("2d"); mg.clearRect(0, 0, miniCv.width, miniCv.height); mg.drawImage(gcv, 0, 0); }
+      }
       if (fx()) {
         const fade = Math.min(1, (performance.now() - glowFade) / 700);      // new colour: the glow eases back in
         np.glow.style.opacity = ((0.2 + bassS * 0.55) * fade * fade).toFixed(3);
@@ -4471,8 +4482,9 @@ lib.onAdded = () => { scheduleSilence(2500); scheduleCompress(5000); };     // n
 // ---- silence at the start / end of songs: found natively (only the first and last 30 s are decoded), then the
 // player simply starts at the first sound and ends at the last (the file isn't touched: nothing to lose, instant to undo)
 const sil = { running: false, done: 0, total: 0, t: 0, stop: false, onProgress: null, found: 0 };
-const canSilence = () => !!AuraPlayer?.silence && lib.meta.settings.trimSilence !== false;
-const needsSilence = (s) => s.store === "disk" && !s.silenceChecked;
+// (the same quick look at each song's first and last 30 s also finds its beat there, for beat-matched crossfades)
+const canSilence = () => !!AuraPlayer?.silence && (lib.meta.settings.trimSilence !== false || lib.meta.settings.beatMatch !== false);
+const needsSilence = (s) => s.store === "disk" && (!s.silenceChecked || (!s.tempoChecked && s.silenceChecked !== -1));
 function scheduleSilence(ms = 3000) { if (!canSilence()) return; clearTimeout(sil.t); sil.t = setTimeout(findSilence, ms); }
 async function findSilence() {
   if (sil.running || !canSilence()) return;
@@ -4486,14 +4498,18 @@ async function findSilence() {
       try {
         const r = await AuraPlayer.silence({ path: "Songs/" + s.file, dur: s.duration || 0 });
         const dur = r.dur || s.duration || 0;
-        const f = { silenceChecked: 1, trimStart: 0, trimEnd: 0 };
+        const f = { silenceChecked: 1, trimStart: 0, trimEnd: 0, tempoChecked: 1 };
+        // the beat where it starts and where it ends: [bpm, a beat's time (s), confidence]
+        const tg = (a) => (Array.isArray(a) && a[0] > 0 ? a.map((x) => +(+x).toFixed(4)) : null);
+        f.tempo = { s: tg(r.tempoStart), e: tg(r.tempoEnd) };
+        if ((f.tempo.s || f.tempo.e) && player.queue.includes(s.id)) changedQueue = true;
         if (r.start > 0.25) f.trimStart = Math.max(0, +(r.start - 0.02).toFixed(3));           // (a hair before the first sound)
         if (dur && r.end > 0 && dur - r.end > 0.25) f.trimEnd = +Math.min(dur, r.end + 0.05).toFixed(3);   // (…and after the last)
         if (lib.songs.has(s.id)) await lib.updateSong(s.id, f);
         if (f.trimStart || f.trimEnd) { sil.found++; diag.log(`silence: ${s.title} · cut ${f.trimStart.toFixed(2)} s at the start, ${(f.trimEnd ? dur - f.trimEnd : 0).toFixed(2)} s at the end (${r.ms} ms)`); if (player.queue.includes(s.id)) changedQueue = true; }
       } catch (e) {
         diag.log(`silence: couldn't check ${s.title}: ${e?.message || e}`);
-        if (lib.songs.has(s.id)) await lib.updateSong(s.id, { silenceChecked: -1 });
+        if (lib.songs.has(s.id)) await lib.updateSong(s.id, { silenceChecked: -1, tempoChecked: -1 });
       }
       sil.done++;
       sil.onProgress?.();

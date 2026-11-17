@@ -53,7 +53,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 
 /**
- * Drag songs, albums and playlists out of AuraOS Music into another app (Files, Messages, a chat…).
+ * Drag songs, albums and playlists out of Strata Music into another app (Files, Messages, a chat…).
  * A song hands over its real audio file. An album or playlist becomes a music pack, made only when it's dropped:
  * a small window over the other app asks what to call it and shows the progress. That window is the only thing
  * the app ever draws over other apps, and it needs the "display over other apps" permission (asked for first).
@@ -358,7 +358,7 @@ public class DragOutPlugin extends Plugin {
         t.setTypeface(Typeface.DEFAULT_BOLD);
         box.addView(t);
         TextView s = new TextView(c);
-        s.setText(e.label + " · AuraOS Music");
+        s.setText(e.label + " · Strata Music");
         s.setTextColor(Color.parseColor("#B3FFFFFF"));
         s.setTextSize(13);
         s.setPadding(0, dp(4), 0, dp(12));

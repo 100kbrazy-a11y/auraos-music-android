@@ -36,7 +36,7 @@ export function parseLrc(text) {
   return lines;
 }
 
-const HDR = { "Lrclib-Client": "AuraOS Music Android" };
+const HDR = { "Lrclib-Client": "Strata Music Android" };
 const lrc = async (path, params) => getJson("https://lrclib.net/api/" + path + "?" + new URLSearchParams(params), HDR);
 /** "Song (feat. X) - 2011 Remaster [Explicit]" → "Song" */
 export const cleanTitle = (t) => String(t || "").replace(/\s*[([](feat|ft|with|prod|remaster|explicit|clean|bonus|live|radio|single|mono|stereo|deluxe)[^)\]]*[)\]]/gi, "")

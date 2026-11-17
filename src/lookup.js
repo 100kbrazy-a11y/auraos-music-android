@@ -150,7 +150,7 @@ async function mb(path, params) {
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   mbAt = Date.now();
   return (await getJson(`https://musicbrainz.org/ws/2/${path}?` + new URLSearchParams({ ...params, fmt: "json" }),
-    { "User-Agent": "AuraOSMusic/1.0 ( https://github.com/100kbrazy-a11y/auraos-music-android )", Accept: "application/json" })) || {};
+    { "User-Agent": "StrataMusic/1.0 ( https://github.com/100kbrazy-a11y/auraos-music-android )", Accept: "application/json" })) || {};
 }
 const mbTags = (x) => (x?.genres?.length ? x.genres : x?.tags || []).filter((t) => (t.count ?? 1) > 0 && isGenre(t.name))
   .sort((a, b) => (b.count || 0) - (a.count || 0)).map((t) => niceGenre(t.name));

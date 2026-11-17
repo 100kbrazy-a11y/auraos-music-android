@@ -379,7 +379,7 @@ class Library extends EventTarget {
   async buildPack(title, songs, playlist, onProgress) {
     const entries = [], names = new Set(), coverDone = new Set();
     const manifest = { format: PACK_FORMAT, version: 1, title, created: new Date().toISOString().slice(0, 19),
-      made_with: "AuraOS Music for Android", playlist: playlist || null, songs: [] };
+      made_with: "Strata Music for Android", playlist: playlist || null, songs: [] };
     for (const s of songs) {
       const blob = await songBlob(s);
       if (!blob) continue;
@@ -397,7 +397,7 @@ class Library extends EventTarget {
     }
     if (!manifest.songs.length) throw new Error("There's nothing to share.");
     entries.push({ name: "musicpack.json", blob: new Blob([JSON.stringify(manifest, null, 1)], { type: "application/json" }) });
-    entries.push({ name: "README.txt", blob: new Blob([`${title} — a music pack made with AuraOS Music.\n\nTo add it: open AuraOS Music → Settings → Add Music Pack.\nOr just unzip it: the songs are in the Music folder, sorted by artist and album.\n`]) });
+    entries.push({ name: "README.txt", blob: new Blob([`${title} — a music pack made with Strata Music.\n\nTo add it: open Strata Music → Settings → Add Music Pack.\nOr just unzip it: the songs are in the Music folder, sorted by artist and album.\n`]) });
     const zip = await buildZip(entries, onProgress);
     return { blob: zip, name: `${safeName(title, "Music")}-musicpack.zip`, count: manifest.songs.length };
   }

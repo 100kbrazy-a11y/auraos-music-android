@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# AuraOS Music for Android — one command that gets everything it needs, builds the app,
-# signs it, and puts AuraOS-Music.apk in your Downloads folder.
+# Strata Music for Android — one command that gets everything it needs, builds the app,
+# signs it, and puts Strata-Music.apk in your Downloads folder.
 #
 #   ./build-android.sh            build the APK
 #   ./build-android.sh --install  …and install it on a phone plugged in with USB debugging on
@@ -11,7 +11,7 @@ set -Eeuo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 HERE="$(pwd)"
 
-APK_NAME="AuraOS-Music.apk"
+APK_NAME="Strata-Music.apk"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/auraos-music-android"
 SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
 KEYDIR="${XDG_CONFIG_HOME:-$HOME/.config}/auraos-music"
@@ -148,7 +148,7 @@ if [ ! -f "$KS" ]; then
   umask 077
   head -c 24 /dev/urandom | base64 | tr -d '/+=' > "$PASSF"
   keytool -genkeypair -keystore "$KS" -alias auraos -keyalg RSA -keysize 2048 -validity 10000 \
-    -storepass:file "$PASSF" -keypass:file "$PASSF" -dname "CN=AuraOS Music, O=AuraOS" >/dev/null 2>&1
+    -storepass:file "$PASSF" -keypass:file "$PASSF" -dname "CN=Strata Music, O=Strata" >/dev/null 2>&1
   umask 022
   note "Made your signing key: $KS"
   note "Keep it (and android-keystore.pass) — phones only accept updates signed with the same key."
@@ -171,7 +171,7 @@ if command -v gdbus >/dev/null; then
 fi
 if [ "$INSTALL" = 1 ]; then
   step "Installing on your phone"
-  if adb get-state >/dev/null 2>&1; then adb install -r "$OUT" && note "Installed — open AuraOS Music on your phone."
+  if adb get-state >/dev/null 2>&1; then adb install -r "$OUT" && note "Installed — open Strata Music on your phone."
   else note "No phone found. Plug it in with USB debugging turned on (Settings → Developer options), then run with --install again."; fi
 else
   note "To install: send the APK to your phone (USB, cloud, or a cable) and open it."
