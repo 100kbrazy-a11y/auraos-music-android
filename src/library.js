@@ -60,6 +60,8 @@ class Library extends EventTarget {
     }
   }
 
+
+
   saveMeta() {
     clearTimeout(this._mt);
     this._mt = setTimeout(() => idb.put("kv", this.meta, "meta"), 250);
@@ -104,6 +106,16 @@ class Library extends EventTarget {
   }
 
   /** What is known about an artist besides their songs: { image, channel, about, synced } (set by Add from Link) */
+  // favourite artists (pinned at the top of Artists), in the order they were pinned
+  isFavArtist(name) { return (this.meta.favArtists || []).includes(String(name || "").toLowerCase()); }
+  favArtistRank(name) { const i = (this.meta.favArtists || []).indexOf(String(name || "").toLowerCase()); return i < 0 ? 1e9 : i; }
+  toggleFavArtist(name) {
+    const k = String(name || "").toLowerCase(), list = (this.meta.favArtists ||= []);
+    const i = list.indexOf(k);
+    if (i >= 0) list.splice(i, 1); else list.push(k);
+    this.saveMeta();
+    return i < 0;
+  }
   artistInfo(name) { return this.meta.artistInfo?.[String(name || "").toLowerCase()] || null; }
   async setArtistInfo(name, fields, picBlob) {
     const k = String(name || "").toLowerCase();
@@ -175,7 +187,7 @@ class Library extends EventTarget {
   /** Add one audio blob with info (from the file's tags, optionally overridden). Returns {song, skipped}. */
   async addAudio(blob, name, override = {}, folderCover = null, source = null, opts = {}) {
     let tags, picture = null;
-    if (opts.trusted) {      // the info is already known (YouTube or musicpack.json gave it): no need to read the file's tags
+    if (opts.trusted) {      // the info is already known (YouTube gave it): no need to read the file's tags
       tags = { title: "", artist: "", album: "", albumartist: "", track: 0, disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", duration: 0, codec: "" };
     } else {
       diag.step = `Reading tags · ${name}`;
@@ -192,6 +204,25 @@ class Library extends EventTarget {
     diag.step = `Cover · ${name}`;
     song.cover = await timed(this.storeCover(tags, picture || folderCover), 30000, `Saving the cover of ${name}`);
     song.store = await putSongFile(blob.type ? blob : new Blob([blob], { type }), file, source || blob.source);
+    await idb.put("songs", song);
+    this.songs.set(song.id, song);
+    return { song, skipped: false };
+  }
+
+  /** Add a song whose details are already known (YouTube links): no reading the file's tags — the name, artist,
+   *  album and length come from YouTube, and "fill in info" adds the year, genre and the rest afterwards. */
+  async addKnown(blob, ext, info, picture) {
+    const tags = { title: "", artist: "", album: "", albumartist: "", track: 0, disc: 0, year: "", genre: "", composer: "",
+      label: "", copyright: "", isrc: "", bpm: "", duration: 0, codec: "", ...info };
+    if (!tags.duration) { diag.step = `Measuring · ${tags.title}`; tags.duration = await probeDuration(blob); }
+    const dup = this.existing(tags);
+    if (dup) return { song: dup, skipped: true };
+    const file = this.uniqueFile(organizedPath(tags, ext));
+    const type = blob.type || mimeFor(ext);
+    const song = { id: uid(), file, ...tags, size: blob.size, added: Date.now(), type };
+    diag.step = `Cover · ${tags.title}`;
+    song.cover = await timed(this.storeCover(tags, picture), 30000, `Saving the cover of ${tags.title}`);
+    song.store = await putSongFile(blob.type ? blob : new Blob([blob], { type }), file);
     await idb.put("songs", song);
     this.songs.set(song.id, song);
     return { song, skipped: false };

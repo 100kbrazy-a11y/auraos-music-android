@@ -62,18 +62,24 @@ Works on Android 7 and newer. Keep **Android System WebView** up to date (Play S
 
 ![Add music from a link](docs/images/feat_link.jpg)
 
+- **Search YouTube Music (experimental):** the default way to add music. Search inside the app, filter by
+  **Songs / Albums / Playlists / Artists**, and tap **+** to add it. Songs download in the background with a progress
+  ring on the row; albums arrive as albums, playlists as playlists, and an artist opens their download choices.
+  From **Settings › Add Music**, the **Search** tab ("Search YouTube Music for …") or **Artists › Find an artist**.
 - **Add from Link (experimental):** paste a YouTube or YouTube Music link to a song, album or playlist. The
   songs are downloaded with tidy names and covers, and a playlist link becomes a playlist in the same order.
   YouTube changes its protections often, so this
   can stop working. If it fails, **Settings › Diagnostics › Share** shows why. Only add music you have the
   right to.
-- **Add an artist from YouTube Music (experimental):** paste a `music.youtube.com/channel/UC…` artist link (or use
-  **Artists › Add an artist from YouTube Music**). The app reads the artist's page, saves their photo and bio, and
+- **Add an artist from YouTube Music (experimental):** paste a `music.youtube.com/channel/UC…` artist link (or search
+  for them with **Artists › Find an artist on YouTube Music**). The app reads the artist's page, saves their photo and bio, and
   downloads their albums, singles & EPs (or just the top songs) album by album with covers, years and track numbers.
   Songs you already have are skipped, and a **Stop** button ends it early (what's done stays).
 - **YouTube Music style artist page:** full-width artist photo with the name over it, **Shuffle** and **Radio**
   buttons, the songs (first five, then *Show all*), **Albums**, **Singles & EPs**, **Featured on**,
   **Fans might also like** and **About**. The globe button gets more from the same artist.
+- **Favorite artists:** tap the heart on an artist's page (or long-press an artist) and they're pinned at the top of
+  the **Artists** tab, in the order you pinned them.
 - **Music Packs:** share any songs, albums or playlists as a `…-musicpack.zip` and add packs from friends with
   all their info, covers and playlists. Packs also work with the iPhone and desktop apps.
 
