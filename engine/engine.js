@@ -149,7 +149,7 @@ async function tracks(a) {
     for (const t of al.contents || []) {
       if (!/^[\w-]{11}$/.test(t.id || "")) continue;
       n++;
-      out.push({ id: t.id, title: txt(t.title), artist, album, thumb: cover || thumbOf(t.thumbnail), track: parseInt(txt(t.index), 10) || n });
+      out.push({ id: t.id, title: txt(t.title), artist: names(t.artists || t.authors) || artist, albumartist: artist, album, year: String(hdr.year || (txt(hdr.subtitle).match(/\b(19|20)\d\d\b/) || [""])[0]), thumb: cover || thumbOf(t.thumbnail), track: parseInt(txt(t.index), 10) || n });
     }
     return { title: album, tracks: out };
   }
@@ -196,7 +196,23 @@ async function artist(id) {
   return { id, name, thumb: thumbOf(hdr.thumbnail ?? hdr.thumbnails), albums: [...out.values()].sort(byYear), top };
 }
 
-const FN = { audio: (a) => audio(a), search, tracks, artist: (a) => artist(a) };
+/** {q} or {id} -> similar songs (YouTube Music's own "radio" for that song) */
+async function radio(a) {
+  const yt = await client();
+  let vid = a.id;
+  if (!vid) { const r = await search({ q: a.q, type: "song" }); vid = r[0]?.id; }
+  if (!vid) throw new Error("Couldn't find that song on YouTube Music");
+  const up = await timed(yt.music.getUpNext(vid, true), 30000, "Getting similar songs");
+  const out = [];
+  for (const it of up.contents || []) {
+    const v = it.video_id || it.id;
+    if (!/^[\w-]{11}$/.test(v || "") || v === vid) continue;
+    out.push({ id: v, title: txt(it.title), artist: names(it.artists || it.authors) || txt(it.author), album: it.album?.name || "", thumb: thumbOf(it.thumbnail) });
+  }
+  return { title: "Radio", tracks: out.slice(0, 25) };
+}
+
+const FN = { audio: (a) => audio(a), search, tracks, artist: (a) => artist(a), radio };
 window.__eng = {
   run(id, fn, argJson) {
     (async () => {

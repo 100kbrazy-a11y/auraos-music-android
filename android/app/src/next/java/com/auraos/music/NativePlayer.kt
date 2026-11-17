@@ -107,4 +107,20 @@ object NativePlayer {
         sleepJob = scope.launch { delay(mins * 60000L); AuraPlaybackService.instance?.pause(); sleepAt.value = 0 }
     }
     fun eq(gains: FloatArray, pre: Float) { AuraAudioProcessor.setEq(gains, pre) }
+    /** the spectrum right now (512 bytes) for the visualizer; turns the analysis on while asked for */
+    fun viz(on: Boolean) { AuraAudioProcessor.viz = on }
+    fun levels(): ByteArray? = AuraPlaybackService.instance?.levels()
+    /** silence + beat: [start s, end s, dur s, bpmStart, beatStart s, confStart, bpmEnd, beatEnd s, confEnd] */
+    fun scanSilence(f: java.io.File, durSec: Double): DoubleArray = AuraSilence.scan(f, durSec)
+    /** re-encodes [f] to Opus (or AAC where there is no Opus encoder); returns (path, size, codec, mime) */
+    fun compress(f: java.io.File, base: String, kbps: Int): Array<Any> { val r = AuraCompressor.run(f, base, kbps); return arrayOf(r.file ?: "", r.size, r.codec ?: "", r.mime ?: "") }
+    /** queue of full items (with silence cut and beat grid); keep = the song playing carries on */
+    suspend fun loadItems(ctx: Context, items: List<JSObject>, index: Int, posMs: Long, play: Boolean, keep: Boolean) {
+        start(ctx)
+        val s = service() ?: return
+        s.crossfade = fadeSecs; s.beatMatch = fadeMatch
+        s.setQueue(items.map { AuraPlaybackService.item(ctx.applicationContext, it) }, index, posMs, play, keep)
+    }
+    /** where the song really is (the player counts from the cut start) */
+    fun livePos(): Long = AuraPlaybackService.instance?.state()?.optLong("pos") ?: state.value.pos
 }

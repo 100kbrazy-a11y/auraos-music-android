@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class Ic { Play, Pause, Next, Prev, Shuffle, Repeat, RepeatOne, Heart, HeartFill, Search, Note, Disc, Person, List, Download, Gear, Close, Down, More, Queue, Timer, Plus, Trash, Back, Check, Sort, Info, Folder, Eq }
+enum class Ic { Play, Pause, Next, Prev, Shuffle, Repeat, RepeatOne, Heart, HeartFill, Search, Note, Disc, Person, List, Download, Gear, Close, Down, More, Queue, Timer, Plus, Trash, Back, Check, Sort, Info, Folder, Eq, Lyrics, Sun, Moon, Radio, Share, Edit, Select, Up, Image, Wand, Spark, Pack, Cut, Link }
 
 /** Every icon is drawn here with Canvas paths (24 x 24 grid): no icon fonts, no image files, no extra libraries. */
 @Composable
@@ -79,6 +79,20 @@ fun Icon(ic: Ic, modifier: Modifier = Modifier, size: Dp = 24.dp, tint: Color = 
             Ic.Sort -> { line(4f, 7f, 20f, 7f); line(4f, 12f, 15f, 12f); line(4f, 17f, 10f, 17f) }
             Ic.Info -> { ring(12f, 12f, 9f); line(12f, 11f, 12f, 17f); dot(12f, 7.5f, 1.3f) }
             Ic.Folder -> stroke { m(3f, 6f); l(9f, 6f); l(11f, 9f); l(21f, 9f); l(21f, 19f); l(3f, 19f); close() }
+            Ic.Lyrics -> { stroke { m(4f, 5f); l(20f, 5f); l(20f, 16f); l(11f, 16f); l(6f, 20f); l(6f, 16f); l(4f, 16f); close() }; line(8f, 9f, 16f, 9f); line(8f, 12.5f, 13f, 12.5f) }
+            Ic.Sun -> { ring(12f, 12f, 4f); for (k in 0 until 8) { val a = k * Math.PI / 4; val ca = cos(a).toFloat(); val sa = sin(a).toFloat(); line(12f + 7f * ca, 12f + 7f * sa, 12f + 9.5f * ca, 12f + 9.5f * sa) } }
+            Ic.Moon -> stroke { m(20f, 14.5f); c(18.5f, 19f, 13f, 21.5f, 8.5f, 19f); c(4f, 16.5f, 2.5f, 10.5f, 5.5f, 6.5f); c(7f, 4.5f, 9f, 3.5f, 11f, 3.5f); c(8.5f, 8f, 10f, 13f, 14f, 15f); c(16f, 16f, 18.5f, 15.8f, 20f, 14.5f); close() }
+            Ic.Radio -> { dot(12f, 12f, 2f); stroke { m(8f, 8f); c(6f, 10f, 6f, 14f, 8f, 16f) }; stroke { m(16f, 8f); c(18f, 10f, 18f, 14f, 16f, 16f) }; stroke { m(5f, 5f); c(1.5f, 8.5f, 1.5f, 15.5f, 5f, 19f) }; stroke { m(19f, 5f); c(22.5f, 8.5f, 22.5f, 15.5f, 19f, 19f) } }
+            Ic.Share -> { line(12f, 3f, 12f, 15f); stroke { m(8f, 7f); l(12f, 3f); l(16f, 7f) }; stroke { m(5f, 11f); l(5f, 20f); l(19f, 20f); l(19f, 11f) } }
+            Ic.Edit -> { stroke { m(4f, 20f); l(5f, 15.5f); l(15.5f, 5f); l(19f, 8.5f); l(8.5f, 19f); close() }; line(13f, 7.5f, 16.5f, 11f) }
+            Ic.Select -> { ring(12f, 12f, 9f); stroke { m(8f, 12.5f); l(11f, 15.5f); l(16.5f, 9f) } }
+            Ic.Up -> stroke { m(6f, 15f); l(12f, 9f); l(18f, 15f) }
+            Ic.Image -> { stroke { m(4f, 5f); l(20f, 5f); l(20f, 19f); l(4f, 19f); close() }; stroke { m(4f, 17f); l(9f, 12f); l(13f, 16f); l(15.5f, 13.5f); l(20f, 18f) }; dot(15.5f, 9f, 1.5f) }
+            Ic.Wand -> { line(4f, 20f, 15f, 9f); fill { m(17f, 2f); l(18f, 5f); l(21f, 6f); l(18f, 7f); l(17f, 10f); l(16f, 7f); l(13f, 6f); l(16f, 5f); close() } }
+            Ic.Spark -> fill { m(12f, 2f); l(14f, 10f); l(22f, 12f); l(14f, 14f); l(12f, 22f); l(10f, 14f); l(2f, 12f); l(10f, 10f); close() }
+            Ic.Pack -> { stroke { m(4f, 8f); l(12f, 4f); l(20f, 8f); l(20f, 17f); l(12f, 21f); l(4f, 17f); close() }; stroke { m(4f, 8f); l(12f, 12f); l(20f, 8f) }; line(12f, 12f, 12f, 21f) }
+            Ic.Cut -> { ring(6f, 17f, 3f); ring(18f, 17f, 3f); line(8f, 15f, 17f, 4f); line(16f, 15f, 7f, 4f) }
+            Ic.Link -> { stroke { m(10f, 14f); c(8f, 12f, 8f, 9.5f, 10f, 7.5f); l(12.5f, 5f); c(14.5f, 3f, 17f, 3f, 19f, 5f); c(21f, 7f, 21f, 9.5f, 19f, 11.5f); l(17.5f, 13f) }; stroke { m(14f, 10f); c(16f, 12f, 16f, 14.5f, 14f, 16.5f); l(11.5f, 19f); c(9.5f, 21f, 7f, 21f, 5f, 19f); c(3f, 17f, 3f, 14.5f, 5f, 12.5f); l(6.5f, 11f) } }
             Ic.Eq -> { line(6f, 4f, 6f, 20f); line(12f, 4f, 12f, 20f); line(18f, 4f, 18f, 20f); dot(6f, 14f, 2.6f); dot(12f, 8f, 2.6f); dot(18f, 16f, 2.6f) }
         }
     }
