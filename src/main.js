@@ -3234,7 +3234,8 @@ function openNpNow(native) {
   npEl.classList.add("opening");
   clearTimeout(openingT);
   if (!nc.on) nc.haptic("soft");
-  requestAnimationFrame(() => morph.glide(0, () => { morph.clear(); openingT = setTimeout(() => npEl.classList.remove("opening"), 60); }));   // …and glide out of it
+  // two frames to get its layers drawn before anything moves (it looks exactly like the bar meanwhile), then glide
+  requestAnimationFrame(() => requestAnimationFrame(() => morph.glide(0, () => { morph.clear(); openingT = setTimeout(() => npEl.classList.remove("opening"), 60); })));
 }
 // ---- keep the screen on while the full player is open (sun) or let it sleep as usual (moon)
 const wantAwake = () => !!lib.meta.settings.keepAwake;
@@ -3287,6 +3288,7 @@ function prepareNp() {
   el.style.transform = "";
   el.setAttribute("aria-hidden", "false");
   el.classList.add("open");
+  document.body.classList.add("np-open");
   setTimeout(applyAwake, 0);
   startViz();
   if (el.classList.contains("lyrics")) lyrView.start();
@@ -3332,7 +3334,14 @@ const morph = {
     const mArt = m && !m.hidden ? m.querySelector(".art") : null;
     const cs = (x, prop, d) => (x ? parseFloat(getComputedStyle(x)[prop]) || d : d);
     const dk = $("#dock");
-    this.bar = { art: box(mArt), artRad: cs(mArt, "borderTopLeftRadius", 10), rad: cs(m && !m.hidden ? m : dk, "borderTopLeftRadius", 18), dockH: dk.offsetHeight || 140 };
+    const side = matchMedia("(orientation: landscape) and (min-width: 640px)").matches;
+    this.whole = !side && m && !m.hidden;              // upright: the whole bubble becomes the player
+    this.bar = { art: box(mArt), artRad: cs(mArt, "borderTopLeftRadius", 10), rad: cs(this.whole ? dk : m && !m.hidden ? m : dk, "borderTopLeftRadius", 18), dockH: dk.offsetHeight || 140 };
+    // its surface: the bubble's own tint, made solid (a blurred see-through surface would have to be re-blurred every frame)
+    if (this.g?.isConnected || np.inner) {
+      if (!this.g?.isConnected) this.g = np.inner.insertBefore(h("div", { class: "lgm" }), np.inner.firstChild);
+      this.g.style.background = solidOf(getComputedStyle(this.whole ? dk : m || dk).backgroundColor);
+    }
     if (!this.bar.art) this.bar.art = { x: r.left + 10, y: r.top + 8, w: 48, h: 48 };
     // the hero: the big cover (its stage moves, its front face rounds), or the lyrics header's little cover
     const front = np.cover.querySelector(".face.front");
@@ -3347,6 +3356,7 @@ const morph = {
     const w = np.wrapEl, out = [];
     for (const c of w.children) {
       if (!lh && c === np.stage) continue;
+      if (c.classList.contains("ctrls")) { for (const k of c.children) if (k !== np.pp) out.push(k); continue; }   // (the play button grows instead)
       if (lh && c.classList.contains("lyr")) { for (const k of c.children) { if (k === lh) out.push(lh.querySelector(".meta")); else out.push(k); } continue; }
       out.push(c);
     }
@@ -3355,7 +3365,26 @@ const morph = {
     // the mini player's own title, buttons and progress, drawn pinned to the container (the real ones step aside)
     this.ghost?.remove();
     this.ghost = null;
-    if (m && !m.hidden && !miniTuck.tucked) {
+    if (this.whole) {
+      // an exact copy of the bubble (mini player row, tabs, little visualizer) pinned in the corner while it fades;
+      // the real one hides in the same frame, so it reads as one window turning into the player
+      const cl = dk.cloneNode(true);
+      cl.classList.add("dockghost");               // (keeps its id for its looks; the real bubble comes first in the page, so lookups still find it)
+      Object.assign(cl.style, { position: "absolute", left: "0px", top: "0px", right: "auto", bottom: "auto", width: dk.offsetWidth + "px", height: dk.offsetHeight + "px",
+        margin: "0", transform: "none", opacity: "1", transition: "none", background: "none", boxShadow: "none", backdropFilter: "none", webkitBackdropFilter: "none", pointerEvents: "none" });
+      const srcC = dk.querySelectorAll("canvas"), dstC = cl.querySelectorAll("canvas");
+      srcC.forEach((c, i) => { try { const d = dstC[i]; d.width = c.width; d.height = c.height; d.getContext("2d").drawImage(c, 0, 0); } catch {} });
+      // every element keeps exactly the look it has in the bar (the player's own styles — its big round play button,
+      // its title sizes — would otherwise apply to the copy now that it's inside the player)
+      const PROPS = ["display", "position", "left", "top", "right", "bottom", "width", "height", "margin", "padding", "backgroundColor", "backgroundImage",
+        "color", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "borderRadius", "boxShadow", "opacity", "transform", "flex", "gap", "alignItems",
+        "justifyContent", "whiteSpace", "overflow", "textOverflow", "fill", "stroke", "filter"];
+      const so = dk.querySelectorAll("*"), co = cl.querySelectorAll("*");
+      so.forEach((x, i) => { const y = co[i]; if (!y) return; const st = getComputedStyle(x); for (const k of PROPS) y.style[k] = st[k]; y.style.transition = "none"; y.style.animation = "none"; });
+      const art = cl.querySelector("#mini .art, .art"); if (art) art.style.visibility = "hidden";      // (the real art is the one that grows)
+      this.ghostMeta = cl.querySelector(".meta");
+      this.ghost = np.clip.appendChild(cl);
+    } else if (m && !m.hidden && !miniTuck.tucked) {
       const gh = h("div", { class: "mghost" });
       for (const sel of [".meta", ".prev", ".pp", ".nx", ".bar"]) {
         const x = m.querySelector(sel), b = box(x);
@@ -3434,7 +3463,7 @@ const morph = {
     // 4) its surface: the mini player's own colour underneath, the player's background crossfading in on top
     if (!this.g?.isConnected) this.g = np.inner.insertBefore(h("div", { class: "lgm" }), np.inner.firstChild);
     this.g.style.display = g < 0.999 ? "block" : "none";
-    el.style.setProperty("--bgo", g.toFixed(3));
+    el.style.setProperty("--bgo", Math.max(0.003, g).toFixed(3));
     // 2) the mini player's own controls, pinned to the container's corner, gone by 25%
     if (this.ghost) {
       this.ghost.style.opacity = Math.max(0, 1 - g / 0.25).toFixed(3);
@@ -3448,18 +3477,34 @@ const morph = {
       const t = hero.moveEl, o = hero.origin;
       t.style.transformOrigin = `${o.x.toFixed(1)}px ${o.y.toFixed(1)}px`;
       t.style.transform = `translate3d(${(x - hero.nat.left).toFixed(1)}px, ${(y - hero.nat.top).toFixed(1)}px, 0) scale(${s1.toFixed(4)})`;
-      hero.radEl.style.borderRadius = (lerp(B.artRad, hero.rad, g) / s1).toFixed(2) + "px";
+      // its corners: from the thumbnail's to the big cover's — but redrawing the full-size cover is costly, so the radius
+      // is only updated when it has changed noticeably (a handful of times per open, not every frame)
+      const want = lerp(B.artRad, hero.rad, g) / s1;
+      if (!hero.lastRad || Math.abs(want - hero.lastRad) / hero.lastRad > 0.3 || g === 0 || g === 1) { hero.lastRad = want; hero.radEl.style.borderRadius = want.toFixed(1) + "px"; }
       // the fading title keeps clear of the growing art (it's never overlapped)
       if (this.ghostMeta) this.ghostMeta.style.transform = `translate3d(${Math.max(0, x + sz - (B.art.x + B.art.w) - (rc.l - r.left)).toFixed(1)}px, 0, 0)`;
     }
     // the full player's controls: the last 40%, rising a touch into place
     const fo = ss(0.6, 1, g);
-    for (const x of this.fades) { x.style.opacity = fo.toFixed(3); x.style.transform = fo < 1 ? `translate3d(0, ${((1 - fo) * 14).toFixed(1)}px, 0)` : ""; }
+    // (a plain 2D move: a 3D one would make each of these its own GPU layer, and handing them all over costs more each frame)
+    // (never exactly 0: invisible layers aren't drawn, and drawing them all on the frame they appear is a visible hitch;
+    // at 0.3% they're drawn during the two frames before it moves, and only blended after that)
+    const fv = Math.max(0.003, fo);
+    if (fv !== this._fo) {
+      this._fo = fv;
+      for (const x of this.fades) { x.style.opacity = fv.toFixed(3); x.style.transform = `translate3d(0, ${((1 - fo) * 14).toFixed(1)}px, 0)`; }
+      // the play / pause circle fades in with them, growing from nothing to full size as it does (it doesn't pop up)
+      if (np.pp) { np.pp.style.transition = "none"; np.pp.style.opacity = fv.toFixed(3); np.pp.style.transform = fo >= 1 ? "" : `scale(${Math.max(0.001, fo).toFixed(4)})`; }
+    }
     // the bottom bar (tabs and the bubble around them) slides down and fades straight away
-    const nav = Math.min(1, g / 0.3), dk = $("#dock");
+    const dk = $("#dock");
     dk.style.transition = "none";
-    dk.style.transform = nav > 0 ? `translate3d(0, ${(nav * (B.dockH * 0.6 + 16)).toFixed(1)}px, 0)` : "";
-    dk.style.opacity = (1 - nav).toFixed(3);
+    if (this.whole) dk.style.visibility = "hidden";       // (its exact copy is in the player now)
+    else {
+      const nav = Math.min(1, g / 0.3);
+      dk.style.transform = nav > 0 ? `translate3d(0, ${(nav * (B.dockH * 0.6 + 16)).toFixed(1)}px, 0)` : "";
+      dk.style.opacity = (1 - nav).toFixed(3);
+    }
   },
   setIOS(p) {
     this.p = p; this.active = true;
@@ -3556,8 +3601,10 @@ const morph = {
       this.ghost?.remove(); this.ghost = null; this.ghostMeta = null;
       for (const x of this.fades || []) { x.style.opacity = ""; x.style.transform = ""; }
       if (this.hero) { this.hero.moveEl.style.transform = ""; this.hero.moveEl.style.transformOrigin = ""; this.hero.radEl.style.borderRadius = ""; }
-      this.fades = null; this.hero = null; this.bar = null;
-      const dk = $("#dock"); dk.style.transform = ""; dk.style.opacity = ""; dk.style.transition = "";
+      this.fades = null; this.hero = null; this.bar = null; this._fo = undefined;
+      if (np.pp) { np.pp.style.transform = ""; np.pp.style.opacity = ""; np.pp.style.transition = ""; }
+      const dk = $("#dock"); dk.style.transform = ""; dk.style.opacity = ""; dk.style.transition = ""; dk.style.visibility = "";
+      this.whole = false;
       if (np.clip) { const cb = np.clip.style; cb.left = cb.top = cb.width = cb.height = cb.borderRadius = ""; const inn = np.inner.style; inn.width = inn.height = inn.transform = ""; }
     }
   },
@@ -3613,11 +3660,21 @@ const morph = {
 };
 
 // the shape the player grows from / shrinks into: the bubble upright, the media bubble sideways
+/** a see-through colour (like the bubble's glass) as the solid colour it looks like over the app's background */
+function solidOf(css) {
+  let r, g, b, a = 1;
+  const m = /rgba?\(([^)]+)\)/.exec(css || ""), c = /color\(srgb\s+([^)]+)\)/.exec(css || "");
+  if (m) [r, g, b, a = 1] = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+  else if (c) { const v = c[1].split(/[\s/]+/).filter(Boolean).map(Number); [r, g, b] = v.slice(0, 3).map((x) => x * 255); a = v[3] ?? 1; }
+  else return "rgb(26, 26, 31)";
+  const bg = [11, 11, 14], k = isNaN(a) ? 1 : a;
+  return `rgb(${Math.round(r * k + bg[0] * (1 - k))}, ${Math.round(g * k + bg[1] * (1 - k))}, ${Math.round(b * k + bg[2] * (1 - k))})`;
+}
 function anchorRect() {
   const a = nc.on && nc.anchorBox;                // iPhone: the native bubble says exactly where it is
   if (a && a.w > 0) return { left: a.x, top: a.y, right: a.x + a.w, bottom: a.y + a.h, width: a.w, height: a.h };
   const side = matchMedia("(orientation: landscape) and (min-width: 640px)").matches;
-  if (!nc.on && !side && !$("#mini").hidden) return $("#mini").getBoundingClientRect();   // (Android: the mini player itself grows)
+  if (!nc.on && !side && !$("#mini").hidden) return $("#dock").getBoundingClientRect();   // (Android: the bubble itself becomes the player)
   const el = side ? ($("#mini").hidden ? $("#tabs") : $("#mini")) : $("#dock");
   const r = el.getBoundingClientRect();
   if (side && miniTuck.tucked && !$("#mini").hidden) return { top: r.top, bottom: r.bottom, left: r.left, right: r.left + 68 };
@@ -3690,6 +3747,7 @@ function closeNp(opts = {}) {
   if (pageDirty) { pageDirty = false; setTimeout(refresh, 470); }
   const el = $("#np");
   el.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("np-open");
   lyrView.stop();
   applyAwake();
   if (!motion()) { el.classList.remove("open"); morph.clear(); unflipNow(); nc.show(false); return true; }
@@ -4124,7 +4182,7 @@ function startViz() {
     };
     if (npOpen) {
       if (fx()) fog.draw(bass, bassS, playing);
-      if (!power.saver) draw(np.viz, 0.75, true);
+      if (!power.saver && !(morph.active && morph.p > 0.42)) draw(np.viz, 0.75, true);     // (not while it's still invisible mid-grow)
       if (fx()) {
         const fade = Math.min(1, (performance.now() - glowFade) / 700);      // new colour: the glow eases back in
         np.glow.style.opacity = ((0.2 + bassS * 0.55) * fade * fade).toFixed(3);

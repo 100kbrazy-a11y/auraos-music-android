@@ -108,9 +108,10 @@ svg.i.fill { fill: currentColor; stroke: none; }
 .row .heart { color: var(--accent); width: 16px; height: 16px; flex: none; }
 .row .dur { color: var(--faint); font-size: 12.5px; font-variant-numeric: tabular-nums; flex: none; }
 .eqbars { display: inline-flex; gap: 2px; align-items: flex-end; height: 14px; }
-.eqbars b { width: 3px; background: var(--accent); border-radius: 2px; animation: eqb .9s ease-in-out infinite alternate; }
+.eqbars b { width: 3px; height: 14px; background: var(--accent); border-radius: 2px; transform-origin: 50% 100%; will-change: transform;
+  animation: eqb .9s ease-in-out infinite alternate; }      /* (scales on the GPU: animating the height repainted the page every frame) */
 .eqbars b:nth-child(2) { animation-delay: -.3s; } .eqbars b:nth-child(3) { animation-delay: -.6s; }
-@keyframes eqb { from { height: 3px; } to { height: 14px; } }
+@keyframes eqb { from { transform: scaleY(.22); } to { transform: none; } }
 .paused .eqbars b { animation-play-state: paused; }
 .row .art .eqbars { position: absolute; inset: 0; margin: auto; width: 13px; }
 .row .art.playing::after { content: ""; position: absolute; inset: 0; background: rgba(0, 0, 0, .45); }
@@ -695,7 +696,7 @@ html, body, #app { background: var(--bg); }
 body.saver #np .lgm { backdrop-filter: none; -webkit-backdrop-filter: none; background: color-mix(in srgb, var(--accent) 10%, rgba(14, 14, 18, .94)); }
 #np.morphing { background: transparent; }
 /* the bar's own cover, titles and buttons step aside while their stand-ins fly (they're back the moment it lands) */
-body.np-morph #mini .art, body.np-morph #mini .meta, body.np-morph #mini button, body.np-morph #dock .tviz, body.np-morph #mini canvas { opacity: 0 !important; transition: none !important; }
+body.np-morph #dock:not(.dockghost) #mini .art, body.np-morph #dock:not(.dockghost) #mini .meta, body.np-morph #dock:not(.dockghost) #mini button, body.np-morph #dock:not(.dockghost) .tviz, body.np-morph #dock:not(.dockghost) #mini canvas { opacity: 0 !important; transition: none !important; }
 #np.morphing .npinner > .bg, #np.morphing .npinner > .bg2, #np.morphing .npinner > .glowpulse { opacity: var(--bgo, 1) !important; }
 #np.morphing .wrap { z-index: 1; }
 
@@ -909,7 +910,7 @@ body.np-morph #mini .art, body.np-morph #mini .meta, body.np-morph #mini button,
 /* power saver (Battery Saver / low battery): nothing keeps moving in the background */
 body.saver #aurora i { animation: none; }
 body.saver #np .glow, body.saver #np .glowpulse { animation: none !important; opacity: 0 !important; }
-body.saver .eqbars b { animation: none; height: 60% !important; }
+body.saver .eqbars b { animation: none; transform: scaleY(.6); }
 body.saver #np .vizbg { opacity: 0; }
 /* the player is paused: its little "now playing" bars stand still */
 body.paused .eqbars b { animation-play-state: paused; }
@@ -1023,8 +1024,8 @@ body.nomotion .yt-results > * { animation: none; }
 /* while it grows: everything that moves or fades is its own GPU layer, so a frame never waits on drawing */
 #np.morphing .npclip { will-change: left, top, width, height; contain: strict; }
 #np.morphing .npinner { will-change: transform; }
-#np.morphing .npinner > .bg, #np.morphing .npinner > .bg2, #np.morphing .npinner > .fog, #np.morphing .npinner > .glowpulse { will-change: opacity; }
-#np.morphing .wrap > *, #np.morphing .vizbg, #np.morphing .lyr > *, #np.morphing .lyr .lhead .meta { will-change: opacity, transform; }
+#np.morphing .npclip { transform: translateZ(0); }                         /* (its own layer: the page under it isn't repainted) */
+#np.morphing .npinner > .fog { will-change: opacity; }
 #np .face.front > img, #np .lyr .lhead .art > img { will-change: transform; }
 /* the bar's buttons riding in the growing card look exactly like the bar's: plain icons, no circle */
 #np .mghost .ib svg.i { filter: none; }
@@ -1032,3 +1033,12 @@ body.nomotion .yt-results > * { animation: none; }
 /* Battery Saver: the grow / shrink animation has no glow and no visualizer either */
 body.saver #np .vizbg, body.saver #np .npinner > .glowpulse, body.saver #np.morphing .npinner > .glowpulse, body.saver #np .glow { display: none !important; }
 body.saver #dock .tviz, body.saver #mini canvas { visibility: hidden; }
+
+/* the bubble's copy inside the growing player (upright) */
+#np .npclip > .dockghost { z-index: 3; will-change: opacity; overflow: hidden; border-radius: 0 !important; }
+#np .npclip > .dockghost #tabs .ind { transition: none !important; }
+
+/* the full player covers everything: the animated background behind it rests (no GPU work nobody sees) */
+body.np-open:not(.np-morph) #aurora i { animation-play-state: paused; }
+
+#np.morphing .wrap > *:not(.stage), #np.morphing .vizbg, #np.morphing .lyr > *, #np.morphing .lyr .lhead .meta { will-change: opacity, transform; }
