@@ -36,7 +36,7 @@ jobs:
           APK=android/app/build/outputs/apk/next/release/app-next-release-unsigned.apk
           test -f "$APK" || { echo "::error::no APK"; find android/app/build/outputs -name '*.apk'; exit 1; }
           "$BT/zipalign" -f -p 4 "$APK" aligned.apk
-          "$BT/apksigner" sign --ks signing/release.jks --ks-pass file:signing/keystore.pass --key-pass file:signing/keystore.pass --ks-key-alias auraos --out Strata-Music-Next.apk aligned.apk
+          "$BT/apksigner" sign --ks signing/release.jks --ks-pass file:signing/keystore.pass --ks-key-alias auraos --out Strata-Music-Next.apk aligned.apk
           "$BT/apksigner" verify Strata-Music-Next.apk
       - uses: actions/upload-artifact@v4
         with: { name: Strata-Music-Next-apk, path: Strata-Music-Next.apk, retention-days: 14 }
