@@ -68,6 +68,7 @@ class Library extends EventTarget {
   }
 
   rebuild() {
+    this._ver = (this._ver || 0) + 1;
     const map = new Map();
     for (const s of this.songs.values()) {
       const k = albumKey(s);
@@ -88,7 +89,14 @@ class Library extends EventTarget {
     return [...this.songs.values()].sort((a, b) => a.title.localeCompare(b.title) || (a.artist || "").localeCompare(b.artist || ""));
   }
 
+  /** every artist (worked out once per change to the library, not on every call) */
   artists() {
+    const key = `${this._ver || 0}:${this.songs.size}`;
+    if (this._artists && this._artistsKey === key) return this._artists;
+    this._artistsKey = key;
+    return (this._artists = this._artistsNow());
+  }
+  _artistsNow() {
     const m = new Map();
     for (const s of this.songs.values()) {
       const names = [...splitArtists(s.albumartist), ...splitArtists(s.artist)];
@@ -118,6 +126,7 @@ class Library extends EventTarget {
   }
   artistInfo(name) { return this.meta.artistInfo?.[String(name || "").toLowerCase()] || null; }
   async setArtistInfo(name, fields, picBlob) {
+    this._ver = (this._ver || 0) + 1;
     const k = String(name || "").toLowerCase();
     const info = ((this.meta.artistInfo ||= {})[k] ||= {});
     if (picBlob) {
@@ -391,6 +400,7 @@ class Library extends EventTarget {
   }
 
   async updateSong(id, fields) {
+    this._ver = (this._ver || 0) + 1;
     const s = this.songs.get(id);
     Object.assign(s, fields);
     await idb.put("songs", s);

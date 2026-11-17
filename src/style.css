@@ -954,3 +954,24 @@ body.saver .skel, body.saver .yt-row .art { animation: none; }
 .yt-results > *:nth-child(n+6) { animation-delay: .15s; }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 body.nomotion .yt-results > * { animation: none; }
+
+/* full player: keep-the-screen-on switch (moon = sleeps as usual, sun = stays on), beside ⋮ */
+#np .top .top-spacer { width: 42px; height: 42px; flex: none; }          /* (keeps "Playing from" centred) */
+#np .top .awake { position: relative; overflow: visible; }
+#np .top .awake .sunmoon { position: relative; width: 22px; height: 22px; display: block; }
+#np .top .awake .sunmoon svg.i { position: absolute; inset: 0; width: 22px; height: 22px;
+  transition: transform .5s var(--ease), opacity .3s var(--ease), color .3s; }
+#np .top .awake .moon { color: rgba(255, 255, 255, .78); }
+#np .top .awake .sun { color: #ffd166; filter: drop-shadow(0 0 6px rgba(255, 200, 90, .55)); opacity: 0; transform: rotate(-90deg) scale(.4); }
+#np .top .awake.on .sun { opacity: 1; transform: none; }
+#np .top .awake.on .moon { opacity: 0; transform: rotate(90deg) scale(.4); }
+#np .top .awake-tip { position: absolute; top: calc(100% + 4px); left: 50%; transform: translate(-50%, -4px); white-space: nowrap; pointer-events: none;
+  padding: 6px 11px; border-radius: 999px; font-size: 12px; font-weight: 650; color: #fff; opacity: 0;
+  background: rgba(20, 20, 26, .82); box-shadow: 0 6px 18px rgba(0, 0, 0, .35), inset 0 0 0 1px rgba(255, 255, 255, .1);
+  transition: opacity .25s var(--ease), transform .35s var(--ease); z-index: 5; }
+#np .top .awake.tip .awake-tip { opacity: 1; transform: translate(-60%, 0); }
+@media (orientation: landscape) and (min-width: 640px) { #np .top .top-spacer { display: none; } }
+
+/* long lists: rows and cards off screen aren't laid out or painted until they're about to scroll in */
+.list > .row { content-visibility: auto; contain-intrinsic-size: auto 62px; }
+.grid > .card { content-visibility: auto; contain-intrinsic-size: auto 210px; }

@@ -50,6 +50,8 @@ const ICONS = {
   history: ["M12 21a9 9 0 1 0-8.5-6M3 9.5V15h5.5M12 7.5V12l3 2"], browse: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM15.5 8.5l-2 5-5 2 2-5z"],
   chevron: ["M7 10l5 5 5-5"], logout: ["M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"],
   filter: ["M4 6h16M7 12h10M10 18h4"], tag: ["M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01"],
+  sun: ["M12 7.6a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8zM12 2.2v2.2M12 19.6v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.2 12h2.2M19.6 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"],
+  moon: ["M20.2 14.6A8.4 8.4 0 0 1 9.4 3.8a8.4 8.4 0 1 0 10.8 10.8z"],
   pin: ["M9 3.5h6l-.8 6.2 3.8 3.3v2H6v-2l3.8-3.3zM12 15v5.5"],
   folder: ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"], select: ["M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 17l2 2 4-4"],
 };
@@ -212,6 +214,57 @@ function snack(msg, action, fn, ms = 4200) {
 }
 
 let sheetClose = null;
+/** every popup sheet (song / album / artist menus, Up Next, lists…): pull it down from the top to close it */
+function sheetSwipe() {
+  const sh = $("#sheet"), scrim = $("#scrim");
+  let y0 = 0, dy = 0, drag = false, track = false, lastY = 0, lastT = 0, v = 0;
+  const tick = edge();
+  sh.addEventListener("touchstart", (e) => {
+    track = !sh.classList.contains("dialog") && e.touches.length === 1 && !e.target.closest("input, textarea, select, .slider");
+    if (!track) return;
+    drag = false; dy = 0; v = 0; y0 = lastY = e.touches[0].clientY; lastT = performance.now(); tick.reset();
+  }, { passive: true });
+  sh.addEventListener("touchmove", (e) => {
+    if (!track) return;
+    const y = e.touches[0].clientY, now = performance.now();
+    v = (y - lastY) / Math.max(1, now - lastT); lastY = y; lastT = now;
+    if (!drag) {
+      const d = y - y0;
+      if (d > 6 && sh.scrollTop <= 0) { drag = true; y0 = y; }        // at the top of the list, pulling down: the sheet follows
+      else if (Math.abs(d) > 6) { track = false; return; }             // otherwise the list scrolls as usual
+      else return;
+    }
+    e.preventDefault();
+    dy = Math.max(0, y - y0);
+    const resist = dy;                                                 // (1:1 with the finger)
+    sh.style.transition = "none";
+    sh.style.translate = `0 ${resist.toFixed(1)}px`;
+    scrim.style.opacity = String(1 - Math.min(1, dy / Math.max(200, sh.offsetHeight)) * 0.85);
+    tick(dy > Math.min(130, sh.offsetHeight * 0.28));
+  }, { passive: false });
+  const end = () => {
+    if (!track) return;
+    track = false;
+    if (!drag) return;
+    drag = false;
+    if (dy > Math.min(130, sh.offsetHeight * 0.28) || v > 0.55) {      // far enough, or flicked: away it goes
+      nc.haptic("soft");
+      const h0 = sh.offsetHeight + 40;
+      sh.style.transition = `translate ${Math.max(140, Math.min(280, (h0 - dy) / Math.max(1.2, v)))}ms var(--ease)`;
+      sh.style.translate = `0 ${h0}px`;
+      scrim.style.transition = "opacity .24s ease"; scrim.style.opacity = "0";
+      sheetSwiped = true;
+      setTimeout(() => { scrim.style.transition = ""; closeSheet(); }, 240);
+    } else {                                                            // not far: back up
+      sh.style.transition = "translate .32s var(--ease)";
+      sh.style.translate = "";
+      scrim.style.transition = "opacity .25s"; scrim.style.opacity = "";
+      setTimeout(() => { sh.style.transition = ""; scrim.style.transition = ""; }, 340);
+    }
+  };
+  sh.addEventListener("touchend", end);
+  sh.addEventListener("touchcancel", end);
+}
 function openSheet(content, { dialog = false, onClose } = {}) {
   closeSheet(true);
   nc.haptic(dialog ? "soft" : "tap");
@@ -226,10 +279,11 @@ function openSheet(content, { dialog = false, onClose } = {}) {
   sheetClose = onClose || null;
   scrim.onclick = () => closeSheet();
 }
+let sheetSwiped = false;              // (swiped away: it already slid off, no second exit animation)
 function closeSheet(silent) {
   const sh = $("#sheet");
   if (sh.hidden) return false;
-  if (motion() && sh.childElementCount) {         // a copy slides away (the real one is free for the next sheet at once)
+  if (motion() && sh.childElementCount && !sheetSwiped) {         // a copy slides away (the real one is free for the next sheet at once)
     const ghost = sh.cloneNode(true), sg = $("#scrim").cloneNode(false);
     ghost.classList.add("leaving"); sg.classList.add("leaving");
     ghost.style.pointerEvents = sg.style.pointerEvents = "none";
@@ -237,6 +291,8 @@ function closeSheet(silent) {
     ghost.scrollTop = sh.scrollTop;
     setTimeout(() => { ghost.remove(); sg.remove(); }, 300);
   }
+  sheetSwiped = false;
+  sh.style.translate = sh.style.transition = ""; $("#scrim").style.opacity = "";
   sh.hidden = $("#scrim").hidden = true;
   queueMicrotask(() => { if ($("#sheet").hidden) { nc.update({ covered: !!sel }); npPlayButton(); } });   // (not when another sheet opens straight away)
   sh.innerHTML = "";
@@ -556,11 +612,61 @@ function sideLists() {
   nav.append(box);
 }
 
+// ---- pages you leave are kept (with their scroll position) so going back or returning to a tab is instant.
+// Any change to the library (refresh) makes them out of date; tabs are rebuilt again quietly while the app is idle.
+const pageCache = new Map();           // key → page element
+let uiVer = 0;
+const pageKey = (p) => (["settings", "ytsearch", "search"].includes(p.type) ? null : `${p.type}|${p.key || ""}|${p.name || ""}`);
+function stash(el) {
+  if (!el) return;
+  el.getAnimations().forEach((a) => a.cancel());
+  el.style.transform = el.style.opacity = el.style.pointerEvents = el.style.transition = el.style.overflowY = "";
+  const top = el.scrollTop;
+  el.remove();
+  if (!el._key || el._ver !== uiVer) return;
+  el._top = top;
+  pageCache.delete(el._key);
+  pageCache.set(el._key, el);
+  while (pageCache.size > 12) pageCache.delete(pageCache.keys().next().value);
+}
+function pageFor(p) {
+  const k = pageKey(p);
+  const el = k && pageCache.get(k);
+  if (el) pageCache.delete(k);
+  if (el && el._ver === uiVer) return el;
+  const fresh = render(p);
+  fresh._key = k; fresh._ver = uiVer;
+  return fresh;
+}
+let warmT = 0;
+/** build the tabs you're not on, one per idle moment (so the first visit is instant too) */
+function prewarm() {
+  cancelIdle(warmT);
+  const todo = TABS.map((t) => t.id).filter((id) => { const k = pageKey({ type: id }); return k && !(stack.length === 1 && stack[0].type === id) && pageCache.get(k)?._ver !== uiVer; });
+  if (!todo.length) return;
+  warmT = idle(() => {
+    const id = todo[0], keep = stack;
+    try { stack = [{ type: id }]; const el = render({ type: id }); el._key = pageKey({ type: id }); el._ver = uiVer; el._top = 0; pageCache.set(el._key, el); }
+    catch (e) { diag.log("prewarm " + id + ": " + (e?.message || e)); }
+    finally { stack = keep; }
+    prewarm();
+  });
+}
+const idle = (f) => (window.requestIdleCallback ? requestIdleCallback(f, { timeout: 2500 }) : setTimeout(f, 200));
+const cancelIdle = (t) => (window.cancelIdleCallback ? cancelIdleCallback(t) : clearTimeout(t));
+
 function show(dir) {
   const old = pageEl;
-  const el = render(stack[stack.length - 1]);
+  const el = pageFor(stack[stack.length - 1]);
+  const reused = el._top !== undefined && el.isConnected === false && el._shown;
   $("#pages").append(el);
+  el._shown = true;
+  if (el._top) { quietScrollUntil = performance.now() + 150; el.scrollTop = el._top; }
+  el._top = undefined;
+  el.classList.toggle("scrolled", el.scrollTop > 8);
   pageEl = el;
+  resumeChunks();
+  if (reused || el._key) markNow();                  // (the song playing may have changed while it was put away)
   markTab();
   nc.header(el, el.classList.contains("scrolled"));
   if (old) {
@@ -570,9 +676,10 @@ function show(dir) {
       const startT = old.style.transform || "none";       // continue from where a swipe left it
       el.animate([{ transform: `translate(${ax * 40}%, ${ay * 14}%)`, opacity: 0 }, { transform: "none", opacity: 1 }], o);
       old.style.pointerEvents = "none";
-      old.animate([{ transform: startT, opacity: 1 }, { transform: `translate(${-ax * 30}%, ${-ay * 8}%)`, opacity: 0 }], o).onfinish = () => old.remove();
-    } else old.remove();
+      old.animate([{ transform: startT, opacity: 1 }, { transform: `translate(${-ax * 30}%, ${-ay * 8}%)`, opacity: 0 }], o).onfinish = () => { if (old !== pageEl) stash(old); };
+    } else stash(old);
   }
+  prewarm();
 }
 
 // swipe left / right anywhere on a page to change tabs (or swipe right to go back from an album, artist…)
@@ -639,9 +746,12 @@ function push(page) {
 function pop() { if (stack.length > 1) { stack.pop(); show("right"); return true; } return false; }
 function refresh() {
   if (!pageEl) return;
+  uiVer++; pageCache.clear();                     // everything kept is out of date now
+  setTimeout(prewarm, 600);
   sideLists();
   const top = pageEl.scrollTop;
   const el = render(stack[stack.length - 1]);
+  el._key = pageKey(stack[stack.length - 1]); el._ver = uiVer; el._shown = true;
   pageEl.replaceWith(el);
   pageEl = el;
   quietScrollUntil = performance.now() + 150;     // restoring the scroll position isn't you scrolling
@@ -946,27 +1056,34 @@ function songRow(s, i, list, opts = {}) {
   row._make = () => songRow(s, i, list, opts);        // (so a new song playing can redo just this row)
   return row;
 }
-function songList(songs, opts) {
-  const box = h("div", { class: "list" });
-  // long lists: the first screenfuls now, the rest a chunk per frame (no freeze on a big library)
-  const first = songs.length > 160 ? 100 : songs.length;
+/**
+ * Fill `box` with make(i) for i < n: the first `first` right away (what's on screen), the rest a few milliseconds
+ * per frame so no frame ever stalls. A page that's put away (cached) pauses and carries on when it's shown again.
+ */
+function chunked(box, n, make, first = 24) {
   const frag = document.createDocumentFragment();
-  for (let i = 0; i < first; i++) frag.append(songRow(songs[i], i, songs, opts));
+  let at = 0;
+  for (; at < Math.min(n, first); at++) frag.append(make(at));
   box.append(frag);
-  let at = first;
+  if (at >= n) return box;
   const more = () => {
-    if (at >= songs.length) return;
-    if (!box.isConnected && at > first) return;        // page went away
-    const f = document.createDocumentFragment();
-    const end = Math.min(songs.length, at + 220);
-    for (; at < end; at++) f.append(songRow(songs[at], at, songs, opts));
+    if (at >= n) return;
+    if (!box.isConnected) { (resumers.get(box) || resumers.set(box, more)); return; }   // (picked up again in show())
+    const f = document.createDocumentFragment(), t0 = performance.now();
+    do { f.append(make(at++)); } while (at < n && performance.now() - t0 < 5);
     box.append(f);
     const pg = box.closest(".page");                     // keep the scroll position a refresh asked for
     if (pg?._wantTop && pg.scrollTop < pg._wantTop - 2) { quietScrollUntil = performance.now() + 150; pg.scrollTop = pg._wantTop; }
     requestAnimationFrame(more);
   };
-  if (at < songs.length) requestAnimationFrame(more);
+  requestAnimationFrame(more);
   return box;
+}
+const resumers = new Map();
+function resumeChunks() { for (const [box, f] of [...resumers]) if (box.isConnected) { resumers.delete(box); requestAnimationFrame(f); } }
+
+function songList(songs, opts) {
+  return chunked(h("div", { class: "list" }), songs.length, (i) => songRow(songs[i], i, songs, opts), 30);
 }
 /** an artist as a card the size of an album card (round picture) */
 function artistCard(a) {
@@ -978,7 +1095,7 @@ function artistCard(a) {
 /** long-press an artist: play, favourite (pinned at the top of Artists), more from YouTube Music */
 function artistMenu(name) {
   const k = name.toLowerCase();
-  const songs = [...lib.songs.values()].filter((s) => artistNames(s).some((x) => x.toLowerCase() === k));
+  const songs = [...(lib.artists().find((x) => x.name.toLowerCase() === k)?.songs || [])];
   const fav = lib.isFavArtist(name);
   const a = lib.artists().find((x) => x.name.toLowerCase() === k);
   actionSheet(h("div", { class: "sh-head" }, art(a?.cover, { label: name, round: true }), h("div", { class: "meta" }, h("div", { class: "t" }, name), h("div", { class: "s" }, plural(songs.length, "song")))), [
@@ -1026,7 +1143,7 @@ function pageAlbums() {
   const p = pageShell("Albums", { back: false, actions: rootActions() });
   if (!lib.songs.size) { p.append(emptyLibrary()); return p; }
   const albums = filtCount() ? lib.albums.filter((a) => a.tracks.some(passes)) : lib.albums;
-  p.append(...[filterBar()].filter(Boolean), albums.length ? h("div", { class: "grid" }, albums.map(albumCard)) : noMatches());
+  p.append(...[filterBar()].filter(Boolean), albums.length ? chunked(h("div", { class: "grid" }), albums.length, (i) => albumCard(albums[i]), 12) : noMatches());
   return p;
 }
 const noMatches = () => h("div", { class: "empty" }, h("div", { class: "big" }, icon("filter")), h("h3", {}, "Nothing matches"), h("div", {}, "Try removing a filter."),
@@ -1056,7 +1173,8 @@ function pageArtists() {
   if (pinned.length) {
     p.append(h("div", { class: "section-t" }, "Favorite Artists"), ...pinned.map((a) => row(a, true)), h("div", { class: "section-t" }, "All Artists"));
   }
-  for (const a of list) if (!lib.isFavArtist(a.name)) p.append(row(a, false));
+  const rest = list.filter((a) => !lib.isFavArtist(a.name));
+  p.append(chunked(h("div", { class: "alist" }), rest.length, (i) => row(rest[i], false), 16));
   return p;
 }
 
@@ -1192,7 +1310,7 @@ function similarArtists(name, songs) {
 function pageArtist(name) {
   const k = name.toLowerCase();
   const info = lib.artistInfo(name) || {};
-  const songs = [...lib.songs.values()].filter((s) => artistNames(s).some((x) => x.toLowerCase() === k))
+  const songs = [...(lib.artists().find((x) => x.name.toLowerCase() === k)?.songs || [])]
     .sort((a, b) => (a.album || "").localeCompare(b.album || "") || (a.track || 0) - (b.track || 0));
   const isLead = (s) => (primaryArtist(s.artist) || primaryArtist(s.albumartist)).toLowerCase() === k;      // the first-named artist: the song belongs to them
   const p = pageShell("");
@@ -1245,8 +1363,12 @@ function pageArtist(name) {
   shelf("Singles & EPs", small, (a) => [a.year, kind(a)].filter(Boolean).join(" · "));
   shelf("Featured on", featured, null);
 
-  const like = similarArtists(name, songs);
-  if (like.length) p.append(h("div", { class: "section-t" }, "Fans might also like"), h("div", { class: "hscroll" }, like.map(artistCard)));
+  const likeBox = h("div");                     // (worked out just after the page appears: it's below the fold)
+  p.append(likeBox);
+  requestAnimationFrame(() => setTimeout(() => {
+    const like = similarArtists(name, songs);
+    if (like.length) likeBox.append(h("div", { class: "section-t" }, "Fans might also like"), h("div", { class: "hscroll" }, like.map(artistCard)));
+  }, 0));
 
   const about = (info.about || "").trim();
   const genres = [...new Set(songs.flatMap(genresOf))].slice(0, 6);
@@ -2593,10 +2715,10 @@ function browseResults(q, useRecent) {
   const albums = lib.albums.filter((a) => m(a.title) || m(a.artist));
   const artists = lib.artists().filter((a) => m(a.name));
   const all = !q;
-  const row = (title, n, cards) => out.push(h("div", { class: "section-t" }, all ? `${title} · ${n}` : title), h("div", { class: "hscroll" }, cards));
-  if (artists.length) row("Artists", artists.length, artists.slice(0, all ? 400 : 40).map(artistCard));
-  if (albums.length) row("Albums", albums.length, albums.slice(0, all ? 400 : 40).map(albumCard));
-  if (songs.length) { const list = songs.slice(0, all ? 600 : 100); row("Songs", songs.length, list.map((x, i) => songCard(x, list, i, all ? "Library" : "Search"))); }
+  const row = (title, n, list, make) => out.push(h("div", { class: "section-t" }, all ? `${title} · ${n}` : title), chunked(h("div", { class: "hscroll" }), list.length, (i) => make(list[i], i), 6));
+  if (artists.length) row("Artists", artists.length, artists.slice(0, all ? 400 : 40), artistCard);
+  if (albums.length) row("Albums", albums.length, albums.slice(0, all ? 400 : 40), albumCard);
+  if (songs.length) { const list = songs.slice(0, all ? 600 : 100); row("Songs", songs.length, list, (x, i) => songCard(x, list, i, all ? "Library" : "Search")); }
   if (!out.length) out.push(h("div", { class: "empty" }, `Nothing in your library matches “${q}”`));
   if (q && native) out.push(h("div", { class: "section-t" }, "Not in your library?"), ytOffer(q));
   return out;
@@ -2847,7 +2969,7 @@ function buildNp() {
     lib.saveMeta(); showOffset();
   };
   const wrap = h("div", { class: "wrap" },
-    h("div", { class: "top" }, ib("down", () => closeNp(), "", "Close"), np.ctx, ib("more", () => player.current && songMenu(player.current))),
+    h("div", { class: "top" }, ib("down", () => closeNp(), "", "Close"), h("span", { class: "top-spacer" }), np.ctx, (np.awake = awakeButton()), ib("more", () => player.current && songMenu(player.current))),
     np.stage,
     h("div", { class: "lyr" }, h("div", { class: "lhead" }, np.lyrHeadArt, h("div", { class: "meta" }, np.lyrHeadT, np.lyrHeadS)), np.lyrCanvas,
       h("div", { class: "lfoot" }, np.lyrSrc, np.lyrOff, h("button", { onclick: () => nudge(-0.5) }, "Earlier"), h("button", { onclick: () => nudge(0.5) }, "Later"),
@@ -3008,6 +3130,40 @@ function openNpNow(native) {
   if (!nc.on) nc.haptic("soft");
   requestAnimationFrame(() => morph.glide(0, () => { morph.clear(); openingT = setTimeout(() => npEl.classList.remove("opening"), 60); }));   // …and glide out of it
 }
+// ---- keep the screen on while the full player is open (sun) or let it sleep as usual (moon)
+const wantAwake = () => !!lib.meta.settings.keepAwake;
+let awakeOn = false, wakeSentinel = null;
+async function applyAwake() {
+  const on = npOpen && wantAwake() && !document.hidden;
+  if (on === awakeOn) return;
+  awakeOn = on;
+  try {
+    if (AuraPlayer?.keepAwake) await AuraPlayer.keepAwake({ on });
+    else if (navigator.wakeLock) {
+      if (on) wakeSentinel = await navigator.wakeLock.request("screen").catch(() => null);
+      else { await wakeSentinel?.release?.(); wakeSentinel = null; }
+    }
+  } catch (e) { diag.log("keep awake: " + (e?.message || e)); }
+}
+document.addEventListener("visibilitychange", () => { awakeOn = false; applyAwake(); });
+function awakeButton() {
+  const b = h("button", { class: "ib awake" + (wantAwake() ? " on" : ""), "data-haptic": "own", "aria-label": "Keep the screen on" },
+    h("span", { class: "sunmoon" }, icon("sun", "sun"), icon("moon", "moon")),
+    h("span", { class: "awake-tip" }));
+  b.onclick = () => {
+    const on = !wantAwake();
+    lib.meta.settings.keepAwake = on; lib.saveMeta();
+    b.classList.toggle("on", on);
+    nc.haptic(on ? "success" : "soft");
+    const tip = b.querySelector(".awake-tip");
+    tip.textContent = on ? "Screen stays on" : "Screen can sleep";
+    b.classList.remove("tip"); void b.offsetWidth; b.classList.add("tip");
+    clearTimeout(b._t); b._t = setTimeout(() => b.classList.remove("tip"), 1800);
+    applyAwake();
+  };
+  return b;
+}
+
 function prepareNp() {
   unflipNow();                                   // always reopen on the artwork, not the details
   {                                              // …in the view you used last: big cover or lyrics
@@ -3025,6 +3181,7 @@ function prepareNp() {
   el.style.transform = "";
   el.setAttribute("aria-hidden", "false");
   el.classList.add("open");
+  setTimeout(applyAwake, 0);
   startViz();
   if (el.classList.contains("lyrics")) lyrView.start();
 }
@@ -3311,6 +3468,7 @@ function closeNp(opts = {}) {
   const el = $("#np");
   el.setAttribute("aria-hidden", "true");
   lyrView.stop();
+  applyAwake();
   if (!motion()) { el.classList.remove("open"); morph.clear(); unflipNow(); nc.show(false); return true; }
   // shrink into the bubble from wherever it is (a finger may be partway), overshoot a hair, then the bubble bounces
   if (!morph.active) { morph.rect = anchorRect(); morph.set(0); morph.v = 0; }
@@ -3549,13 +3707,14 @@ function lyricsPicker(s) {
 function showQueue() {
   const box = h("div", { class: "queue" }, h("div", { class: "sh-head" }, h("div", {}, h("div", { class: "t" }, "Up Next"),
     h("div", { class: "s" }, plural(Math.max(0, player.queue.length - player.index - 1), "song") + (player.shuffle ? " · shuffled" : "")))));
-  const list = h("div", { class: "list" });
-  player.queue.slice(player.index, player.index + 200).forEach((id, k) => {
-    const s = lib.songs.get(id); if (!s) return;
+  const ids = player.queue.slice(player.index, player.index + 300).filter((id) => lib.songs.has(id));
+  const at0 = player.index;
+  const list = chunked(h("div", { class: "list" }), ids.length, (k) => {
+    const s = lib.songs.get(ids[k]);
     const r = h("div", { class: "row" + (k === 0 ? " now" : "") }, art(s.cover, { label: s.album }), h("div", { class: "meta" }, h("div", { class: "t" }, s.title), h("div", { class: "s" }, s.artist || "")));
-    press(r, () => { closeSheet(true); player.jump(player.index + k); });
-    list.append(r);
-  });
+    press(r, () => { closeSheet(true); player.jump(at0 + player.queue.slice(at0).indexOf(ids[k])); });
+    return r;
+  }, 14);
   box.append(list);
   openSheet(box);
 }
@@ -3938,6 +4097,7 @@ async function boot() {
   show(null);
   setupSwipe();
   setupMiniGestures();
+  sheetSwipe();
   const dock = $("#dock");
   const sizeDock = () => document.documentElement.style.setProperty("--dock-h", Math.round(dock.getBoundingClientRect().height) + "px");
   new ResizeObserver(sizeDock).observe(dock);
@@ -4042,6 +4202,6 @@ async function boot() {
     const audio = files.filter((f) => !/\.zip$/i.test(f.name));
     if (audio.length) importAudio(audio);
   });
-  window.__app = { morphP: () => (morph.active ? morph.p : null), morphAt: (p) => { if (!npOpen) { prepareNp(); morph.rect = anchorRect(); } cancelAnimationFrame(morph.raf); morph.set(p); }, morphClear: () => morph.clear(), nc, compressLibrary, comp, needsCompress, ytCache, ytJobs, artistMenu, toggleFavArtist, progressBox, DiskFile, miniTuck, morph, filt, findGenres, filterSheet, get lyr() { return lyrView; }, np, browse, similarSongs, playWithMix, lyricsPicker, lookupDialog, autoFill, lib, player, push, goTab, openNp, closeNp, toggleLyrics, sharePack, importPacks, importAudio, startSelect, refresh, back, stack: () => stack };
+  window.__app = { render, showQueue, morphP: () => (morph.active ? morph.p : null), morphAt: (p) => { if (!npOpen) { prepareNp(); morph.rect = anchorRect(); } cancelAnimationFrame(morph.raf); morph.set(p); }, morphClear: () => morph.clear(), nc, compressLibrary, comp, needsCompress, ytCache, ytJobs, artistMenu, toggleFavArtist, progressBox, DiskFile, miniTuck, morph, filt, findGenres, filterSheet, get lyr() { return lyrView; }, np, browse, similarSongs, playWithMix, lyricsPicker, lookupDialog, autoFill, lib, player, push, goTab, openNp, closeNp, toggleLyrics, sharePack, importPacks, importAudio, startSelect, refresh, back, stack: () => stack };
 }
 boot();

@@ -161,6 +161,19 @@ public class AuraPlayerPlugin extends Plugin {
         });
     }
 
+    // ------------------------------------------------------------------ keep the screen on (while the full player is open)
+    @PluginMethod
+    public void keepAwake(PluginCall call) {
+        final boolean on = call.getBoolean("on", false);
+        if (getActivity() == null) { call.resolve(); return; }
+        getActivity().runOnUiThread(() -> {
+            android.view.Window w = getActivity().getWindow();
+            if (on) w.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            else w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            call.resolve();
+        });
+    }
+
     // ------------------------------------------------------------------ compressing songs (Opus 160 kbps)
     private final java.util.concurrent.ExecutorService work = java.util.concurrent.Executors.newSingleThreadExecutor();
 
