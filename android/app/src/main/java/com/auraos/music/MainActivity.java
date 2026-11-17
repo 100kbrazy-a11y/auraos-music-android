@@ -19,6 +19,10 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(AuraPoPlugin.class);             // YouTube proof-of-origin tokens (Add from Link)
+        registerPlugin(DragOutPlugin.class);            // drag songs / albums / playlists out to other apps
+        registerPlugin(ShareInPlugin.class);            // links shared to the app (YouTube › Share › AuraOS Music)
+        registerPlugin(AuraPlayerPlugin.class);         // the native music player + battery state
         super.onCreate(savedInstanceState);
         Window w = getWindow();
         WindowCompat.setDecorFitsSystemWindows(w, false);

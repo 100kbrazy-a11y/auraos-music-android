@@ -40,6 +40,16 @@ edit("android/app/src/main/AndroidManifest.xml", (s) => {
             </intent-filter>
         $2`);
   }
+  // the native music player (keeps playing with the screen off; lock screen / notification / headphone controls)
+  if (!s.includes(".AuraPlaybackService")) s = s.replace("</application>", `    <service
+            android:name=".AuraPlaybackService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+    </application>`);
   // drag out to other apps: songs and music packs are handed over through this (read-only, per-drop permission)
   if (!s.includes(".DragOutProvider")) s = s.replace("</application>", `    <provider
             android:name=".DragOutProvider"
@@ -62,6 +72,22 @@ edit("android/app/src/main/res/values/styles.xml", (s) => {
 const colors = "android/app/src/main/res/values/colors.xml";
 if (!fs.existsSync(colors)) fs.writeFileSync(colors, '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n</resources>\n');
 edit(colors, (s) => (s.includes("auraBackground") ? s : s.replace("</resources>", '    <color name="auraBackground">#0b0b0e</color>\n</resources>')));
+
+// the native player: Media3 (ExoPlayer + media session)
+edit("android/app/build.gradle", (s) => {
+  if (!s.includes("androidx.media3:media3-exoplayer")) s = s.replace(/dependencies \{\n/, `dependencies {
+    implementation "androidx.media3:media3-exoplayer:1.4.1"
+    implementation "androidx.media3:media3-session:1.4.1"
+`);
+  // release builds: lint warnings about Media3's "unstable" APIs (used on purpose) mustn't stop the build
+  if (!s.includes("checkReleaseBuilds")) s = s.replace(/android \{\n/, `android {
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+`);
+  return s;
+});
 
 // version from package.json (versionCode grows with every version bump)
 edit("android/app/build.gradle", (s) => {
@@ -95,6 +121,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AuraPoPlugin.class);             // YouTube proof-of-origin tokens (Add from Link)
         registerPlugin(DragOutPlugin.class);            // drag songs / albums / playlists out to other apps
         registerPlugin(ShareInPlugin.class);            // links shared to the app (YouTube › Share › AuraOS Music)
+        registerPlugin(AuraPlayerPlugin.class);         // the native music player + battery state
         super.onCreate(savedInstanceState);
         Window w = getWindow();
         WindowCompat.setDecorFitsSystemWindows(w, false);

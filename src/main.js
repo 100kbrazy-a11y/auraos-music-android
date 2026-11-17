@@ -2393,7 +2393,13 @@ function ytRow(it) {
   const show = () => {
     const j = ytJobs.get(jobKey);
     if (have || j?.done) { btn.replaceChildren(icon("check")); btn.classList.add("done"); btn.disabled = true; if (j?.done && j.text) sub.textContent = j.text; return; }
-    if (j && !j.err) { btn.replaceChildren(ring); ring.style.setProperty("--f", Math.round((j.f || 0) * 100) + "%"); btn.classList.add("busy"); sub.textContent = j.text || "Waiting…"; return; }
+    if (j && !j.err) {
+      if (ring.parentNode !== btn) btn.replaceChildren(ring);           // (built once: replacing it every update made it jump)
+      ring.style.setProperty("--f", (Math.round((j.f || 0) * 1000) / 10) + "%");
+      btn.classList.add("busy"); btn.classList.toggle("waiting", !j.f);
+      const t = j.text || "Waiting…"; if (sub.textContent !== t) sub.textContent = t;
+      return;
+    }
     btn.replaceChildren(icon(it.kind === "artist" ? "chevron" : "add")); btn.classList.remove("busy", "done");
     if (it.kind === "artist") btn.firstChild.style.transform = "rotate(-90deg)";
     if (j?.err) sub.textContent = "Couldn't add: " + j.err;
@@ -2421,7 +2427,8 @@ async function ytAdd(it) {
   ytRefreshRows(key);
   let last = 0;
   const onP = (f, t, s2) => {
-    job.f = f; job.text = it.kind === "song" ? (s2?.text || t) : t;
+    job.f = Math.max(job.f, Math.min(1, f || 0));          // only ever forwards
+    job.text = it.kind === "song" ? (s2?.text || t) : t;
     const now = performance.now(); if (now - last > 150) { last = now; ytRefreshRows(key); }
   };
   const finish = (r, label) => {

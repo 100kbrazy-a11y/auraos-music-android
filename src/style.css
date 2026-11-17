@@ -185,9 +185,9 @@ svg.i.fill { fill: currentColor; stroke: none; }
 #tabs { position: relative; z-index: 21; display: flex; height: calc(76px + var(--safe-b)); padding: 0 6px var(--safe-b);
   background: rgba(14, 14, 18, .92); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 -1px 0 var(--line); }
 #tabs button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; font-weight: 650; color: var(--sub); }
-#tabs .pill { width: 60px; height: 32px; border-radius: 16px; display: grid; place-items: center; transition: background .25s var(--ease); background: none !important; box-shadow: none !important; }
+#tabs .pill { width: 60px; height: 32px; border-radius: 16px; display: grid; place-items: center; transition: background .25s var(--ease); }
 #tabs .on { color: var(--text); }
-#tabs .on .pill { background: none !important; box-shadow: none !important; }
+#tabs .on .pill { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 #tabs .on svg.i { color: var(--accent); }
 
 /* selection bar */
@@ -376,7 +376,7 @@ svg.i.fill { fill: currentColor; stroke: none; }
   #tabs .brand img { width: 28px; height: 28px; border-radius: 8px; }
   #tabs > button { flex: none; flex-direction: row; justify-content: flex-start; gap: 10px; height: 42px; padding: 0 8px; border-radius: 12px; font-size: 14px; color: var(--sub); }
   #tabs > button .pill { width: auto; height: auto; background: none !important; }
-  #tabs > button.on { background: none !important; color: var(--text); }
+  #tabs > button.on { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--text); }
   #tabs .side { display: flex; flex-direction: column; gap: 1px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
   #tabs .side-t { font-size: 11.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); padding: 0 8px 6px; }
   #tabs .side-i { flex: none; flex-direction: row; justify-content: flex-start; font-weight: 550; display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 8px; border-radius: 10px; font-size: 13.5px; color: var(--sub); text-align: left; }
@@ -480,12 +480,14 @@ html, body, #app { background: var(--bg); }
 #tabs { position: absolute; left: 14px; right: 14px; bottom: calc(10px + var(--safe-b)); height: 64px; padding: 0 4px; border-radius: 32px;
   background: rgba(30, 30, 36, .62); backdrop-filter: blur(26px) saturate(1.8); -webkit-backdrop-filter: blur(26px) saturate(1.8);
   box-shadow: 0 12px 34px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(255, 255, 255, .09), inset 0 1px 0 rgba(255, 255, 255, .12); touch-action: none; }
-#tabs .ind { display: none !important; background: transparent !important; box-shadow: none !important; }
-#tabs .ind.drag { display: none !important; background: transparent !important; box-shadow: none !important; }
-#tabs > button { position: relative; z-index: 1; gap: 2px; font-size: 10.5px; background: none !important; }
-#tabs > button .pill { width: auto; height: 28px; background: none !important; box-shadow: none !important; transition: transform .35s var(--spring); }
+#tabs .ind { position: absolute; left: 0; top: 5px; height: 54px; border-radius: 27px; pointer-events: none; will-change: transform, width;
+  background: color-mix(in srgb, var(--accent) 24%, rgba(255, 255, 255, .06)); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08);
+  transition: background .3s, box-shadow .2s; }
+#tabs .ind.drag { background: color-mix(in srgb, var(--accent) 32%, rgba(255, 255, 255, .1)); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16), 0 6px 18px rgba(0, 0, 0, .35); }
+#tabs > button { position: relative; z-index: 1; gap: 2px; font-size: 10.5px; }
+#tabs > button .pill { width: auto; height: 28px; background: none !important; transition: transform .35s var(--spring); }
 #tabs > button:active .pill { transform: scale(.86); }
-#tabs > button.on .pill, #tabs > button.hover .pill { transform: scale(1.08); background: none !important; box-shadow: none !important; }
+#tabs > button.on .pill, #tabs > button.hover .pill { transform: scale(1.08); }
 #tabs > button.hover { color: var(--text); }
 #mini { bottom: calc(84px + var(--safe-b)); }
 .page { padding-bottom: calc(var(--mini-h) + 96px + var(--safe-b)); }
@@ -494,7 +496,7 @@ html, body, #app { background: var(--bg); }
 @media (orientation: landscape) and (min-width: 640px) {
   #tabs { position: relative; left: auto; right: auto; bottom: auto; height: auto; border-radius: 0; padding: 12px 10px 12px calc(10px + var(--safe-l));
     padding-top: calc(12px + var(--safe-t)); backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(14, 14, 18, .82); box-shadow: 1px 0 0 var(--line); touch-action: auto; }
-  #tabs .ind { display: none !important; }
+  #tabs .ind { display: none; }
   #tabs > button { font-size: 14px; gap: 10px; }
   #tabs > button .pill { transform: none !important; height: auto; }
   #mini { bottom: auto; }
@@ -578,7 +580,7 @@ html, body, #app { background: var(--bg); }
   #dock #tabs { position: relative; left: auto; right: auto; bottom: auto; height: 62px; margin: 0; padding: 0 4px; border-radius: 0;
     background: none; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; }
   #dock #mini:not([hidden]) + #tabs { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
-  #dock #tabs .ind { display: none !important; }
+  #dock #tabs .ind { top: 5px; height: 52px; border-radius: 20px; }
   .page { padding-bottom: calc(var(--dock-h, 64px) + 28px + var(--safe-b)); }
   #snack { bottom: calc(var(--dock-h, 64px) + 22px + var(--safe-b)); }
 }
@@ -622,7 +624,7 @@ html, body, #app { background: var(--bg); }
   #tabs > button.on { color: var(--text); }
   #tabs > button .pill { height: 26px; transform: none; }
   #tabs > button.on .pill, #tabs > button.hover .pill { transform: scale(1.08) !important; }
-  #tabs .ind { display: none !important; }
+  #tabs .ind { display: block; top: 0; }
   #mini { position: absolute; left: calc(12px + var(--safe-l)); right: calc(var(--rail) + 24px + var(--safe-r)); bottom: calc(10px + var(--safe-b)); top: auto; height: 66px; margin: 0;
     border-radius: 22px; z-index: 21; background: color-mix(in srgb, var(--accent) 10%, rgba(26, 26, 32, .74)); backdrop-filter: blur(28px) saturate(1.8); -webkit-backdrop-filter: blur(28px) saturate(1.8);
     box-shadow: 0 14px 40px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(255, 255, 255, .09); grid-column: auto; grid-row: auto; }
@@ -637,7 +639,7 @@ html, body, #app { background: var(--bg); }
   :root { --rail: 68px; }
   #tabs { padding: 4px; border-radius: 999px; contain: layout; transition: transform .38s cubic-bezier(.22,1,.36,1); }
   #tabs > button { font-size: 9.5px; transition: height .38s cubic-bezier(.22,1,.36,1); }
-  #tabs .ind { display: none !important; }
+  #tabs .ind { left: 0; right: 0; margin: 0 auto; border-radius: 999px; }  /* a round bubble */
   #mini { clip-path: inset(0 0 0 0 round 22px); transition: clip-path .38s cubic-bezier(.22,1,.36,1), transform .42s cubic-bezier(.3,1.15,.6,1); will-change: transform; }
   body.mini-tucked #mini { clip-path: inset(0 calc(100% - 68px) 0 0 round 22px); }
   body.mini-tucked #mini > :not(.art) { pointer-events: none; }
@@ -648,7 +650,7 @@ html, body, #app { background: var(--bg); }
   body.mini-tucked #mini .bar { right: auto; left: 10px; width: 48px; }
   #mini .art { position: relative; z-index: 1; touch-action: none; }
 }
-#dock #tabs .ind { display: none !important; }
+#dock #tabs .ind { border-radius: 999px; }                  /* upright: a capsule bubble */
 
 #np .cover { will-change: transform; }
 #np .face { transform: translateZ(0); }
@@ -878,7 +880,10 @@ html, body, #app { background: var(--bg); }
 .yt-ring { width: 26px; height: 26px; border-radius: 50%; display: block;
   background: conic-gradient(var(--accent) var(--f, 0%), rgba(255, 255, 255, .14) 0);
   -webkit-mask: radial-gradient(circle, transparent 8px, #000 9px); mask: radial-gradient(circle, transparent 8px, #000 9px); }
-.yt-row .yt-add.busy .yt-ring { animation: ytspin 2.4s linear infinite; }
+@property --f { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
+.yt-ring { transition: --f .45s cubic-bezier(.2,.8,.2,1); }
+.yt-row .yt-add.waiting .yt-ring { animation: ytwait 1.6s ease-in-out infinite; }
+@keyframes ytwait { 50% { opacity: .45; } }
 @keyframes ytspin { to { transform: rotate(360deg); } }
 @keyframes ytpop { 0% { transform: scale(.6); } 60% { transform: scale(1.12); } 100% { transform: none; } }
 .yt-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 40px 0; color: var(--sub); font-size: 14px; }
