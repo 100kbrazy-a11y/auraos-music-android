@@ -14,18 +14,18 @@ Same signing key. Install it beside the real app from https://github.com/100kbra
   - `next/NextActivity.kt`: all screens.
 - `engine/engine.js` + `vite.engine.config.js`: the browser-side script (YouTube.js + BotGuard token), bundled by `npx vite build -c vite.engine.config.js`.
 
-## In v1
-Songs / Albums / Artists / Playlists + favourites, search, mini + full player (seek, shuffle, repeat), crossfade slider,
-add songs, Music Pack import, YouTube Music search + link paste (song / album / playlist) + download queue.
-**Untested on a device**: it compiles and signs in CI; nothing has been run on a phone yet.
+## Done so far
+Songs / Albums / Artists / Playlists + favourites, sort, search, song info, delete; mini + full player (seek, shuffle, repeat, favourite, queue view, sleep timer);
+all icons drawn natively (`Icons.kt`, no icon library); Settings: crossfade, beat matching, keep screen on, 10-band EQ with presets, accent colour;
+session restore, lock-screen artwork; add songs, Music Pack import; YouTube Music search + link paste + download queue (hidden browser).
+**Untested on a device**: compiles and signs in CI; nothing has been run on a phone yet.
 
 ## Not done yet (parity checklist)
-- Existing-data migration from the WebView app (IndexedDB export: songs, playlists, favourites, settings, history, covers, session).
+- Migration of existing data from the WebView app (IndexedDB export: songs, playlists, favourites, settings, history, covers, session).
 - Folder import, cover.jpg inside packs, Music Pack export, Full Backup export/import.
-- EQ screen (engine call exists: `NativePlayer.eq`), visualizer, lyrics, queue editing, sleep timer, tempo/pitch, silence-cut settings, compression.
-- Media-notification artwork, drag-out/share-in (`DragOutPlugin`, `ShareInPlugin` equivalents), artist pages, YouTube sign-in.
-- Theme/colour from cover art, settings persistence, session restore (resume where you left off).
-- Take over the real package: set `next` flavor to the real applicationId + versionCode above 10000 only when parity is signed off. Android refuses lower versionCodes, so rollback = ship the old app as a newer version.
+- Visualizer, lyrics, queue editing (reorder / play next), tempo/pitch, silence-cut and compression settings, artist pages.
+- Drag-out / share-in, YouTube sign-in, cover-colour theming, widgets.
+- Take over the real package only when parity is signed off (real applicationId, versionCode above 10000). Rollback = ship the old app as a newer version.
 
 ## Also parked
 `wip/speed-fixes` holds the unfinished media-bar / play-start speed edits for the WebView app.
