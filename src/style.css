@@ -432,7 +432,7 @@ svg.i.fill { fill: currentColor; stroke: none; }
   #np .times { grid-column: 2; grid-row: 5; }
   #np .ctrls { grid-column: 2; grid-row: 6; height: 70px; margin-top: 4px; }
   #np .pp { width: 62px; height: 62px; } #np .pp svg.i { width: 28px; height: 28px; }
-  #np .extras { position: absolute; top: 4px; right: calc(76px + var(--safe-r)); margin: 0; gap: 2px; z-index: 2; }
+  #np .extras { position: absolute; top: 4px; right: calc(124px + var(--safe-r)); margin: 0; gap: 2px; z-index: 2; }   /* (room for the sun / moon and ⋮) */
   #np .extras .ib { width: 40px; height: 40px; }
   #np .top .ctx { text-align: left; padding-left: 8px; }
   #np.lyrics .times { display: none; }
