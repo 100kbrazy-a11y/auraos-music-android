@@ -1,0 +1,48 @@
+# Builds "Strata Music Next" (the native Kotlin + Compose app, package com.auraos.music.next) from the native-next branch.
+# It never touches the real app: different package, different release ("next"), never runs on main.
+name: Build native Next (test app)
+on:
+  push:
+    branches: [native-next]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: native-next
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: package-lock.json }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npx vite build -c vite.engine.config.js
+      - name: Prepare the Android project
+        run: |
+          node scripts/patch-android.mjs
+          npx cap sync android
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+      - name: Compile (next flavor)
+        run: cd android && chmod +x gradlew && ./gradlew --no-daemon --stacktrace assembleNextRelease
+      - name: Sign
+        run: |
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          APK=android/app/build/outputs/apk/next/release/app-next-release-unsigned.apk
+          test -f "$APK" || { echo "::error::no APK"; find android/app/build/outputs -name '*.apk'; exit 1; }
+          "$BT/zipalign" -f -p 4 "$APK" aligned.apk
+          "$BT/apksigner" sign --ks signing/release.jks --ks-pass file:signing/keystore.pass --key-pass file:signing/keystore.pass --ks-key-alias auraos --out Strata-Music-Next.apk aligned.apk
+          "$BT/apksigner" verify Strata-Music-Next.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: Strata-Music-Next-apk, path: Strata-Music-Next.apk, retention-days: 14 }
+      - name: Publish (pre-release "next", not the "latest" download)
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          notes="Native test build ${{ github.run_number }} ($(git log -1 --format=%h)). Installs beside the real app."
+          if gh release view next >/dev/null 2>&1; then gh release upload next Strata-Music-Next.apk --clobber; gh release edit next --notes "$notes" --prerelease --latest=false
+          else gh release create next Strata-Music-Next.apk --title "Strata Music Next (native test)" --notes "$notes" --prerelease --latest=false; fi
