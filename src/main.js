@@ -4015,6 +4015,11 @@ const fog = {
   },
 };
 
+// the last moment you touched / scrolled anything (animations run at full rate around then)
+let lastInteract = 0;
+for (const ev of ["pointerdown", "pointermove", "touchstart", "touchmove", "wheel", "keydown"]) document.addEventListener(ev, () => { lastInteract = performance.now(); }, { capture: true, passive: true });
+document.addEventListener("scroll", () => { lastInteract = performance.now(); }, { capture: true, passive: true });
+
 // visualizer + bass glow
 let vizOn = false, vizCol = "", vizColAt = 0, glowFade = 0;
 function vizColor() {
@@ -4043,12 +4048,14 @@ function startViz() {
     const playing = player.playing;
     // paused and the bars have fallen: nothing moves, so look again only a few times a second (saves battery)
     const settled = !playing && bassS < 0.003 && smooth.every((v) => v < 0.005);
-    if (settled || power.saver) setTimeout(() => requestAnimationFrame(loop), settled ? 300 : 90);
+    // while you're touching, scrolling or something is animating: every frame, at the screen's own rate (90 / 120 Hz)
+    const lively = morph.active || now - lastInteract < 1200;
+    if ((settled || power.saver) && !lively) setTimeout(() => requestAnimationFrame(loop), settled ? 300 : 90);
     else requestAnimationFrame(loop);
     updateProgress();
     if (settled && idleDrawn) return;
     idleDrawn = settled;
-    if (!settled && now - lastDraw < 31) return;              // ~30 frames a second is plenty (phones run 60–120)
+    if (!settled && !lively && now - lastDraw < 31) return;   // idle: ~30 frames a second is plenty (saves battery)
     lastDraw = now;
     const an = player.analyser;
     if (an && playing) an.getByteFrequencyData(bins); else bins.fill(0);

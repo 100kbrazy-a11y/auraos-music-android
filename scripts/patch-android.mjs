@@ -104,7 +104,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.Display;
 import android.view.Window;
+import android.view.WindowManager;
 import android.webkit.WebView;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -124,6 +126,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AuraPlayerPlugin.class);         // the native music player + battery state
         super.onCreate(savedInstanceState);
         Window w = getWindow();
+        preferFastestRefresh(w);
         WindowCompat.setDecorFitsSystemWindows(w, false);
         w.setStatusBarColor(Color.TRANSPARENT);
         w.setNavigationBarColor(Color.TRANSPARENT);
@@ -161,6 +164,30 @@ public class MainActivity extends BridgeActivity {
             ViewCompat.requestApplyInsets(web);
             push(web);
         }
+    }
+
+    /** Ask for the screen's fastest refresh rate (90 / 120 Hz) at its current resolution: Android otherwise often
+     *  keeps an app at 60 Hz, and every scroll, swipe and animation feels heavier than the rest of the phone. */
+    private void preferFastestRefresh(Window w) {
+        if (Build.VERSION.SDK_INT < 23) return;
+        try {
+            Display d = getWindowManager().getDefaultDisplay();
+            Display.Mode cur = d.getMode(), best = cur;
+            for (Display.Mode m : d.getSupportedModes()) {
+                if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight()
+                    && m.getRefreshRate() > best.getRefreshRate() + 0.5f) best = m;
+            }
+            WindowManager.LayoutParams lp = w.getAttributes();
+            lp.preferredDisplayModeId = best.getModeId();
+            lp.preferredRefreshRate = best.getRefreshRate();
+            w.setAttributes(lp);
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) preferFastestRefresh(getWindow());     // (some phones drop back after a pause)
     }
 
     private void push(WebView web) {
