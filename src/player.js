@@ -191,7 +191,7 @@ class Player extends EventTarget {
       this._qDirty = false;
       this._artSent = new Set();
       AuraPlayer.setQueue({ items: this.natItems(), index: this.index, keep: true, play: !this.fa.paused, position: Math.round(this.fa.currentTime * 1000) })
-        .then(() => this.natArt()).catch((e) => diag.log("native queue: " + (e?.message || e)));
+        .then(() => this.natArtSoon()).catch((e) => diag.log("native queue: " + (e?.message || e)));
     }, 0);
   }
   async natLoad(autoplay, posSec = 0) {
@@ -207,7 +207,7 @@ class Player extends EventTarget {
         await AuraPlayer.setQueue({ items: this.natItems(), index: this.index, play: autoplay, position: Math.round(posSec * 1000) });
       } else await AuraPlayer.skipTo({ index: this.index, play: autoplay, position: Math.round(posSec * 1000) });
     } catch (e) { diag.log("native load: " + (e?.message || e)); this.emit("error", { song: s, why: String(e?.message || e) }); }
-    this.natArt();
+    this.natArtSoon();
   }
   /** the native player moved on by itself (end of song, crossfade, lock screen / headphone buttons) */
   natTrack(d) {
@@ -222,7 +222,7 @@ class Player extends EventTarget {
     this.emit("willtrack", { dir });
     this.emit("track", { dir });
     this.emit("state");
-    this.natArt();
+    this.natArtSoon();
   }
   natError(d) {
     const s = this.current;
@@ -231,6 +231,28 @@ class Player extends EventTarget {
     this.emit("error", { song: s, why: d?.message || "" });
   }
   /** the cover for the lock screen / notification: the song playing and the next one */
+  /** the lock-screen covers, a moment after a song change (never during the skip animation) */
+  natArtSoon() { clearTimeout(this._artT); this._artT = setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(() => this.natArt(), { timeout: 1500 }) : this.natArt()), 900); }
+  /** a 512 px JPEG of a cover, made off the main thread (decoded and encoded by the browser's own threads), cached */
+  async artData(cov, id) {
+    this._artCache ||= new Map();
+    if (this._artCache.has(id)) return this._artCache.get(id);
+    let b64 = "";
+    const src = cov.big || cov.smallBlob;
+    try {
+      if (window.createImageBitmap && window.OffscreenCanvas) {
+        const bmp = await createImageBitmap(src, { resizeWidth: 512, resizeHeight: 512, resizeQuality: "high" });
+        const oc = new OffscreenCanvas(512, 512);
+        oc.getContext("2d").drawImage(bmp, 0, 0);
+        bmp.close?.();
+        b64 = String(await blobToDataUrl(await oc.convertToBlob({ type: "image/jpeg", quality: 0.86 }))).split(",")[1] || "";
+      }
+    } catch {}
+    if (!b64) b64 = String(await blobToDataUrl(cov.smallBlob || cov.big)).split(",")[1] || "";
+    if (this._artCache.size > 12) this._artCache.delete(this._artCache.keys().next().value);
+    this._artCache.set(id, b64);
+    return b64;
+  }
   async natArt() {
     this._artSent ||= new Set();
     for (const i of [this.index, this.index + 1]) {
@@ -239,10 +261,7 @@ class Player extends EventTarget {
       this._artSent.add(s.id);
       const cov = lib.cover(s.cover);
       if (!cov) continue;
-      try {
-        const url = await blobToDataUrl(cov.big || cov.smallBlob);
-        await AuraPlayer.setArtwork({ id: s.id, data: String(url).split(",")[1] || "" });
-      } catch {}
+      try { await AuraPlayer.setArtwork({ id: s.id, data: await this.artData(cov, s.cover) }); } catch {}
     }
   }
   /** "time" events while the native player plays (the progress bar and lyrics follow these) */

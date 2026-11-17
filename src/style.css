@@ -1022,10 +1022,9 @@ body.nomotion .yt-results > * { animation: none; }
   background: color-mix(in srgb, var(--accent) 14%, rgb(26, 26, 31)); }
 #np .npclip > .mghost { position: absolute; left: 0; top: 0; z-index: 3; }
 /* while it grows: everything that moves or fades is its own GPU layer, so a frame never waits on drawing */
-#np.morphing .npclip { will-change: left, top, width, height; contain: strict; }
-#np.morphing .npinner { will-change: transform; }
-#np.morphing .npclip { transform: translateZ(0); }                         /* (its own layer: the page under it isn't repainted) */
-#np.morphing .npinner > .fog { will-change: opacity; }
+#np .npclip { contain: strict; transform: translateZ(0); }
+#np .npinner { will-change: transform; }
+#np .npinner > .fog { will-change: opacity; }
 #np .face.front > img, #np .lyr .lhead .art > img { will-change: transform; }
 /* the bar's buttons riding in the growing card look exactly like the bar's: plain icons, no circle */
 #np .mghost .ib svg.i { filter: none; }
@@ -1035,10 +1034,13 @@ body.saver #np .vizbg, body.saver #np .npinner > .glowpulse, body.saver #np.morp
 body.saver #dock .tviz, body.saver #mini canvas { visibility: hidden; }
 
 /* the bubble's copy inside the growing player (upright) */
-#np .npclip > .dockghost { z-index: 3; will-change: opacity; overflow: hidden; border-radius: 0 !important; }
+#np .npinner > .dockghost { position: absolute; z-index: auto; will-change: transform, opacity; overflow: hidden; border-radius: 0 !important; }
+/* the album art is in front of everything while it grows (the bar's copy, the controls fading in) */
+#np.morphing .wrap > .stage { position: relative; z-index: 3; }
+#np.morphing .wrap > .lyr { position: relative; z-index: 3; }
 #np .npclip > .dockghost #tabs .ind { transition: none !important; }
 
 /* the full player covers everything: the animated background behind it rests (no GPU work nobody sees) */
 body.np-open:not(.np-morph) #aurora i { animation-play-state: paused; }
 
-#np.morphing .wrap > *:not(.stage), #np.morphing .vizbg, #np.morphing .lyr > *, #np.morphing .lyr .lhead .meta { will-change: opacity, transform; }
+#np .wrap > *:not(.stage), #np .vizbg, #np .lyr > *, #np .lyr .lhead .meta { will-change: opacity, transform; }

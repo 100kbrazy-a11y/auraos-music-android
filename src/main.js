@@ -3383,7 +3383,7 @@ const morph = {
       so.forEach((x, i) => { const y = co[i]; if (!y) return; const st = getComputedStyle(x); for (const k of PROPS) y.style[k] = st[k]; y.style.transition = "none"; y.style.animation = "none"; });
       const art = cl.querySelector("#mini .art, .art"); if (art) art.style.visibility = "hidden";      // (the real art is the one that grows)
       this.ghostMeta = cl.querySelector(".meta");
-      this.ghost = np.clip.appendChild(cl);
+      this.ghost = np.inner.insertBefore(cl, np.wrapEl);       // (under the player's content: the cover stays in front of it)
     } else if (m && !m.hidden && !miniTuck.tucked) {
       const gh = h("div", { class: "mghost" });
       for (const sel of [".meta", ".prev", ".pp", ".nx", ".bar"]) {
@@ -3445,6 +3445,9 @@ const morph = {
     if (nc.on) return this.setIOS(p);
     this.p = p; this.active = true;
     const el = $("#np"), r = this.rect || (this.rect = anchorRect());
+    // the player's own slide-up / slide-down (its "open" class) must never run underneath: it showed as a jump and a
+    // black area when the morph started, and the shrunken card sliding away after it closed
+    if (el.style.transition !== "none") { el.style.transition = "none"; el.style.transform = "none"; el.style.visibility = "visible"; }
     if (!this.nat) this.measure();
     const W = innerWidth, H = innerHeight, g = 1 - Math.max(0, Math.min(1, p));
     const lerp = (a, b, t) => a + (b - a) * t;
@@ -3466,6 +3469,7 @@ const morph = {
     el.style.setProperty("--bgo", Math.max(0.003, g).toFixed(3));
     // 2) the mini player's own controls, pinned to the container's corner, gone by 25%
     if (this.ghost) {
+      if (this.whole) this.ghost.style.transform = `translate3d(${rc.l.toFixed(2)}px, ${rc.t.toFixed(2)}px, 0)`;   // (pinned to the corner)
       this.ghost.style.opacity = Math.max(0, 1 - g / 0.25).toFixed(3);
       this.ghost.style.visibility = g >= 0.25 ? "hidden" : "";
     }
@@ -3605,6 +3609,10 @@ const morph = {
       if (np.pp) { np.pp.style.transform = ""; np.pp.style.opacity = ""; np.pp.style.transition = ""; }
       const dk = $("#dock"); dk.style.transform = ""; dk.style.opacity = ""; dk.style.transition = ""; dk.style.visibility = "";
       this.whole = false;
+      // open: it simply stays; closed: hidden at once (no slide). The transition comes back two frames later, when
+      // nothing is changing any more (so it can't start an animation)
+      el.style.transform = ""; el.style.visibility = "";
+      requestAnimationFrame(() => requestAnimationFrame(() => { if (!this.active) el.style.transition = ""; }));
       if (np.clip) { const cb = np.clip.style; cb.left = cb.top = cb.width = cb.height = cb.borderRadius = ""; const inn = np.inner.style; inn.width = inn.height = inn.transform = ""; }
     }
   },
@@ -4159,7 +4167,9 @@ function startViz() {
       }
     };
     const draw = (cv, alphaTop, full) => {
-      const dpr = devicePixelRatio || 1;
+      // the full-screen one is soft bars at low opacity behind everything: drawn at 1× density it looks the same and is
+      // ~7× fewer pixels to fill and hand to the GPU every frame (at full density it slowed every frame, skips included)
+      const dpr = full ? Math.min(1, devicePixelRatio || 1) : devicePixelRatio || 1;
       if (!cv._sz || performance.now() - cv._szAt > 500) { cv._sz = [cv.clientWidth, cv.clientHeight]; cv._szAt = performance.now(); }
       const [W, H] = cv._sz;
       if (!W) return;
@@ -4229,12 +4239,20 @@ player.addEventListener("error", (e) => {
 player.addEventListener("restart", () => updateProgress());
 lib.addEventListener("favs", () => updateNpFav());
 
-function saveSession() {
-  lib.meta.session = { queue: player.queue.slice(0, 2000), index: player.index, t: player.audio.currentTime || 0, shuffle: player.shuffle, repeat: player.repeat, ctx: ctxLabel };
-  lib.saveMeta();
+// the session (queue, song, position) is saved on its own, small, a moment after things settle: saving it inside the
+// whole library-settings record copied all of that on every song change, in the middle of the skip animation
+let sessT = 0;
+function saveSession(now) {
+  clearTimeout(sessT);
+  const go = () => {
+    const ss = { queue: player.queue.slice(0, 2000), index: player.index, t: player.audio.currentTime || 0, shuffle: player.shuffle, repeat: player.repeat, ctx: ctxLabel };
+    idb.put("kv", ss, "session").catch(() => {});
+    if (lib.meta.session) { delete lib.meta.session; lib.saveMeta(); }       // (older versions kept it in there)
+  };
+  if (now) go(); else sessT = setTimeout(go, 1200);
 }
 setInterval(() => player.playing && saveSession(), 10000);
-document.addEventListener("visibilitychange", () => document.hidden && saveSession());
+document.addEventListener("visibilitychange", () => document.hidden && saveSession(true));
 
 // ---- Android: the native player. Songs kept in the web view's database are moved into files first (once).
 const migr = { done: 0, total: 0, running: false };
@@ -4445,7 +4463,7 @@ async function silenceNow() {
 }
 
 async function restoreSession() {
-  const ss = lib.meta.session;
+  const ss = (await idb.get("kv", "session").catch(() => null)) || lib.meta.session;
   if (!ss?.queue?.length) return;
   player.queue = ss.queue.filter((id) => lib.songs.has(id));
   player.index = Math.max(0, Math.min(player.queue.length - 1, player.queue.indexOf(ss.queue[ss.index])));
