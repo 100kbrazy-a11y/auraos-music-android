@@ -4,6 +4,7 @@ package com.auraos.music.next
 
 import android.os.Build
 import androidx.compose.animation.core.*
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
