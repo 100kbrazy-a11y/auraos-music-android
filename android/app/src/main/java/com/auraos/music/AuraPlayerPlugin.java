@@ -175,15 +175,21 @@ public class AuraPlayerPlugin extends Plugin {
     }
 
     // ------------------------------------------------------------------ compressing songs (Opus 160 kbps)
-    private final java.util.concurrent.ExecutorService work = java.util.concurrent.Executors.newSingleThreadExecutor();
+    // several songs at once: one per core we can spare (Compress Now runs at normal priority, background runs gently)
+    private static final int CORES = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() - 2));
+    private final java.util.concurrent.ExecutorService work = java.util.concurrent.Executors.newFixedThreadPool(CORES);
+
+    @PluginMethod
+    public void cores(PluginCall call) { JSObject o = new JSObject(); o.put("n", CORES); call.resolve(o); }
 
     /** from: the song's file (relative to the app's files folder); to: the output without extension. */
     @PluginMethod
     public void compress(PluginCall call) {
         final String from = call.getString("from", ""), to = call.getString("to", "");
         final int kbps = call.getInt("kbps", 160);
+        final boolean fast = call.getBoolean("fast", false);
         work.execute(() -> {
-            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            android.os.Process.setThreadPriority(fast ? android.os.Process.THREAD_PRIORITY_DEFAULT : android.os.Process.THREAD_PRIORITY_BACKGROUND);
             long t0 = android.os.SystemClock.elapsedRealtime();
             try {
                 java.io.File dir = getContext().getFilesDir();

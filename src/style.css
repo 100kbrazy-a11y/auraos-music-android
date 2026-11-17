@@ -696,7 +696,7 @@ body.saver #np .lgm { backdrop-filter: none; -webkit-backdrop-filter: none; back
 #np.morphing { background: transparent; }
 /* the bar's own cover, titles and buttons step aside while their stand-ins fly (they're back the moment it lands) */
 body.np-morph #mini .art, body.np-morph #mini .meta, body.np-morph #mini button, body.np-morph #dock .tviz, body.np-morph #mini canvas { opacity: 0 !important; transition: none !important; }
-#np.morphing > .bg, #np.morphing > .bg2, #np.morphing > .glowpulse { opacity: var(--bgo, 1) !important; }
+#np.morphing .npinner > .bg, #np.morphing .npinner > .bg2, #np.morphing .npinner > .glowpulse { opacity: var(--bgo, 1) !important; }
 #np.morphing .wrap { z-index: 1; }
 
 #np, #np .wrap, #np .cover, #np .stage { touch-action: none; }
@@ -755,9 +755,9 @@ body.np-morph #mini .art, body.np-morph #mini .meta, body.np-morph #mini button,
 /* the full player's storm-in-fog background (two cover colours that drift and flash with the beat) */
 #np .fog { position: absolute; inset: 0; width: 100%; height: 100%; display: none; pointer-events: none; }
 #np.fogged .fog { display: block; }
-#np.fogged > .bg, #np.fogged > .glowpulse { display: none; }
+#np.fogged .npinner > .bg, #np.fogged .npinner > .glowpulse { display: none; }
 #np.fogged .bg2 { background: radial-gradient(130% 90% at 50% 0%, transparent 40%, rgba(0, 0, 0, .35)), linear-gradient(transparent 55%, rgba(0, 0, 0, .5)); }
-#np.morphing > .fog { opacity: var(--bgo, 1); }
+#np.morphing .npinner > .fog { opacity: var(--bgo, 1); }
 
 /* double tap to like: a heart bursts where you tapped */
 .heartburst { position: fixed; z-index: 400; width: 96px; height: 96px; margin: -48px 0 0 -48px; pointer-events: none; color: #ff4f7e;
@@ -1013,3 +1013,22 @@ body.nomotion .yt-results > * { animation: none; }
 #np .mghost .mg-bar { background: rgba(255, 255, 255, .12); border-radius: 1px; overflow: hidden; }
 #np .mghost .mg-bar b { display: block; height: 100%; background: var(--accent); border-radius: 1px; width: 100%; transform-origin: left; }
 #np .stage, #np .face.front, #np .lyr .lhead .art { will-change: transform; }
+
+/* the player's structure on Android: a clipping box (the container) holding one full-screen layer */
+#np .npclip { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: hidden; display: flex; flex-direction: column; }
+#np .npinner { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: flex; flex-direction: column; }
+#np .npinner > .lgm { position: absolute; inset: 0; z-index: 0; display: none; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none;
+  background: color-mix(in srgb, var(--accent) 14%, rgb(26, 26, 31)); }
+#np .npclip > .mghost { position: absolute; left: 0; top: 0; z-index: 3; }
+/* while it grows: everything that moves or fades is its own GPU layer, so a frame never waits on drawing */
+#np.morphing .npclip { will-change: left, top, width, height; contain: strict; }
+#np.morphing .npinner { will-change: transform; }
+#np.morphing .npinner > .bg, #np.morphing .npinner > .bg2, #np.morphing .npinner > .fog, #np.morphing .npinner > .glowpulse { will-change: opacity; }
+#np.morphing .wrap > *, #np.morphing .vizbg, #np.morphing .lyr > *, #np.morphing .lyr .lhead .meta { will-change: opacity, transform; }
+#np .face.front > img, #np .lyr .lhead .art > img { will-change: transform; }
+/* the bar's buttons riding in the growing card look exactly like the bar's: plain icons, no circle */
+#np .mghost .ib svg.i { filter: none; }
+
+/* Battery Saver: the grow / shrink animation has no glow and no visualizer either */
+body.saver #np .vizbg, body.saver #np .npinner > .glowpulse, body.saver #np.morphing .npinner > .glowpulse, body.saver #np .glow { display: none !important; }
+body.saver #dock .tviz, body.saver #mini canvas { visibility: hidden; }

@@ -442,12 +442,25 @@ const miniTuck = (() => {
     const dy = Math.min(bottom + 8, innerHeight - 6 - TUCKED_H) - finalTop;
     m.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
   }
+  // the tab pill can still move after it's placed (Android tells the app about the camera cutout / navigation bar
+  // a moment later, and the pill shrinks as it tucks): place it again whenever anything around it changes
+  let replaceT = 0;
+  const replace = () => { if (!tucked) return; clearTimeout(replaceT); replaceT = setTimeout(() => { if (tucked) place(); }, 60); };
+  queueMicrotask(() => {
+    try {
+      new MutationObserver(replace).observe(document.documentElement, { attributes: true, attributeFilter: ["style", "class"] });
+      const t = $("#tabs"); if (t && window.ResizeObserver) new ResizeObserver(replace).observe(t);
+      t?.addEventListener("transitionend", replace);
+    } catch {}
+    window.addEventListener("resize", replace);
+  });
   function tuck() {
     document.body.classList.toggle("mini-pinned", pinned());
     if (tucked || !landscape() || $("#mini").hidden) return;
     tucked = true;
     document.body.classList.add("mini-tucked");      // wrap down to the cover + tabs shrink…
     place();                                         // …while it slides under them, all at once
+    setTimeout(replace, 480);                        // (and exactly in place once the pill has finished shrinking)
     report();
   }
   function untuck() {
@@ -3056,7 +3069,14 @@ function buildNp() {
     h("div", { class: "ctrls" }, np.shuffle, ib("prev", () => player.prev()), np.pp, ib("next", () => player.next()), np.repeat),
     h("div", { class: "extras" }, np.lyrBtn, ib("eq", () => { closeNp(); push({ type: "settings" }); }, "", "Equalizer"), ib("queue", () => showQueue(), "", "Queue")));
   np.wrapEl = wrap;
-  el.append(np.bg, np.bg2l, fog.el(), h("div", { class: "bg2" }), np.glow, np.viz, wrap);
+  if (ios) el.append(np.bg, np.bg2l, fog.el(), h("div", { class: "bg2" }), np.glow, np.viz, wrap);
+  else {
+    // Android: everything sits in a full-screen layer inside a clipping box. Growing out of the mini player moves only
+    // the box's edges (a GPU clip) and shifts / fades / scales layers that are already drawn — nothing is redrawn per frame.
+    np.inner = h("div", { class: "npinner" }, np.bg, np.bg2l, fog.el(), h("div", { class: "bg2" }), np.glow, np.viz, wrap);
+    np.clip = h("div", { class: "npclip" }, np.inner);
+    el.append(np.clip);
+  }
   lyrView = new LyricsView(np.lyrCanvas);
   np.artist.onclick = () => {
     const s = player.current, names = s ? artistNames(s) : [];
@@ -3335,10 +3355,14 @@ const morph = {
         c.classList.add("mg-" + sel.slice(1));
         if (sel === ".meta") this.ghostMeta = c;
         Object.assign(c.style, { position: "absolute", left: (b.x - r.left).toFixed(1) + "px", top: (b.y - r.top).toFixed(1) + "px", width: b.w.toFixed(1) + "px", height: b.h.toFixed(1) + "px", margin: "0", transform: "none", opacity: "1" });
+        // exactly the bar's look (the full player's own button styles mustn't apply to it: no white circle upright)
+        const st = getComputedStyle(x);
+        Object.assign(c.style, { background: st.background, color: st.color, borderRadius: st.borderRadius, boxShadow: st.boxShadow, backdropFilter: "none", padding: st.padding });
+        const svgS = x.querySelector("svg") && getComputedStyle(x.querySelector("svg"));
+        if (svgS) { const cs2 = c.querySelector("svg"); if (cs2) Object.assign(cs2.style, { width: svgS.width, height: svgS.height, color: svgS.color }); }
         gh.append(c);
       }
-      const el = $("#np");
-      this.ghost = el.insertBefore(gh, this.g?.isConnected ? this.g.nextSibling : el.firstChild);
+      this.ghost = np.clip.appendChild(gh);
     }
   },
   /** the lyrics view's header (small cover + title), when that's what the player shows */
@@ -3388,30 +3412,22 @@ const morph = {
     const lerp = (a, b, t) => a + (b - a) * t;
     const ss = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
     const B = this.bar;
-    // 1) the container
+    // 1) the container: the clip box's edges and corners (the layers inside don't move: the inner layer is shifted back)
     const rc = { l: lerp(r.left, 0, g), t: lerp(r.top, 0, g), r: lerp(r.right, W, g), b: lerp(r.bottom, H, g) };
     const rad = lerp(B.rad, 0, g);
     document.body.classList.add("np-morph");
-    for (const c of el.children) {
-      if (c.classList.contains("lgm")) continue;
-      if (g >= 0.9995) { c.style.clipPath = ""; continue; }
-      let m = c._mb;
-      if (!m) { const br = c.getBoundingClientRect(); m = c._mb = { l: br.left, t: br.top, r: br.right, b: br.bottom, s: br.width / (c.offsetWidth || br.width || 1) || 1 }; }
-      if (m.r - m.l < 1) continue;
-      const k = 1 / m.s;
-      c.style.clipPath = `inset(${((rc.t - m.t) * k).toFixed(1)}px ${((m.r - rc.r) * k).toFixed(1)}px ${((m.b - rc.b) * k).toFixed(1)}px ${((rc.l - m.l) * k).toFixed(1)}px round ${(rad * k).toFixed(1)}px)`;
-    }
-    // 4) its surface: the mini player's glass, crossfading into the player's own background as it grows
-    if (!this.g?.isConnected) this.g = el.insertBefore(h("div", { class: "lgm" }), el.firstChild);
-    const gs = this.g.style;
-    gs.display = g < 0.999 ? "block" : "none";
-    gs.left = rc.l.toFixed(1) + "px"; gs.top = rc.t.toFixed(1) + "px";
-    gs.width = (rc.r - rc.l).toFixed(1) + "px"; gs.height = (rc.b - rc.t).toFixed(1) + "px";
-    gs.borderRadius = rad.toFixed(1) + "px"; gs.opacity = "1";               // (stays solid underneath: never see-through midway)
-    el.style.setProperty("--bgo", g.toFixed(3));                            // the player's background crossfades in on top
+    const cb = np.clip.style, inn = np.inner.style;
+    cb.left = rc.l.toFixed(2) + "px"; cb.top = rc.t.toFixed(2) + "px";
+    cb.width = (rc.r - rc.l).toFixed(2) + "px"; cb.height = (rc.b - rc.t).toFixed(2) + "px";
+    cb.borderRadius = rad.toFixed(2) + "px";
+    inn.width = W + "px"; inn.height = H + "px";
+    inn.transform = `translate3d(${(-rc.l).toFixed(2)}px, ${(-rc.t).toFixed(2)}px, 0)`;
+    // 4) its surface: the mini player's own colour underneath, the player's background crossfading in on top
+    if (!this.g?.isConnected) this.g = np.inner.insertBefore(h("div", { class: "lgm" }), np.inner.firstChild);
+    this.g.style.display = g < 0.999 ? "block" : "none";
+    el.style.setProperty("--bgo", g.toFixed(3));
     // 2) the mini player's own controls, pinned to the container's corner, gone by 25%
     if (this.ghost) {
-      this.ghost.style.transform = `translate3d(${rc.l.toFixed(1)}px, ${rc.t.toFixed(1)}px, 0)`;
       this.ghost.style.opacity = Math.max(0, 1 - g / 0.25).toFixed(3);
       this.ghost.style.visibility = g >= 0.25 ? "hidden" : "";
     }
@@ -3425,7 +3441,7 @@ const morph = {
       t.style.transform = `translate3d(${(x - hero.nat.left).toFixed(1)}px, ${(y - hero.nat.top).toFixed(1)}px, 0) scale(${s1.toFixed(4)})`;
       hero.radEl.style.borderRadius = (lerp(B.artRad, hero.rad, g) / s1).toFixed(2) + "px";
       // the fading title keeps clear of the growing art (it's never overlapped)
-      if (this.ghostMeta) this.ghostMeta.style.transform = `translate3d(${Math.max(0, x + sz - (B.art.x + B.art.w) - (rc.l - r.left)).toFixed(1)}px, ${Math.max(0, y - B.art.y - (rc.t - r.top)).toFixed(1)}px, 0)`;
+      if (this.ghostMeta) this.ghostMeta.style.transform = `translate3d(${Math.max(0, x + sz - (B.art.x + B.art.w) - (rc.l - r.left)).toFixed(1)}px, 0, 0)`;
     }
     // the full player's controls: the last 40%, rising a touch into place
     const fo = ss(0.6, 1, g);
@@ -3533,6 +3549,7 @@ const morph = {
       if (this.hero) { this.hero.moveEl.style.transform = ""; this.hero.moveEl.style.transformOrigin = ""; this.hero.radEl.style.borderRadius = ""; }
       this.fades = null; this.hero = null; this.bar = null;
       const dk = $("#dock"); dk.style.transform = ""; dk.style.opacity = ""; dk.style.transition = "";
+      if (np.clip) { const cb = np.clip.style; cb.left = cb.top = cb.width = cb.height = cb.borderRadius = ""; const inn = np.inner.style; inn.width = inn.height = inn.transform = ""; }
     }
   },
   /** arrive: finish the moment it reaches `to` and hand its speed to done(v) (for momentum into the bubble) */
@@ -4206,48 +4223,50 @@ async function compressLibrary() {
   comp.running = true;
   let sinceSave = 0;
   const tried = new Set();                     // (each song at most once per run)
+  // several songs at once: as many as the phone has cores to spare (Compress Now: all of them, at full speed)
+  if (!comp.cores) { try { comp.cores = (await AuraPlayer.cores?.())?.n || 3; } catch { comp.cores = 3; } }
+  const workers = comp.fast ? comp.cores : Math.min(2, comp.cores);
+  const one = async (s) => {
+    comp.cur = s.title || "";
+    comp.onProgress?.();
+    tried.add(s.id);
+    const old = s.file, stem = old.replace(/\.[^./]+$/, "") + ".c";
+    try {
+      const r = await AuraPlayer.compress({ from: "Songs/" + old, to: "Songs/" + stem, kbps: targetKbps(s), fast: !!comp.fast });
+      const nf = stem + "." + String(r.file).split(".").pop();
+      if (!lib.songs.has(s.id) || player.current?.id === s.id || lib.songs.get(s.id).file !== old) { await delSongFile({ store: "disk", file: nf }); tried.delete(s.id); return; }
+      if (r.size > (r.before || s.size) * 1.05) {             // (came out bigger: keep the original)
+        await delSongFile({ store: "disk", file: nf }); await lib.updateSong(s.id, { compressed: 2 });
+        diag.log(`kept ${s.title} as it is (compressing wouldn't make it smaller)`);
+      } else {
+        await lib.updateSong(s.id, { file: nf, size: r.size, type: r.type, codec: r.codec, compressed: 1 });
+        await delSongFile({ store: "disk", file: old });
+        lib.meta.compressSaved = (lib.meta.compressSaved || 0) + Math.max(0, (r.before || s.size) - r.size);
+        if (++sinceSave >= 10) { sinceSave = 0; lib.saveMeta(); }
+        diag.log(`compressed ${s.title}: ${fmtSize(r.before)} → ${fmtSize(r.size)} in ${(r.ms / 1000).toFixed(1)} s (${r.codec})`);
+        if (player.nat && player.queue.includes(s.id)) player.markQueue();     // the native player needs the new file
+      }
+    } catch (e) {
+      diag.log(`couldn't compress ${s.title}: ${e?.message || e}`);
+      comp.fails++;
+      if (lib.songs.has(s.id)) await lib.updateSong(s.id, { compressed: -1 });  // (left as it is; Compress Now tries again)
+    }
+    comp.done++;
+    comp.onProgress?.();
+  };
   try {
     for (;;) {
-      const todo = [...lib.songs.values()].filter((x) => !tried.has(x.id) && needsCompress(x));
+      const busy = new Set([player.current?.id, player.queue[player.index + 1]]);     // (the song playing and the next one: later)
+      const todo = [...lib.songs.values()].filter((x) => !tried.has(x.id) && !busy.has(x.id) && needsCompress(x));
       if (!todo.length) break;
       comp.total = comp.done + todo.length;
-      let progressed = false;
-      for (const s of todo) {
-        if (!canCompress() || comp.stop) break;
-        comp.cur = s.title || "";
-        comp.onProgress?.();
-        const busy = new Set([player.current?.id, player.queue[player.index + 1]]);    // (the song playing and the next one: later)
-        if (busy.has(s.id)) continue;
-        tried.add(s.id);
-        const old = s.file, stem = old.replace(/\.[^./]+$/, "") + ".c";
-        try {
-          const r = await AuraPlayer.compress({ from: "Songs/" + old, to: "Songs/" + stem, kbps: targetKbps(s) });
-          const nf = stem + "." + String(r.file).split(".").pop();
-          if (!lib.songs.has(s.id) || player.current?.id === s.id || lib.songs.get(s.id).file !== old) { await delSongFile({ store: "disk", file: nf }); continue; }
-          if (r.size > (r.before || s.size) * 1.05) {             // (came out bigger: keep the original)
-            await delSongFile({ store: "disk", file: nf }); await lib.updateSong(s.id, { compressed: 2 });
-            diag.log(`kept ${s.title} as it is (compressing wouldn't make it smaller)`);
-            comp.done++; progressed = true; continue;
-          }
-          await lib.updateSong(s.id, { file: nf, size: r.size, type: r.type, codec: r.codec, compressed: 1 });
-          await delSongFile({ store: "disk", file: old });
-          lib.meta.compressSaved = (lib.meta.compressSaved || 0) + Math.max(0, (r.before || s.size) - r.size);
-          if (++sinceSave >= 10) { sinceSave = 0; lib.saveMeta(); }
-          diag.log(`compressed ${s.title}: ${fmtSize(r.before)} → ${fmtSize(r.size)} in ${(r.ms / 1000).toFixed(1)} s (${r.codec})`);
-          if (player.nat && player.queue.includes(s.id)) player.markQueue();     // the native player needs the new file
-        } catch (e) {
-          diag.log(`couldn't compress ${s.title}: ${e?.message || e}`);
-          comp.fails++;
-          if (lib.songs.has(s.id)) await lib.updateSong(s.id, { compressed: -1 });  // (left as it is; Compress Now tries again)
-        }
-        comp.done++; progressed = true;
-        comp.onProgress?.();
-        await new Promise((r) => setTimeout(r, 60));
-      }
-      if (!progressed) break;                  // only the playing songs are left: they're done after a song change
+      let next = 0;
+      const worker = async () => { while (next < todo.length && canCompress() && !comp.stop) await one(todo[next++]); };
+      await Promise.all(Array.from({ length: workers }, worker));
+      if (!canCompress() || comp.stop) break;
     }
   } finally {
-    comp.running = false; comp.retry = false; comp.stop = false; comp.cur = "";
+    comp.running = false; comp.retry = false; comp.stop = false; comp.cur = ""; comp.fast = false;
     lib.saveMeta();
     comp.onProgress?.(true);
     if (stack.at(-1)?.type === "settings") refresh();
@@ -4258,7 +4277,7 @@ async function compressNow() {
   if (!AuraPlayer?.compress) return;
   if (!player.nat) return snack("Compressing starts once the new player is on (Settings › Playback › Native Player)");
   lib.meta.settings.compress = true; lib.saveMeta();
-  comp.retry = true;
+  comp.retry = true; comp.fast = true;
   const left = [...lib.songs.values()].filter((s) => needsCompress(s, true)).length;
   if (!left) return snack("Everything is already compressed");
   const before = lib.meta.compressSaved || 0;
@@ -4276,7 +4295,15 @@ async function compressNow() {
     pb.set(comp.total ? comp.done / comp.total : 0, `${Math.min(comp.done + 1, comp.total)} of ${comp.total}`, { text: comp.cur ? `Compressing · ${comp.cur}` : "" });
   };
   clearTimeout(comp.t);
-  if (comp.running) { comp.onProgress(); return; }      // (already going: it picks up the retries on its next round)
+  comp.onProgress();
+  if (comp.running) {                                    // the gentle background run: finish its songs, then go full speed
+    const op = comp.onProgress; comp.onProgress = null;
+    comp.stop = true;
+    while (comp.running) await new Promise((r) => setTimeout(r, 100));
+    comp.retry = true; comp.fast = true; comp.done = 0; comp.fails = 0;
+    comp.total = [...lib.songs.values()].filter((s) => needsCompress(s, true)).length;
+    comp.onProgress = op; op();
+  }
   compressLibrary();
 }
 player.addEventListener("track", () => scheduleCompress(8000));
