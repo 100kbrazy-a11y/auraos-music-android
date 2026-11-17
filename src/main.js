@@ -2,13 +2,13 @@ import "./style.css";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { lib, albumKey, mimeFor } from "./library.js";
 import { getJson as getJsonHttp, getBlob } from "./http.js";
-import { player, EQ_PRESETS, EQ_BANDS } from "./player.js";
+import { player, EQ_PRESETS, EQ_BANDS, nativePlayerAvailable, AuraPlayer } from "./player.js";
 import { LyricsView, fetchLyrics, searchLyrics, cleanTitle } from "./lyrics.js";
 import { persistStorage, usage } from "./store.js";
 import { squareJpeg, coverColor, coverPalette, splitArtists, primaryArtist } from "./tags.js";
 import { idb } from "./store.js";
 import { diag } from "./diag.js";
-import { DiskFile, dropPicked, initLibraryURL, songFileURLNow } from "./files.js";
+import { DiskFile, dropPicked, initLibraryURL, songFileURLNow, moveSongsToDisk } from "./files.js";
 import { nc, symbolFor } from "./native-chrome.js";
 import { search as searchOnline, details as resultDetails, bestSongMatch, bestAlbumMatch, same } from "./lookup.js";
 
@@ -71,6 +71,38 @@ const fmtTime = (s) => { s = Math.max(0, Math.floor(s || 0)); return `${Math.flo
 const fmtSize = (n) => { for (const u of ["B", "KB", "MB", "GB"]) { if (n < 1024 || u === "GB") return `${n < 10 && u !== "B" ? n.toFixed(1) : Math.round(n)} ${u}`; n /= 1024; } };
 const nameColor = (s) => { let x = 0; for (const c of String(s)) x = (x * 31 + c.charCodeAt(0)) % 360; return `hsl(${x} 45% 45%)`; };
 const motion = () => lib.meta.settings.motion !== false;
+// battery: when Android's Battery Saver is on, or the battery is low (20 %) and not charging, the living background,
+// the visualizer and the glow stop (the app looks still, like with Motion Effects off). Settings › Save Battery Automatically.
+const power = { saver: false, reason: "" };
+const fx = () => motion() && !power.saver;
+function setSaver(on, reason = "") {
+  on = on && lib.meta.settings.autoSaver !== false;
+  if (power.saver === on) return;
+  power.saver = on; power.reason = reason;
+  document.body.classList.toggle("saver", on);
+  document.querySelector("#np")?.classList.toggle("fogged", fx());
+  diag.log(`power saver ${on ? "on (" + reason + ")" : "off"}`);
+  if (on) snack(`${reason === "low" ? "Battery low" : "Battery Saver is on"}: the moving background and visualizer are paused to save power`);
+}
+let lastPower = null;
+function judgePower(d) {
+  lastPower = d;
+  if (!d) return setSaver(false);
+  if (d.saver) return setSaver(true, "saver");
+  setSaver(d.level <= 0.2 && !d.charging, "low");
+}
+async function watchPower() {
+  try {
+    if (AuraPlayer) {
+      AuraPlayer.addListener("power", judgePower);
+      judgePower(await AuraPlayer.power());
+    } else if (navigator.getBattery) {
+      const b = await navigator.getBattery();
+      const f = () => judgePower({ saver: false, level: b.level, charging: b.charging });
+      b.addEventListener("levelchange", f); b.addEventListener("chargingchange", f); f();
+    }
+  } catch (e) { diag.log("power: " + (e?.message || e)); }
+}
 
 function art(coverId, { small = true, label = "", round = false, cls = "art" } = {}) {
   const c = lib.cover(coverId);
@@ -1383,7 +1415,18 @@ function pageSettings() {
   drawEq(); drawChips();
   const [eqRow, eqBox, eqUpd] = fold("eq", "Equalizer", () => s.eq || "Flat", h("div", {}, eqViz, chips));
   eqLabel = eqUpd;
+  const natSw = toggle(s.nativePlayer !== false), svSw = toggle(s.autoSaver !== false);
+  const natSub = () => !nativePlayerAvailable ? "" : migr.running ? `Moving songs for it · ${migr.done} of ${migr.total}` : player.nat ? "On · Android's own audio engine (less crackling, better battery)" : s.nativePlayer === false ? "Off · using the old player" : "Starting…";
   const play = group("Playback",
+    nativePlayerAvailable && item("eq", "Native Player", natSub(), async () => {
+      s.nativePlayer = s.nativePlayer === false; lib.saveMeta(); natSw.classList.toggle("on", s.nativePlayer !== false);
+      if (s.nativePlayer !== false) { const left = [...lib.songs.values()].some((x) => x.store !== "disk"); if (left) moveLibrary(); else switchToNative(); }
+      else snack("The old player comes back the next time you open the app");
+    }, natSw),
+    item("spark", "Save Battery Automatically", "Pause the moving background and visualizer in Battery Saver or below 20 %", () => {
+      s.autoSaver = s.autoSaver === false; lib.saveMeta(); svSw.classList.toggle("on", s.autoSaver !== false);
+      if (s.autoSaver === false) setSaver(false); else judgePower(lastPower);
+    }, svSw),
     h("div", { class: "item" }, icon("queue"), h("div", { class: "meta" }, h("div", { class: "t" }, "Crossfade"), h("div", { class: "s" }, "Blend the end of each song into the next")), xfVal),
     h("div", { class: "sl-wrap" }, xf),
     eqRow, eqBox);
@@ -2942,7 +2985,7 @@ function prepareNp() {
   npTrack(0);
   updateProgress();
   const el = $("#np");
-  el.classList.toggle("fogged", motion());         // the storm-in-fog background (motion off: the still, blurred cover)
+  el.classList.toggle("fogged", fx());         // the storm-in-fog background (motion off: the still, blurred cover)
   if (!motion()) el.style.removeProperty("--accent");
   el.getAnimations().forEach((a) => a.cancel());
   el.style.transform = "";
@@ -3515,8 +3558,8 @@ function startViz() {
   vizOn = true;
   const bins = new Uint8Array(1024);
   let smooth = new Float32Array(40), bassS = 0;
-  let cvAt = 0, cvPick = null;
-  const loop = () => {
+  let cvAt = 0, cvPick = null, lastDraw = 0, idleDrawn = false;
+  const loop = (now = performance.now()) => {
     // upright the little visualizer plays along the bottom of the bubble behind the tabs; sideways, in the player bar
     // (which little canvas is showing: looked up a few times a second, not every frame — that forced a layout each time)
     if (performance.now() - cvAt > 250) { cvAt = performance.now(); cvPick = [$("#dock .tviz"), $("#mini canvas")].find((c) => c && c.offsetParent !== null && c.clientWidth > 0 && !$("#mini").hidden) || null; }
@@ -3527,10 +3570,17 @@ function startViz() {
       if (player.current) setTimeout(startViz, 400);
       return;
     }
-    requestAnimationFrame(loop);
-    updateProgress();
-    const an = player.analyser;
     const playing = player.playing;
+    // paused and the bars have fallen: nothing moves, so look again only a few times a second (saves battery)
+    const settled = !playing && bassS < 0.003 && smooth.every((v) => v < 0.005);
+    if (settled || power.saver) setTimeout(() => requestAnimationFrame(loop), settled ? 300 : 90);
+    else requestAnimationFrame(loop);
+    updateProgress();
+    if (settled && idleDrawn) return;
+    idleDrawn = settled;
+    if (!settled && now - lastDraw < 31) return;              // ~30 frames a second is plenty (phones run 60–120)
+    lastDraw = now;
+    const an = player.analyser;
     if (an && playing) an.getByteFrequencyData(bins); else bins.fill(0);
     const N = smooth.length;
     for (let i = 0; i < N; i++) {
@@ -3587,17 +3637,18 @@ function startViz() {
       }
     };
     if (npOpen) {
-      if (motion()) fog.draw(bass, bassS, playing);
-      draw(np.viz, 0.75, true);
-      if (motion()) {
+      if (fx()) fog.draw(bass, bassS, playing);
+      if (!power.saver) draw(np.viz, 0.75, true);
+      if (fx()) {
         const fade = Math.min(1, (performance.now() - glowFade) / 700);      // new colour: the glow eases back in
         np.glow.style.opacity = ((0.2 + bassS * 0.55) * fade * fade).toFixed(3);
         np.glow.style.transform = `scale(${(1 + bassS * 0.25).toFixed(3)})`;
       }
-    } else if (miniCv) {
+    } else if (miniCv && !power.saver) {
       if (miniTuck.tucked && miniCv.closest("#mini")) drawFive(miniCv);
       else draw(miniCv, 0.5);
-    }
+    } else if (miniCv && !miniCv._cleared) { miniCv.getContext("2d").clearRect(0, 0, miniCv.width, miniCv.height); }
+    if (miniCv) miniCv._cleared = power.saver;
   };
   requestAnimationFrame(loop);
 }
@@ -3620,6 +3671,7 @@ player.addEventListener("track", (e) => {
 });
 player.addEventListener("state", () => { updateMini(); npState(); pageEl?.querySelectorAll(".row.now").forEach((r) => r.classList.toggle("paused", !player.playing)); });
 player.addEventListener("time", () => { if (!vizOn) updateProgress(); });
+player.addEventListener("state", () => document.body.classList.toggle("paused", !player.playing));
 player.addEventListener("error", (e) => {
   const s = e.detail?.song;
   if (e.detail?.missing && s) {        // left behind by an import that didn't finish: offer to clear it out
@@ -3640,6 +3692,42 @@ function saveSession() {
 setInterval(() => player.playing && saveSession(), 10000);
 document.addEventListener("visibilitychange", () => document.hidden && saveSession());
 
+// ---- Android: the native player. Songs kept in the web view's database are moved into files first (once).
+const migr = { done: 0, total: 0, running: false };
+async function startNativePlayer() {
+  if (!nativePlayerAvailable || lib.meta.settings.nativePlayer === false) return;
+  const left = globalThis.__auraMock ? 0 : [...lib.songs.values()].filter((s) => s.store !== "disk").length;
+  if (!left) { await player.useNative(); return; }
+  setTimeout(moveLibrary, 4000);                         // after start-up settles; the old player plays meanwhile
+}
+async function moveLibrary() {
+  if (migr.running) return;
+  migr.running = true;
+  const todo = [...lib.songs.values()].filter((s) => s.store !== "disk");
+  migr.total = todo.length; migr.done = 0;
+  diag.log(`moving ${todo.length} songs into files for the native player`);
+  snack(`Upgrading your library for the new player · ${plural(todo.length, "song")} (in the background)`, null, null, 5000);
+  const r = await moveSongsToDisk(todo, (song, f) => lib.updateSong(song.id, f), (d, t) => {
+    migr.done = d; migr.total = t;
+    if (stack.at(-1)?.type === "settings" && d % 5 === 0) refresh();
+  });
+  migr.running = false;
+  diag.log(`moved ${r.moved} songs (${r.failed} failed, ${r.left} left)`);
+  if (r.left) { snack(`${plural(r.left, "song")} couldn't be moved — the old player stays on for now`, "Details", showDiagnostics, 8000); return; }
+  switchToNative();
+}
+/** hand over to the native player, between songs (or right away if nothing is playing) */
+async function switchToNative() {
+  if (player.nat || lib.meta.settings.nativePlayer === false) return;
+  if (player.playing) { player.addEventListener("track", () => setTimeout(switchToNative, 0), { once: true }); player.addEventListener("state", function f() { if (!player.playing) { player.removeEventListener("state", f); switchToNative(); } }); return; }
+  const t = player.audio.currentTime || 0;
+  const had = !!player.current;
+  if (!(await player.useNative())) return;
+  if (had) { player._qDirty = true; await player.natLoad(false, t); }
+  snack("The new player is on: smoother sound, better battery, lock screen controls");
+  if (stack.at(-1)?.type === "settings") refresh();
+}
+
 async function restoreSession() {
   const ss = lib.meta.session;
   if (!ss?.queue?.length) return;
@@ -3648,6 +3736,20 @@ async function restoreSession() {
   player.shuffle = !!ss.shuffle; player.repeat = ss.repeat || "off"; ctxLabel = ss.ctx || "";
   player.base = [...player.queue];
   if (!player.current) return;
+  if (player.nat) {
+    AuraPlayer.setRepeat({ mode: player.repeat }).catch(() => {});
+    const st = player._natStart;
+    const j = st?.count && st.id ? player.queue.indexOf(st.id) : -1;
+    if (j >= 0) {                                   // it's still playing from before the app was closed: take it as it is
+      player.index = j;
+      player._qDirty = !(st.index === j && st.count === player.queue.length);
+      player.fa.src = "native";
+      player.fa.apply(st);
+      if (player._qDirty) player.markQueue();
+    } else if (!st?.playing) await player.natLoad(false, ss.t || 0);
+    updateMini(); npTrack(0); npState();
+    return;
+  }
   const src = await lib.fileURL(player.current).catch(() => null);
   if (!src) return;
   player.url = player.audio.dataset.url = src.url;
@@ -3743,7 +3845,9 @@ async function boot() {
     nc.header(pageEl, pageEl?.classList.contains("scrolled"));
     miniTuck.sync();
   }
+  await startNativePlayer();
   await restoreSession();
+  watchPower();
   // songs added before the colour picking improved: recompute their colours quietly, then refresh what's on screen
   setTimeout(() => lib.refreshColors((id) => { if (player.current?.cover === id) npTrack(0); })
     .then(() => lib.repairCovers())                           // covers that didn't save during an import

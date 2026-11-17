@@ -1,6 +1,91 @@
 import { diag } from "./diag.js";
 import { lib } from "./library.js";
 import { MediaSession } from "@jofr/capacitor-media-session";
+import { Capacitor, registerPlugin } from "@capacitor/core";
+import { songRelPath } from "./files.js";
+
+// Android: the native player (Media3 / ExoPlayer in Android's media service). See AuraPlaybackService.java.
+const AuraPlayer = globalThis.__auraMock || (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android" ? registerPlugin("AuraPlayer") : null);   // (__auraMock: tests)
+export const nativePlayerAvailable = !!AuraPlayer;
+export { AuraPlayer };
+
+/**
+ * Looks like an <audio> element to the rest of the app (currentTime, duration, paused, play(), pause()…), but the
+ * sound comes from the native player. Position is worked out locally between the native player's updates.
+ */
+class NativeAudio extends EventTarget {
+  constructor(P) {
+    super();
+    this.P = P;
+    this._pos = 0; this._at = performance.now(); this._dur = NaN; this._play = false;
+    this.dataset = {}; this.volume = 1; this.src = ""; this.error = null;
+    this.bins = new Uint8Array(512); this._binAt = 0; this._binBusy = false; this._vizUsed = 0; this._vizOn = false;
+    const self = this;
+    this.analyser = {                                  // the visualizer reads the native player's spectrum
+      frequencyBinCount: 1024,
+      getByteFrequencyData(arr) { self.spectrum(arr); },
+    };
+  }
+  get paused() { return !this._play; }
+  get currentTime() {
+    const t = this._play ? this._pos + (performance.now() - this._at) / 1000 : this._pos;
+    return Math.max(0, isFinite(this._dur) ? Math.min(t, this._dur) : t);
+  }
+  set currentTime(t) {
+    this._pos = Math.max(0, t); this._at = performance.now();
+    AuraPlayer.seek({ ms: Math.round(this._pos * 1000) }).catch(() => {});
+    this.dispatchEvent(new Event("seeked"));
+  }
+  get duration() { return this._dur; }
+  get readyState() { return isFinite(this._dur) && this._dur > 0 ? 4 : 0; }
+  play() { this._set(true); return AuraPlayer.play(); }
+  pause() { this._pos = this.currentTime; this._at = performance.now(); this._set(false); AuraPlayer.pause().catch(() => {}); }
+  load() {}
+  removeAttribute() { this.src = ""; }
+  _set(on) {
+    if (this._play === on) return;
+    this._play = on;
+    this.P.emit("state");
+    this.P.tickTime();
+  }
+  /** an update from the native player */
+  apply(d) {
+    if (!d) return;
+    this._pos = (d.pos || 0) / 1000; this._at = performance.now();
+    const dur = d.dur > 0 ? d.dur / 1000 : NaN;
+    if (dur !== this._dur && !(isNaN(dur) && isNaN(this._dur))) {
+      this._dur = isNaN(dur) ? this._dur : dur;
+      this.dispatchEvent(new Event("loadedmetadata"));
+      this.dispatchEvent(new Event("durationchange"));
+      const s = this.P.current;
+      if (s && !s.duration && dur > 0 && s.id === d.id) lib.updateSong(s.id, { duration: dur });
+    }
+    this._set(!!d.playing);
+    this.P.emit("time");
+  }
+  spectrum(arr) {
+    const now = performance.now();
+    this._vizUsed = now;
+    if (!this._vizOn) {
+      this._vizOn = true;
+      AuraPlayer.setViz({ on: true }).catch(() => {});
+      const off = setInterval(() => {                  // nobody has looked for a second: stop working it out
+        if (performance.now() - this._vizUsed < 1000) return;
+        clearInterval(off); this._vizOn = false; this.bins.fill(0);
+        AuraPlayer.setViz({ on: false }).catch(() => {});
+      }, 1000);
+    }
+    if (!this._binBusy && now - this._binAt > 30) {
+      this._binBusy = true; this._binAt = now;
+      AuraPlayer.levels().then((r) => {
+        const b = atob(r.data || "");
+        for (let i = 0; i < b.length && i < 512; i++) this.bins[i] = b.charCodeAt(i);
+      }).catch(() => {}).finally(() => { this._binBusy = false; });
+    }
+    arr.set(this.bins.subarray(0, Math.min(512, arr.length)));
+    if (arr.length > 512) arr.fill(0, 512);
+  }
+}
 
 export const EQ_BANDS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 export const EQ_PRESETS = {
@@ -53,7 +138,106 @@ class Player extends EventTarget {
     setInterval(() => this.checkCrossfade(), 200);
     this.setupSession();
   }
-  get audio() { return this.els[this.cur]; }
+  get audio() { return this.nat ? this.fa : this.els[this.cur]; }
+
+  // ------------------------------------------------ the native Android player
+  nat = null;      // the AuraPlayer plugin once it's in charge
+  fa = null;       // its <audio>-like stand-in
+  _qDirty = true;
+  /** Hand playback to Android's own player. Returns its state (it may already be playing: the app was reopened). */
+  async useNative() {
+    if (this.nat) return this._natStart;
+    if (!AuraPlayer) return null;
+    let st;
+    try { st = await AuraPlayer.start(); } catch (e) { diag.log("native player didn't start: " + (e?.message || e)); return null; }
+    for (const el of this.els) { try { el.pause(); } catch {} }
+    this.fa = new NativeAudio(this);
+    this.analyser = this.fa.analyser;
+    this.nat = AuraPlayer;
+    this._natStart = st;
+    AuraPlayer.addListener("state", (d) => this.fa.apply(d));
+    AuraPlayer.addListener("track", (d) => this.natTrack(d));
+    AuraPlayer.addListener("ended", (d) => { this.fa.apply(d); this.onEnded(); });
+    AuraPlayer.addListener("error", (d) => this.natError(d));
+    AuraPlayer.setRepeat({ mode: this.repeat }).catch(() => {});
+    AuraPlayer.setCrossfade({ secs: (this._xfSent = this.crossfade) }).catch(() => {});
+    this.applyEq(lib.meta.settings.eq);
+    this.addEventListener("queue", () => this.markQueue());
+    diag.log(`native player: on${st?.count ? ` (already has ${st.count} songs, ${st.playing ? "playing" : "paused"})` : ""}`);
+    return st;
+  }
+  natItems() {
+    return this.queue.map((id) => { const s = lib.songs.get(id) || {}; return { id, path: songRelPath(s), title: s.title || "", artist: s.artist || "", album: s.album || "" }; });
+  }
+  /** the queue changed (shuffle, play next, mix…): tell the native player without interrupting the song */
+  markQueue() {
+    this._qDirty = true;
+    clearTimeout(this._qT);
+    this._qT = setTimeout(() => {
+      if (!this._qDirty || this.index < 0 || !this.fa.src) return;
+      this._qDirty = false;
+      this._artSent = new Set();
+      AuraPlayer.setQueue({ items: this.natItems(), index: this.index, keep: true, play: !this.fa.paused, position: Math.round(this.fa.currentTime * 1000) })
+        .then(() => this.natArt()).catch((e) => diag.log("native queue: " + (e?.message || e)));
+    }, 0);
+  }
+  async natLoad(autoplay, posSec = 0) {
+    const s = this.current;
+    const fa = this.fa;
+    fa._pos = posSec; fa._at = performance.now(); fa._dur = s?.duration || NaN;
+    fa.src = "native";
+    fa._set(autoplay);
+    try {
+      if (this._qDirty) {
+        this._qDirty = false;
+        this._artSent = new Set();
+        await AuraPlayer.setQueue({ items: this.natItems(), index: this.index, play: autoplay, position: Math.round(posSec * 1000) });
+      } else await AuraPlayer.skipTo({ index: this.index, play: autoplay, position: Math.round(posSec * 1000) });
+    } catch (e) { diag.log("native load: " + (e?.message || e)); this.emit("error", { song: s, why: String(e?.message || e) }); }
+    this.natArt();
+  }
+  /** the native player moved on by itself (end of song, crossfade, lock screen / headphone buttons) */
+  natTrack(d) {
+    if (d.index < 0) return;
+    let i = d.index;
+    if (this.queue[i] !== d.id) { const j = this.queue.indexOf(d.id); if (j < 0) return; i = j; }
+    this.fa.apply(d);
+    if (i === this.index) return;
+    const dir = i > this.index || (this.index === this.queue.length - 1 && i === 0) ? 1 : -1;
+    this.index = i;
+    this.loadedAt = performance.now();
+    this.emit("willtrack", { dir });
+    this.emit("track", { dir });
+    this.emit("state");
+    this.natArt();
+  }
+  natError(d) {
+    const s = this.current;
+    diag.log(`play failed (native): ${s?.title || "?"} · ${d?.message || ""}`);
+    this.fa.apply(d);
+    this.emit("error", { song: s, why: d?.message || "" });
+  }
+  /** the cover for the lock screen / notification: the song playing and the next one */
+  async natArt() {
+    this._artSent ||= new Set();
+    for (const i of [this.index, this.index + 1]) {
+      const s = lib.songs.get(this.queue[i]);
+      if (!s || this._artSent.has(s.id)) continue;
+      this._artSent.add(s.id);
+      const cov = lib.cover(s.cover);
+      if (!cov) continue;
+      try {
+        const url = await blobToDataUrl(cov.big || cov.smallBlob);
+        await AuraPlayer.setArtwork({ id: s.id, data: String(url).split(",")[1] || "" });
+      } catch {}
+    }
+  }
+  /** "time" events while the native player plays (the progress bar and lyrics follow these) */
+  tickTime() {
+    clearInterval(this._timeT);
+    if (!this.nat || this.fa.paused) return;
+    this._timeT = setInterval(() => { if (!document.hidden) this.emit("time"); }, 500);
+  }
   /** A song wouldn't play: log why, check its file is really there, and try once more by loading it into memory. */
   async onMediaError(a) {
     const s = this.current;
@@ -87,6 +271,7 @@ class Player extends EventTarget {
 
   // ------------------------------------------------ audio graph (EQ + visualizer)
   ensureGraph() {
+    if (this.nat) return;
     if (this.ctx) { if (this.ctx.state === "suspended") this.ctx.resume(); return; }
     try {
       // iPhone: treat this as music playback (keeps playing when locked and with the silent switch on)
@@ -141,6 +326,12 @@ class Player extends EventTarget {
     const g = EQ_PRESETS[name] || EQ_PRESETS.Flat;
     lib.meta.settings.eq = name;
     lib.saveMeta();
+    if (this.nat) {                    // the native player has the same EQ (and keeps the same loudness)
+      const w = [0.9, 1, 1, 0.9, 0.8, 0.7, 0.55, 0.4, 0.3, 0.2];
+      const avg = g.reduce((a, d, i) => a + d * w[i], 0) / w.reduce((a, b) => a + b, 0);
+      AuraPlayer.setEq({ gains: g, pre: Math.pow(10, (-avg * 0.8) / 20) }).catch(() => {});
+      return;
+    }
     if (!this.filters) return;
     g.forEach((db, i) => this.filters[i].gain.setTargetAtTime(db, this.ctx.currentTime, 0.05));
     // keep the overall loudness level with Flat (music energy is mostly in the low-mids)
@@ -198,6 +389,7 @@ class Player extends EventTarget {
   }
   cycleRepeat() {
     this.repeat = { off: "all", all: "one", one: "off" }[this.repeat];
+    if (this.nat) AuraPlayer.setRepeat({ mode: this.repeat }).catch(() => {});
     this.emit("state");
   }
 
@@ -206,6 +398,11 @@ class Player extends EventTarget {
     if (!s) return;
     const token = ++this._loadToken;
     this.loadedAt = performance.now();            // no crossfade may start while a song is being swapped in
+    if (this.nat) {
+      this.emit("track", { dir });
+      await this.natLoad(autoplay);
+      return;
+    }
     this.ensureGraph();
     this.cancelCrossfade();
     const src = await lib.fileURL(s).catch(() => null);
@@ -312,6 +509,10 @@ class Player extends EventTarget {
 
   // ------------------------------------------------ crossfade
   checkCrossfade() {
+    if (this.nat) {                    // the native player crossfades by itself; just keep its setting current
+      if (this.crossfade !== this._xfSent) AuraPlayer.setCrossfade({ secs: (this._xfSent = this.crossfade) }).catch(() => {});
+      return;
+    }
     const secs = this.crossfade, a = this.audio;
     if (!secs || this.xf || a.paused || !isFinite(a.duration) || this.repeat === "one") return;
     // just after a song loads, the element can still report the previous song's time/length for a moment
@@ -384,6 +585,7 @@ class Player extends EventTarget {
   }
 
   cancelCrossfade() {
+    if (this.nat) return;
     const xf = this.xf;
     if (!xf) return;
     clearTimeout(xf.done); clearInterval(xf.timer);
@@ -414,7 +616,7 @@ class Player extends EventTarget {
   }
 
   async updateSession(meta = false) {
-    if (this.bgActive) return;                 // the phone's own player has the lock screen right now
+    if (this.bgActive || this.nat) return;     // (the native player has the lock screen itself)                 // the phone's own player has the lock screen right now
     const s = this.current;
     if (!s) return;
     try {
@@ -428,6 +630,7 @@ class Player extends EventTarget {
     } catch {}
   }
   updatePosition() {
+    if (this.nat) return;
     const a = this.audio;
     if (!this.current || !isFinite(a.duration) || !a.duration) return;
     try { MediaSession.setPositionState({ duration: a.duration, position: Math.min(a.currentTime, a.duration), playbackRate: 1 }); } catch {}

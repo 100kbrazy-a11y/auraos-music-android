@@ -1,21 +1,32 @@
 // Where the song files themselves live.
 //  - iPhone app: real files in the app's Library folder, played straight from disk (the web view on iPhone
 //    can't reliably keep big audio files in its database or play them from there).
-//  - everywhere else: in IndexedDB, as before.
+//  - Android app: real files too (in the app's private files folder), so Android's own player can play them.
+//    Songs added before this are moved out of IndexedDB once, in the background (moveSongsToDisk).
+//  - in a browser: in IndexedDB, as before.
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { idb } from "./store.js";
 import { diag, timed } from "./diag.js";
 
-export const onDisk = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios";
+const PLAT = Capacitor.isNativePlatform() ? Capacitor.getPlatform() : "web";
+const isIOS = PLAT === "ios";
+export const onDisk = PLAT === "ios" || PLAT === "android";
 const NC = registerPlugin("NativeChrome");
 let libURL = null;             // file:// URL of the app's Library folder
-async function libraryURL() { return (libURL ||= (await NC.libraryPath()).url.replace(/\/?$/, "/")); }
+async function libraryURL() {
+  if (libURL) return libURL;
+  if (isIOS) return (libURL = (await NC.libraryPath()).url.replace(/\/?$/, "/"));
+  await loadFs();
+  return (libURL = (await F.getUri({ directory: DIR, path: "" })).uri.replace(/\/?$/, "/"));
+}
 const encPath = (p) => p.split("/").map(encodeURIComponent).join("/");
 /** call once at start-up so songFileURLNow() can answer instantly */
 export async function initLibraryURL() { if (onDisk) { try { await libraryURL(); } catch {} } }
 /** file:// URL of a song stored on the phone ("" if it isn't, or not known yet) — no waiting */
 export function songFileURLNow(s) { return onDisk && s?.store === "disk" && libURL ? libURL + encPath(ROOT + s.file) : ""; }
 const ROOT = "Songs/";
+/** where a song's file is, relative to the app's files folder (what the native Android player is given) */
+export const songRelPath = (s) => (s?.store === "disk" ? ROOT + s.file : "");
 /** file:// URL of a path inside the app's Library folder */
 export async function libraryFileURL(rel) { return (await libraryURL()) + encPath(rel); }
 let F = null, DIR = null;
@@ -33,7 +44,7 @@ function toBase64(b) {
  *  source: { path, offset, length } of the same bytes already on the phone (a picked file, or a song inside a pack) —
  *  then the app copies it natively and the audio never has to pass through the web view. */
 export async function putSongFile(blob, file, source) {
-  if (onDisk && source?.path) {
+  if (isIOS && source?.path) {
     const name = file.replace(/^.*\//, "");
     diag.step = `Saving ${name}`;
     await timed(NC.copyIn({ from: source.path, offset: source.offset || 0, length: source.length ?? -1, to: ROOT + file }), 120000, `Saving ${name}`);
@@ -79,10 +90,13 @@ export async function songBlob(s) {
 }
 
 /** Remove a file the picker brought in (path relative to Library), once it has been imported. */
-export async function dropPicked(rel) { if (onDisk && rel) { try { await NC.removeFile({ to: rel }); } catch {} } }
+export async function dropPicked(rel) { if (isIOS && rel) { try { await NC.removeFile({ to: rel }); } catch {} } }
 
 export async function delSongFile(s) {
-  if (s.store === "disk") { try { await NC.removeFile({ to: ROOT + s.file }); } catch {} }
+  if (s.store === "disk") {
+    if (isIOS) { try { await NC.removeFile({ to: ROOT + s.file }); } catch {} }
+    else { try { await loadFs(); await F.deleteFile({ directory: DIR, path: ROOT + s.file }); } catch {} }
+  }
   else await idb.del("files", s.file);
 }
 
@@ -120,4 +134,28 @@ export class DiskFile {
   }
   async text() { return new TextDecoder().decode(await this.arrayBuffer()); }
   stream() { const self = this; return new ReadableStream({ async start(c) { c.enqueue(new Uint8Array(await self.arrayBuffer())); c.close(); } }); }
+}
+
+/**
+ * Android: move songs still kept in IndexedDB into real files, one at a time, quietly in the background.
+ * songs: the library's songs; save(song, fields) records the move. onProgress(done, total). Stops when stop() says so.
+ */
+export async function moveSongsToDisk(songs, save, onProgress, stop = () => false) {
+  if (PLAT !== "android") return { moved: 0, left: 0 };
+  const todo = songs.filter((s) => s.store !== "disk");
+  let moved = 0, failed = 0;
+  for (const s of todo) {
+    if (stop()) break;
+    try {
+      const blob = await idb.get("files", s.file);
+      if (!blob) { failed++; continue; }
+      await putSongFile(blob, s.file);
+      await save(s, { store: "disk" });
+      await idb.del("files", s.file);
+      moved++;
+    } catch (e) { failed++; diag.log(`moving ${s.file} to disk failed: ${e.message || e}`); }
+    onProgress?.(moved + failed, todo.length);
+    await new Promise((r) => setTimeout(r, 30));          // (lets the app breathe between songs)
+  }
+  return { moved, failed, left: songs.filter((s) => s.store !== "disk").length };
 }
