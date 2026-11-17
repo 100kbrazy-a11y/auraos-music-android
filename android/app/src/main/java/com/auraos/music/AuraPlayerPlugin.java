@@ -213,6 +213,28 @@ public class AuraPlayerPlugin extends Plugin {
         });
     }
 
+    // ------------------------------------------------------------------ silence at the start / end of a song
+    @PluginMethod
+    public void silence(PluginCall call) {
+        final String path = call.getString("path", "");
+        final double dur = call.getDouble("dur", 0.0);
+        work.execute(() -> {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT);
+            try {
+                java.io.File f = new java.io.File(getContext().getFilesDir(), path);
+                if (!f.exists()) { call.reject("the song's file isn't there"); return; }
+                long t0 = android.os.SystemClock.elapsedRealtime();
+                double[] r = AuraSilence.scan(f, dur);
+                JSObject o = new JSObject();
+                o.put("start", r[0]); o.put("end", r[1]); o.put("dur", r[2]);
+                o.put("ms", android.os.SystemClock.elapsedRealtime() - t0);
+                call.resolve(o);
+            } catch (Throwable e) {
+                call.reject(e.getMessage() != null ? e.getMessage() : e.toString());
+            }
+        });
+    }
+
     // ------------------------------------------------------------------ battery (for the automatic power saver)
     @PluginMethod
     public void power(PluginCall call) { call.resolve(readPower()); }

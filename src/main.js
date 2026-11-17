@@ -50,6 +50,7 @@ const ICONS = {
   history: ["M12 21a9 9 0 1 0-8.5-6M3 9.5V15h5.5M12 7.5V12l3 2"], browse: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM15.5 8.5l-2 5-5 2 2-5z"],
   chevron: ["M7 10l5 5 5-5"], logout: ["M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"],
   filter: ["M4 6h16M7 12h10M10 18h4"], tag: ["M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01"],
+  cut: ["M6 6.5a2.5 2.5 0 1 0 0 .01M6 17.5a2.5 2.5 0 1 0 0 .01M8.1 8 20 18M8.1 16 20 6"],
   compress: ["M4 14h6v6M20 10h-6V4M14 10l6.5-6.5M3.5 20.5 10 14"],
   sun: ["M12 7.6a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8zM12 2.2v2.2M12 19.6v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.2 12h2.2M19.6 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"],
   moon: ["M20.2 14.6A8.4 8.4 0 0 1 9.4 3.8a8.4 8.4 0 1 0 10.8 10.8z"],
@@ -1738,6 +1739,9 @@ function libraryMenu() {
   const afSw = sw(s.autofill !== false), cSw = sw(s.compress !== false);
   const saved = fmtSize(lib.meta.compressSaved || 0);
   const failed = [...lib.songs.values()].filter((x) => x.compressed === -1 && !isOpus(x)).length;
+  const tSw = sw(s.trimSilence !== false);
+  const silLeft = [...lib.songs.values()].filter((x) => x.store === "disk" && x.silenceChecked !== 1).length;
+  const silCut = [...lib.songs.values()].filter((x) => x.trimStart > 0 || x.trimEnd > 0).length;
   menuSheet(h("div", { class: "sh-head" }, icon("folder"), h("div", { class: "meta" }, h("div", { class: "t" }, "Library"), counts)), [
     { icon: "image", label: "Find Missing Covers", sub: is.noCover ? `${plural(is.noCover, "album")} without a cover` : "Every album has a cover", run: () => findCovers(true),
       right: is.noCover ? h("span", { class: "badge" }, String(is.noCover)) : null },
@@ -1751,6 +1755,11 @@ function libraryMenu() {
     AuraPlayer?.compress && { icon: "compress", label: "Compress Now", sub: comp.running ? `Compressing · ${Math.min(comp.done + 1, comp.total)} of ${comp.total}`
       : is.toComp ? `${plural(is.toComp, "song")} to go${failed ? ` (${failed} failed before — tried again)` : ""}` : "Everything is compressed", run: () => compressNow(),
       right: is.toComp ? h("span", { class: "badge" }, String(is.toComp)) : null },
+    AuraPlayer?.silence && { icon: "cut", label: "Cut Silence", sub: s.trimSilence === false ? "Off · songs play from their very first second" : "Songs start at their first sound and end at their last (also for crossfades and lyrics)",
+      right: tSw, stay: true,
+      run: () => { s.trimSilence = s.trimSilence === false; lib.saveMeta(); tSw.classList.toggle("on", s.trimSilence !== false); if (s.trimSilence !== false) scheduleSilence(300); if (player.nat) player.markQueue(); } },
+    AuraPlayer?.silence && { icon: "cut", label: "Cut Silence Now", sub: sil.running ? `Checking · ${Math.min(sil.done + 1, sil.total)} of ${sil.total}` : silLeft ? `${plural(silLeft, "song")} not checked yet` : `Every song checked · ${plural(silCut, "song")} had silence cut`,
+      run: () => silenceNow(), right: silLeft ? h("span", { class: "badge" }, String(silLeft)) : null },
     { gap: true },
     { icon: "trash", label: "Remove All Music", sub: "Deletes the songs stored in this app", danger: true, run: () => removeAllMusic() },
   ]);
@@ -4174,7 +4183,7 @@ const migr = { done: 0, total: 0, running: false };
 async function startNativePlayer() {
   if (!nativePlayerAvailable || lib.meta.settings.nativePlayer === false) return;
   const left = globalThis.__auraMock ? 0 : [...lib.songs.values()].filter((s) => s.store !== "disk").length;
-  if (!left) { await player.useNative(); scheduleCompress(6000); return; }
+  if (!left) { await player.useNative(); scheduleSilence(4000); scheduleCompress(9000); return; }
   setTimeout(moveLibrary, 4000);                         // after start-up settles; the old player plays meanwhile
 }
 async function moveLibrary() {
@@ -4202,7 +4211,7 @@ async function switchToNative() {
   if (!(await player.useNative())) return;
   if (had) { player._qDirty = true; await player.natLoad(false, t); }
   snack("The new player is on: smoother sound, better battery, lock screen controls");
-  scheduleCompress(5000);
+  scheduleSilence(3000); scheduleCompress(8000);
   if (stack.at(-1)?.type === "settings") refresh();
 }
 
@@ -4314,7 +4323,68 @@ async function compressNow() {
   compressLibrary();
 }
 player.addEventListener("track", () => scheduleCompress(8000));
-lib.onAdded = () => scheduleCompress(5000);     // new songs: once the adding has settled
+lib.onAdded = () => { scheduleSilence(2500); scheduleCompress(5000); };     // new songs: once the adding has settled
+
+// ---- silence at the start / end of songs: found natively (only the first and last 30 s are decoded), then the
+// player simply starts at the first sound and ends at the last (the file isn't touched: nothing to lose, instant to undo)
+const sil = { running: false, done: 0, total: 0, t: 0, stop: false, onProgress: null, found: 0 };
+const canSilence = () => !!AuraPlayer?.silence && lib.meta.settings.trimSilence !== false;
+const needsSilence = (s) => s.store === "disk" && !s.silenceChecked;
+function scheduleSilence(ms = 3000) { if (!canSilence()) return; clearTimeout(sil.t); sil.t = setTimeout(findSilence, ms); }
+async function findSilence() {
+  if (sil.running || !canSilence()) return;
+  sil.running = true;
+  try {
+    if (!comp.cores) { try { comp.cores = (await AuraPlayer.cores?.())?.n || 3; } catch { comp.cores = 3; } }
+    const todo = [...lib.songs.values()].filter(needsSilence);
+    sil.total = sil.done + todo.length;
+    let next = 0, changedQueue = false;
+    const one = async (s) => {
+      try {
+        const r = await AuraPlayer.silence({ path: "Songs/" + s.file, dur: s.duration || 0 });
+        const dur = r.dur || s.duration || 0;
+        const f = { silenceChecked: 1, trimStart: 0, trimEnd: 0 };
+        if (r.start > 0.25) f.trimStart = Math.max(0, +(r.start - 0.02).toFixed(3));           // (a hair before the first sound)
+        if (dur && r.end > 0 && dur - r.end > 0.25) f.trimEnd = +Math.min(dur, r.end + 0.05).toFixed(3);   // (…and after the last)
+        if (lib.songs.has(s.id)) await lib.updateSong(s.id, f);
+        if (f.trimStart || f.trimEnd) { sil.found++; diag.log(`silence: ${s.title} · cut ${f.trimStart.toFixed(2)} s at the start, ${(f.trimEnd ? dur - f.trimEnd : 0).toFixed(2)} s at the end (${r.ms} ms)`); if (player.queue.includes(s.id)) changedQueue = true; }
+      } catch (e) {
+        diag.log(`silence: couldn't check ${s.title}: ${e?.message || e}`);
+        if (lib.songs.has(s.id)) await lib.updateSong(s.id, { silenceChecked: -1 });
+      }
+      sil.done++;
+      sil.onProgress?.();
+    };
+    const worker = async () => { while (next < todo.length && !sil.stop && canSilence()) await one(todo[next++]); };
+    await Promise.all(Array.from({ length: comp.cores || 3 }, worker));
+    if (changedQueue && player.nat) player.markQueue();          // (the songs coming up start at their first sound)
+  } finally {
+    sil.running = false; sil.stop = false;
+    sil.onProgress?.(true);
+  }
+}
+/** Settings › Library › Cut Silence Now: every song not checked yet (and ones that failed before) */
+async function silenceNow() {
+  if (!AuraPlayer?.silence) return;
+  if (!player.nat) return snack("Cutting silence starts once the new player is on (Settings › Playback › Native Player)");
+  lib.meta.settings.trimSilence = true; lib.saveMeta();
+  for (const s of lib.songs.values()) if (s.silenceChecked === -1) s.silenceChecked = 0;
+  const left = [...lib.songs.values()].filter(needsSilence).length;
+  if (!left) return snack("Every song has been checked for silence");
+  sil.done = 0; sil.found = 0;
+  const pb = progressBox("Cutting silence", () => { sil.stop = true; });
+  sil.onProgress = (end) => {
+    if (end) {
+      sil.onProgress = null; pb.close();
+      snack(sil.found ? `Cut silence from ${plural(sil.found, "song")} · the rest had none` : "No silence to cut — every song starts and ends with sound", null, null, 6000);
+      return;
+    }
+    pb.set(sil.total ? sil.done / sil.total : 0, `${Math.min(sil.done + 1, sil.total)} of ${sil.total}`, { text: sil.found ? `${plural(sil.found, "song")} with silence so far` : "Listening for silence…" });
+  };
+  clearTimeout(sil.t);
+  if (sil.running) { sil.onProgress(); return; }
+  findSilence();
+}
 
 async function restoreSession() {
   const ss = lib.meta.session;

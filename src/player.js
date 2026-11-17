@@ -126,7 +126,11 @@ class Player extends EventTarget {
       const live = (fn) => (e) => { if (a === this.audio) fn(e); };      // only the active player talks to the UI
       a.addEventListener("ended", live(() => this.onEnded()));
       for (const ev of ["play", "pause", "playing"]) a.addEventListener(ev, live(() => { this.emit("state"); this.updateSession(); }));
-      a.addEventListener("timeupdate", live(() => { this.emit("time"); this.checkCrossfade(); }));
+      a.addEventListener("timeupdate", live(() => {
+        this.emit("time"); this.checkCrossfade();
+        const s = this.current;                       // silence cut from the end: the song ends at its last sound
+        if (s?.trimEnd > 0 && lib.meta.settings.trimSilence !== false && !this.xf && a.currentTime >= s.trimEnd && !a.paused) this.onEnded();
+      }));
       a.addEventListener("loadedmetadata", live(() => this.emit("time")));
       a.addEventListener("durationchange", live(() => {          // learn the length if the file's tags didn't have it
         const s = this.current;
@@ -139,6 +143,8 @@ class Player extends EventTarget {
     this.setupSession();
   }
   get audio() { return this.nat ? this.fa : this.els[this.cur]; }
+  /** how much silence was cut from the start of the song playing: the native player counts from there (lyrics add it back) */
+  trimShift() { const s = this.current; return this.nat && lib.meta.settings.trimSilence !== false && s?.trimStart > 0 ? s.trimStart : 0; }
 
   // ------------------------------------------------ the native Android player
   nat = null;      // the AuraPlayer plugin once it's in charge
@@ -167,7 +173,14 @@ class Player extends EventTarget {
     return st;
   }
   natItems() {
-    return this.queue.map((id) => { const s = lib.songs.get(id) || {}; return { id, path: songRelPath(s), title: s.title || "", artist: s.artist || "", album: s.album || "" }; });
+    const cut = lib.meta.settings.trimSilence !== false;
+    return this.queue.map((id) => {
+      const s = lib.songs.get(id) || {};
+      const o = { id, path: songRelPath(s), title: s.title || "", artist: s.artist || "", album: s.album || "" };
+      if (cut && s.trimStart > 0) o.start = Math.round(s.trimStart * 1000);           // silence cut from the start / end
+      if (cut && s.trimEnd > 0) o.end = Math.round(s.trimEnd * 1000);
+      return o;
+    });
   }
   /** the queue changed (shuffle, play next, mix…): tell the native player without interrupting the song */
   markQueue() {
@@ -424,6 +437,7 @@ class Player extends EventTarget {
     this.els[1 - this.cur].pause();
     if (this.gains) { const t = this.ctx.currentTime; this.gains[this.cur].gain.setValueAtTime(1, t); this.gains[1 - this.cur].gain.setValueAtTime(0, t); }
     el.src = el.dataset.url;
+    if (lib.meta.settings.trimSilence !== false && s.trimStart > 0) el.addEventListener("loadedmetadata", () => { if (this.current === s && el.currentTime < s.trimStart) el.currentTime = s.trimStart; }, { once: true });
     this.loadedAt = performance.now();
     if (old) setTimeout(() => URL.revokeObjectURL(old), 2000);
     this.emit("track", { dir });
@@ -517,7 +531,8 @@ class Player extends EventTarget {
     if (!secs || this.xf || a.paused || !isFinite(a.duration) || this.repeat === "one") return;
     // just after a song loads, the element can still report the previous song's time/length for a moment
     if (performance.now() - (this.loadedAt || 0) < 1500 || a.currentTime < 1) return;
-    const left = a.duration - a.currentTime;
+    const s0 = this.current, end = s0?.trimEnd > 0 && lib.meta.settings.trimSilence !== false ? Math.min(s0.trimEnd, a.duration) : a.duration;
+    const left = end - a.currentTime;
     if (left > secs || left < 0.25 || a.duration < secs * 2 + 1) return;
     const i = this.peek(1);
     if (i < 0) return;                 // nothing up next: the song repeats instead

@@ -121,7 +121,14 @@ public class AuraPlaybackService extends MediaSessionService {
             .setArtist(o.getString("artist", ""))
             .setAlbumTitle(o.getString("album", ""))
             .build();
-        return new MediaItem.Builder().setMediaId(o.getString("id", path)).setUri(uri).setMediaMetadata(md).build();
+        MediaItem.Builder b = new MediaItem.Builder().setMediaId(o.getString("id", path)).setUri(uri).setMediaMetadata(md);
+        // silence cut from the start / end: the player itself skips it (seamlessly), so crossfades start at the last sound
+        long st = Math.max(0, o.optLong("start", 0)), en = Math.max(0, o.optLong("end", 0));
+        if (st > 0 || en > 0) {
+            b.setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
+                .setStartPositionMs(st).setEndPositionMs(en > st ? en : C.TIME_END_OF_SOURCE).build());
+        }
+        return b.build();
     }
 
     void setQueue(List<MediaItem> list, int index, long posMs, boolean play, boolean keep) {

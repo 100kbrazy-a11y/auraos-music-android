@@ -174,7 +174,7 @@ export class LyricsView {
     const s = player.current;
     const off = (s && lib.meta.settings.offsets[s.id]) || 0;
     const lat = player.ctx?.outputLatency || player.ctx?.baseLatency || 0;
-    return player.audio.currentTime - off - lat;
+    return player.audio.currentTime + (player.trimShift?.() || 0) - off - lat;      // (+ the silence cut from the start)
   }
 
   currentIndex() {
@@ -373,7 +373,7 @@ export class LyricsView {
     const y = e.clientY - r.top;
     for (let i = 0; i < this.lines.length; i++) {
       const top = shift + tops[i];
-      if (y >= top && y < top + heights[i]) { player.seek(this.lines[i].t + ((lib.meta.settings.offsets[player.current?.id]) || 0) + 0.01); return; }
+      if (y >= top && y < top + heights[i]) { player.seek(this.lines[i].t + ((lib.meta.settings.offsets[player.current?.id]) || 0) - (player.trimShift?.() || 0) + 0.01); return; }
     }
   }
 }
