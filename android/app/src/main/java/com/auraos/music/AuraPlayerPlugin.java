@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.BatteryManager;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Base64;
 import androidx.annotation.OptIn;
