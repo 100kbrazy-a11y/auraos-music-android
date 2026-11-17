@@ -2670,7 +2670,7 @@ function ytRow(it) {
   const pic = h("div", { class: "art" + (it.kind === "artist" ? " round" : "") + (it.thumb ? "" : " loaded") }, it.thumb
     ? h("img", { src: it.thumb, loading: "lazy", decoding: "async", alt: "", referrerpolicy: "no-referrer", onload: (e) => e.target.parentNode?.classList.add("loaded"), onerror: (e) => e.target.parentNode?.classList.add("loaded") })
     : icon("note"));
-  const have = it.kind === "song" && lib.existing?.({ title: it.title, artist: it.artist, album: it.album, duration: it.duration });
+  const have = it.kind === "song" && lib.findSame({ title: it.title, artist: it.artist, duration: it.duration, id: it.id });
   const btn = h("button", { class: "ib yt-add", "aria-label": "Add" });
   const ring = h("span", { class: "yt-ring" });
   const sub = h("div", { class: "s" }, it.sub || "");

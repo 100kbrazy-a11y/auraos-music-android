@@ -8,6 +8,20 @@ import { diag, timed } from "./diag.js";
 export const PACK_FORMAT = "auraos-musicpack";
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+// "Song (feat. X) [Official Audio] - Remastered 2011" and "song" are the same song; "Song (Remix)" isn't
+const CLUTTER = /\s*[([{][^)\]}]*\b(feat|ft|with|prod|remaster(ed)?|official|audio|video|lyrics?|lyric video|visuali[sz]er|explicit|clean|hq|hd|4k|mv|m\/v|bonus track|album version|single version|radio edit)\b[^)\]}]*[)\]}]/gi;
+function canonTitle(t) {
+  return String(t || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(CLUTTER, " ")
+    .replace(/\s+[-–—]\s+.*\b(remaster(ed)?|album version|single version|radio edit|official|audio|video|lyrics?)\b.*$/i, "")
+    .replace(/\s+(feat|ft)\.?\s.*$/i, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+function canonArtist(a) {
+  return String(primaryArtist(String(a || "").replace(/\s*-\s*Topic$/i, "").replace(/VEVO$/i, "")) || "").normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]+/g, "");
+}
+const songKey = (title, artist) => { const t = canonTitle(title), a = canonArtist(artist); return t && a && a !== "unknownartist" ? t + "|" + a : ""; };
+const ytIdOf = (src) => { const m = /[?&]v=([\w-]{11})|youtu\.be\/([\w-]{11})/.exec(String(src || "")); return m ? m[1] || m[2] : ""; };
 
 function hash(s) {
   let h = 2166136261;
@@ -173,6 +187,40 @@ class Library extends EventTarget {
     return null;
   }
 
+  /**
+   * Do I already have this song? (used by every way songs come in)
+   *  1. the same YouTube video (songs downloaded from YouTube remember it)
+   *  2. the same song: title and main artist without the clutter ("feat. …", "[Official Audio]", "- Remastered",
+   *     "Topic"/VEVO, accents, punctuation), lengths within 4 s when both are known. Remixes, live and acoustic
+   *     versions stay different songs.
+   * t: { title, artist, duration, id (YouTube) or source }. Returns the song you have, or null.
+   */
+  findSame(t) {
+    const key = `${this._ver || 0}:${this.songs.size}`;
+    if (this._dupKey !== key) {                 // (the lookup tables are rebuilt only when the library changes)
+      this._dupKey = key;
+      const byYt = new Map(), byName = new Map();
+      for (const s of this.songs.values()) {
+        const y = ytIdOf(s.source);
+        if (y) byYt.set(y, s);
+        const k = songKey(s.title, s.artist);
+        if (!k) continue;
+        if (!byName.has(k)) byName.set(k, []);
+        byName.get(k).push(s);
+        const k2 = songKey(s.title, s.albumartist);               // (tagged under the album's artist instead)
+        if (k2 && k2 !== k) { if (!byName.has(k2)) byName.set(k2, []); byName.get(k2).push(s); }
+      }
+      this._byYt = byYt; this._byName = byName;
+    }
+    const y = t.id && /^[\w-]{11}$/.test(t.id) ? t.id : ytIdOf(t.source);
+    if (y && this._byYt.get(y)) return this._byYt.get(y);
+    const k = songKey(t.title, t.artist);
+    const list = k ? this._byName.get(k) : null;
+    if (!list) return null;
+    const d = +t.duration || 0;
+    return list.find((s) => !d || !s.duration || Math.abs(s.duration - d) <= 4) || null;
+  }
+
   /** The same song (title, artist, length) already here, on whatever release. */
   existingAnywhere(t) {
     const title = norm(t.title), artist = norm(primaryArtist(t.artist));
@@ -204,7 +252,7 @@ class Library extends EventTarget {
     }
     for (const [k, v] of Object.entries(override)) if (v !== undefined && v !== null && v !== "") tags[k] = v;
     if (!tags.duration) { diag.step = `Measuring · ${name}`; tags.duration = await probeDuration(blob); }
-    const dup = this.existing(tags);
+    const dup = this.findSame(tags);
     if (dup) return { song: dup, skipped: true };
     const ext = extOf(name) || "mp3";
     const file = this.uniqueFile(organizedPath(tags, ext));
@@ -224,7 +272,7 @@ class Library extends EventTarget {
     const tags = { title: "", artist: "", album: "", albumartist: "", track: 0, disc: 0, year: "", genre: "", composer: "",
       label: "", copyright: "", isrc: "", bpm: "", duration: 0, codec: "", ...info };
     if (!tags.duration) { diag.step = `Measuring · ${tags.title}`; tags.duration = await probeDuration(blob); }
-    const dup = this.existing(tags);
+    const dup = this.findSame(tags);
     if (dup) return { song: dup, skipped: true };
     const file = this.uniqueFile(organizedPath(tags, ext));
     const type = blob.type || mimeFor(ext);
@@ -239,7 +287,7 @@ class Library extends EventTarget {
 
   /** Add a file already downloaded into Library/<rel> (YouTube links), with known info and cover. Returns {song, skipped}. */
   async addLocalFile(rel, size, ext, tags, picture) {
-    const dup = this.existing(tags);
+    const dup = this.findSame(tags);
     if (dup) { await dropPicked(rel); return { song: dup, skipped: true }; }
     const file = this.uniqueFile(organizedPath(tags, ext));
     const type = mimeFor(ext);

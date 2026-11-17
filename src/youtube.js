@@ -349,16 +349,28 @@ async function addTracks(tracks, lib, onProgress, opts = {}) {
     if (t.album) covers.set(url, p);
     return p;
   };
-  const one = async (i) => {
+  // songs that appear twice in this list (by video, or by name + length): the later ones wait for the first
+  const dupOf = [], firstOf = new Map();
+  const nameKey = (t) => (t.title ? `${tidy(t).title}|${tidy(t).artist}`.toLowerCase().replace(/[^a-z0-9|]+/g, "") : "");
+  tracks.forEach((t, i) => {
+    for (const k of [t.id && "v" + t.id, nameKey(t) && "n" + nameKey(t)]) {
+      if (!k) continue;
+      if (firstOf.has(k)) { const j = firstOf.get(k); const a = tracks[j]; if (k[0] === "v" || !t.duration || !a.duration || Math.abs(t.duration - a.duration) <= 4) { dupOf[i] = j; break; } }
+      else firstOf.set(k, i);
+    }
+  });
+  const doneRes = [], done_ = tracks.map((_, i) => new Promise((r) => (doneRes[i] = r)));
+  const one = async (i) => { try { await one0(i); } finally { doneRes[i](); } };
+  const one0 = async (i) => {
     const t = tracks[i];
     try {
       diag.step = `Downloading · ${t.title || t.id}`;
-      if (t.title) {
-        const pre = tidy({ title: t.title, artist: t.artist, album: t.album });
-        const dur = t.duration || 0;
-        const had = lib.existing({ ...pre, duration: dur }) || (opts.looseDup && dur ? lib.existingAnywhere?.({ ...pre, duration: dur }) : null);
-        if (had) { skipped++; streak = 0; keep(i, had.id); return; }
-      }
+      // already have it? (the same YouTube video, or the same song under any name / release) → skip, no download
+      const pre = t.title ? tidy({ title: t.title, artist: t.artist, album: t.album }) : {};
+      const had = lib.findSame({ ...pre, duration: t.duration || 0, id: t.id });
+      if (had) { skipped++; streak = 0; keep(i, had.id); diag.log(`YouTube: skipped ${t.title || t.id} (you have it)`); return; }
+      // the same song twice in this list (a single and the album version): only once
+      if (dupOf[i] !== undefined) { const j = dupOf[i]; await done_[j]; const s0 = slots[j] && lib.songs.get(slots[j]); if (s0) { skipped++; keep(i, s0.id); return; } }
       live.set(i, { title: t.title || "song", text: "Starting…", f: null });
       report(true);
       const coverP = coverFor(t);                // (comes down at the same time as the song)
