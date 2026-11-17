@@ -229,6 +229,14 @@ function openSheet(content, { dialog = false, onClose } = {}) {
 function closeSheet(silent) {
   const sh = $("#sheet");
   if (sh.hidden) return false;
+  if (motion() && sh.childElementCount) {         // a copy slides away (the real one is free for the next sheet at once)
+    const ghost = sh.cloneNode(true), sg = $("#scrim").cloneNode(false);
+    ghost.classList.add("leaving"); sg.classList.add("leaving");
+    ghost.style.pointerEvents = sg.style.pointerEvents = "none";
+    sh.after(ghost); $("#scrim").after(sg);
+    ghost.scrollTop = sh.scrollTop;
+    setTimeout(() => { ghost.remove(); sg.remove(); }, 300);
+  }
   sh.hidden = $("#scrim").hidden = true;
   queueMicrotask(() => { if ($("#sheet").hidden) { nc.update({ covered: !!sel }); npPlayButton(); } });   // (not when another sheet opens straight away)
   sh.innerHTML = "";
@@ -1407,8 +1415,7 @@ function pageSettings() {
         s.compress = s.compress === false; lib.saveMeta(); sw.classList.toggle("on", s.compress !== false);
         if (s.compress !== false) scheduleCompress(300); refresh();
       }, sw);
-    })() : null,
-    lib.songs.size ? item("trash", "Remove All Music", "Deletes the songs stored in this app", () => removeAllMusic()) : null);
+    })() : null);
 
   // ---- playback
   const xfVal = h("span", { class: "val" });
@@ -1443,7 +1450,7 @@ function pageSettings() {
       if (s.nativePlayer !== false) { const left = [...lib.songs.values()].some((x) => x.store !== "disk"); if (left) moveLibrary(); else switchToNative(); }
       else snack("The old player comes back the next time you open the app");
     }, natSw),
-    item("spark", "Save Battery Automatically", "Pause the moving background and visualizer in Battery Saver or below 20 %", () => {
+    item("spark", "Save Battery Automatically", "Pause the moving background and visualizer in Battery Saver or below 20%", () => {
       s.autoSaver = s.autoSaver === false; lib.saveMeta(); svSw.classList.toggle("on", s.autoSaver !== false);
       if (s.autoSaver === false) setSaver(false); else judgePower(lastPower);
     }, svSw),
@@ -2418,7 +2425,8 @@ function pageYtSearch(state) {
     const my = ++seq;
     let list = ytCache.get(key);
     if (!list) {
-      results.replaceChildren(h("div", { class: "yt-loading" }, h("span", { class: "spin" }), "Searching…"));
+      results.replaceChildren(...Array.from({ length: 7 }, (_, i) => h("div", { class: "yt-skel" }, h("div", { class: "a skel" + (state.kind === "artist" ? " round" : ""), style: state.kind === "artist" ? { borderRadius: "50%" } : {} }),
+        h("div", { style: { flex: "1" } }, h("div", { class: "l skel", style: { width: `${62 - (i % 3) * 12}%` } }), h("div", { class: "l skel", style: { width: `${38 - (i % 2) * 10}%`, opacity: ".7" } })))));
       try {
         const yt = await import("./youtube.js");
         list = await yt.searchMusic(q, state.kind);
@@ -2447,7 +2455,9 @@ function pageYtSearch(state) {
 /** a result row: picture, title, what it is, and a + that turns into progress and then a tick */
 function ytRow(it) {
   const jobKey = it.kind + "|" + it.id;
-  const pic = h("div", { class: "art" + (it.kind === "artist" ? " round" : "") }, it.thumb ? h("img", { src: it.thumb, loading: "lazy", decoding: "async", alt: "", referrerpolicy: "no-referrer" }) : icon("note"));
+  const pic = h("div", { class: "art" + (it.kind === "artist" ? " round" : "") + (it.thumb ? "" : " loaded") }, it.thumb
+    ? h("img", { src: it.thumb, loading: "lazy", decoding: "async", alt: "", referrerpolicy: "no-referrer", onload: (e) => e.target.parentNode?.classList.add("loaded"), onerror: (e) => e.target.parentNode?.classList.add("loaded") })
+    : icon("note"));
   const have = it.kind === "song" && lib.existing?.({ title: it.title, artist: it.artist, album: it.album, duration: it.duration });
   const btn = h("button", { class: "ib yt-add", "aria-label": "Add" });
   const ring = h("span", { class: "yt-ring" });
@@ -3975,6 +3985,12 @@ async function boot() {
     player.addEventListener("time", () => prog());
     for (const ev of ["state", "track"]) player.addEventListener(ev, () => prog(true));
     for (const el of player.els) el.addEventListener("seeked", () => prog(true));
+    nc.tint(getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
+    nc.update({ tab: stack[0].type });
+    nc.header(pageEl, pageEl?.classList.contains("scrolled"));
+    miniTuck.sync();
+  }
+  {
     // sliders tick at each step, checkboxes and pickers when they change
     let lastRange = null;
     document.addEventListener("input", (e) => { const t = e.target; if (t.type === "range" && t.value !== lastRange) { lastRange = t.value; nc.haptic("tick"); } }, true);
@@ -3987,10 +4003,6 @@ async function boot() {
       nc.haptic(t.matches(".pp") ? "press" : t.matches(".danger, .btn.danger") ? "thud"
         : t.matches(".chip, .switch, label, .seg button") ? "tick" : t.matches(".back") ? "soft" : "tap");
     }, true);
-    nc.tint(getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
-    nc.update({ tab: stack[0].type });
-    nc.header(pageEl, pageEl?.classList.contains("scrolled"));
-    miniTuck.sync();
   }
   await startNativePlayer();
   await restoreSession();

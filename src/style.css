@@ -10,7 +10,7 @@
   --accent: hsl(345 90% 72%);
   --on-accent: #1a0b10;
   --r: 18px;
-  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);      /* the app's one motion curve (same as the player's glide) */
   --spring: cubic-bezier(0.34, 1.4, 0.64, 1);
   --mini-h: 0px;
   /* how much the status bar / navigation bar / notch cover (set by the app on Android; env() elsewhere) */
@@ -202,11 +202,11 @@ svg.i.fill { fill: currentColor; stroke: none; }
 #scrim[hidden] { display: none; }
 @keyframes fade { from { opacity: 0; } }
 #sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 61; max-height: 86%; overflow-y: auto; background: var(--surface);
-  border-radius: 28px 28px 0 0; padding: 8px 0 calc(14px + var(--safe-b)); animation: up .32s var(--ease); }
+  border-radius: 28px 28px 0 0; padding: 8px 0 calc(14px + var(--safe-b)); animation: up .38s var(--ease); }
 #sheet[hidden] { display: none; }
-#sheet.dialog { left: 20px; right: 20px; bottom: auto; top: 50%; transform: translateY(-50%); border-radius: 28px; padding: 22px 22px 14px; animation: pop .28s var(--spring); }
+#sheet.dialog { left: 20px; right: 20px; bottom: auto; top: 50%; transform: translateY(-50%); border-radius: 28px; padding: 22px 22px 14px; animation: pop .32s var(--ease); }
 @keyframes up { from { transform: translateY(100%); } }
-@keyframes pop { from { transform: translateY(-50%) scale(.9); opacity: 0; } }
+@keyframes pop { from { transform: translateY(-50%) scale(.94); opacity: 0; } }
 #sheet .grab { width: 36px; height: 4px; border-radius: 2px; background: #55555c; margin: 4px auto 10px; }
 #sheet .sh-head { display: flex; align-items: center; gap: 14px; padding: 4px 20px 12px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
 #sheet .sh-head .art { width: 52px; height: 52px; border-radius: 10px; overflow: hidden; flex: none; }
@@ -913,3 +913,44 @@ body.saver .eqbars b { animation: none; height: 60% !important; }
 body.saver #np .vizbg { opacity: 0; }
 /* the player is paused: its little "now playing" bars stand still */
 body.paused .eqbars b { animation-play-state: paused; }
+
+/* ======================================================================
+   Polish: one motion curve, sheets that leave the way they came, press feedback, loading placeholders
+   ====================================================================== */
+#sheet.leaving { animation: sheetout .26s var(--ease) forwards; }
+#sheet.dialog.leaving { animation: dialogout .2s ease-in forwards; }
+#scrim.leaving { animation: fadeout .26s ease forwards; }
+@keyframes sheetout { to { transform: translateY(100%); } }
+@keyframes dialogout { to { transform: translateY(-50%) scale(.96); opacity: 0; } }
+@keyframes fadeout { to { opacity: 0; } }
+@media (orientation: landscape) and (min-width: 640px) {
+  #sheet.leaving:not(.dialog) { animation: sheetoutc .26s var(--ease) forwards; }
+  @keyframes sheetoutc { to { transform: translate(-50%, 100%); } }
+}
+
+/* every row, card and menu item sinks in a touch under your finger (the same feel everywhere) */
+.row, .arow, .item, #sheet .act, .chip, .card { transition: transform .22s var(--ease), background .15s; }
+.row:active, .arow:active, .item:active, #sheet .act:active { transform: scale(.985); }
+.chip:active { transform: scale(.94); }
+.card:active { transform: scale(.98); }
+body.nomotion .row, body.nomotion .arow, body.nomotion .item, body.nomotion .card { transition: none; }
+
+/* loading: placeholders shimmer until the real thing arrives */
+@keyframes shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+.skel { background: linear-gradient(100deg, rgba(255, 255, 255, .05) 30%, rgba(255, 255, 255, .11) 50%, rgba(255, 255, 255, .05) 70%) 0 0 / 250% 100%;
+  animation: shimmer 1.3s linear infinite; border-radius: 8px; }
+.yt-skel { display: flex; align-items: center; gap: 12px; padding: 7px 12px 7px 18px; }
+.yt-skel .a { width: 52px; height: 52px; border-radius: 10px; flex: none; }
+.yt-skel .l { height: 12px; margin: 5px 0; }
+.yt-row .art { background: linear-gradient(100deg, rgba(255, 255, 255, .05) 30%, rgba(255, 255, 255, .1) 50%, rgba(255, 255, 255, .05) 70%) 0 0 / 250% 100%; animation: shimmer 1.3s linear infinite; }
+.yt-row .art.loaded { animation: none; background: var(--surface2); }
+.yt-row .art img { opacity: 0; transition: opacity .35s var(--ease); }
+.yt-row .art.loaded img { opacity: 1; }
+body.saver .skel, body.saver .yt-row .art { animation: none; }
+/* results and lists arrive with a soft rise, not a pop */
+.yt-results > * { animation: rise .38s var(--ease) both; }
+.yt-results > *:nth-child(2) { animation-delay: .03s; } .yt-results > *:nth-child(3) { animation-delay: .06s; }
+.yt-results > *:nth-child(4) { animation-delay: .09s; } .yt-results > *:nth-child(5) { animation-delay: .12s; }
+.yt-results > *:nth-child(n+6) { animation-delay: .15s; }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+body.nomotion .yt-results > * { animation: none; }

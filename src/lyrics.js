@@ -281,7 +281,11 @@ export class LyricsView {
       g.font = `700 20px system-ui, Roboto, sans-serif`;
       g.fillStyle = "rgba(255,255,255,.65)";
       g.textAlign = "center";
-      g.fillText(this.message, W / 2, H / 2);
+      const words = this.message.split(" "), rows = [];          // wrapped to the width, centred
+      let row = "";
+      for (const w of words) { const t = row ? row + " " + w : w; if (g.measureText(t).width > width && row) { rows.push(row); row = w; } else row = t; }
+      if (row) rows.push(row);
+      rows.forEach((r, i) => g.fillText(r, W / 2, H / 2 + (i - (rows.length - 1) / 2) * 28));
       g.textAlign = "left";
       return;
     }
