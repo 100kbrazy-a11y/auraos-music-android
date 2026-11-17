@@ -19,6 +19,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -51,6 +52,12 @@ import kotlinx.coroutines.withContext
 /** Strata Music, all native (Kotlin + Compose), drawn to look and behave like the WebView app. */
 class NextActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        val crashFile = java.io.File(filesDir, "last-crash.txt")
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try { crashFile.writeText("Strata Music crashed (${java.util.Date()}):\n" + android.util.Log.getStackTraceString(e)) } catch (_: Throwable) { }
+            prev?.uncaughtException(t, e)
+        }
         enableEdgeToEdge(SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
         Store.init(this)
@@ -90,6 +97,17 @@ fun App() {
     val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) { if (Build.VERSION.SDK_INT >= 33) askNotif.launch(Manifest.permission.POST_NOTIFICATIONS) }
     LaunchedEffect(Unit) { Toasts.flow.collect { Snack.text.value = it } }
+    LaunchedEffect(Unit) {                     // the last crash, if there was one: shown once, with a Copy button
+        val f = java.io.File(ctx.filesDir, "last-crash.txt")
+        if (f.exists()) {
+            val t = f.readText(); f.delete(); Diag.log(t)
+            Dialogs.show {
+                DTitle("Strata Music crashed last time")
+                androidx.compose.foundation.layout.Box(Modifier.heightIn(max = 360.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) { T(t, 11.sp, color = C.sub, lines = 400) }
+                DButtons("Copy" to { (ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("crash", t)); Toasts.show("Copied") }, "Close" to { Dialogs.close() })
+            }
+        }
+    }
     LaunchedEffect(Snack.text.value) { if (Snack.text.value != null) { delay(3200); Snack.text.value = null } }
     LaunchedEffect(Unit) {
         if (!Migrate.done() && Store.songs.value.isEmpty()) { val r = Migrate.run(); if (r.isNotBlank() && !r.startsWith("There was nothing")) Toasts.show(r) }
