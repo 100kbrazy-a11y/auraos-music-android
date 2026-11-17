@@ -3328,6 +3328,7 @@ const morph = {
   },
   /** Android: the mini player's pieces (where they are now), the hero art, and the full player's parts that fade */
   measureDroid(lh) {
+    flushTrackLater();
     const r = this.rect || (this.rect = anchorRect());
     const m = $("#mini"), R = (x) => (x ? x.getBoundingClientRect() : null);
     const box = (x) => { const b = R(x); return b && b.width ? { x: b.left, y: b.top, w: b.width, h: b.height } : null; };
@@ -3368,7 +3369,17 @@ const morph = {
     if (this.whole) {
       // an exact copy of the bubble (mini player row, tabs, little visualizer) pinned in the corner while it fades;
       // the real one hides in the same frame, so it reads as one window turning into the player
-      const cl = dk.cloneNode(true);
+      const key = [player.current?.id, player.playing, dk.offsetWidth, dk.offsetHeight, document.documentElement.style.getPropertyValue("--accent"), $("#tabs .on, .tab.on")?.textContent || "", innerWidth].join("|");
+      const cached = this._dockCopy && this._dockCopy.key === key ? this._dockCopy.el : null;
+      const cl = cached || dk.cloneNode(true);
+      if (cached) {
+        const srcC = dk.querySelectorAll("canvas"), dstC = cl.querySelectorAll("canvas");
+        srcC.forEach((c, i) => { try { const d = dstC[i]; d.getContext("2d").clearRect(0, 0, d.width, d.height); d.getContext("2d").drawImage(c, 0, 0); } catch {} });
+        cl.style.transform = "none"; cl.style.opacity = "1"; cl.style.visibility = "";
+        this.ghostMeta = cl.querySelector(".meta");
+        this.ghost = np.inner.insertBefore(cl, np.wrapEl);
+        return;
+      }
       cl.classList.add("dockghost");               // (keeps its id for its looks; the real bubble comes first in the page, so lookups still find it)
       Object.assign(cl.style, { position: "absolute", left: "0px", top: "0px", right: "auto", bottom: "auto", width: dk.offsetWidth + "px", height: dk.offsetHeight + "px",
         margin: "0", transform: "none", opacity: "1", transition: "none", background: "none", boxShadow: "none", backdropFilter: "none", webkitBackdropFilter: "none", pointerEvents: "none" });
@@ -3380,7 +3391,8 @@ const morph = {
         "color", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "borderRadius", "boxShadow", "opacity", "transform", "flex", "gap", "alignItems",
         "justifyContent", "whiteSpace", "overflow", "textOverflow", "fill", "stroke", "filter"];
       const so = dk.querySelectorAll("*"), co = cl.querySelectorAll("*");
-      so.forEach((x, i) => { const y = co[i]; if (!y) return; const st = getComputedStyle(x); for (const k of PROPS) y.style[k] = st[k]; y.style.transition = "none"; y.style.animation = "none"; });
+      so.forEach((x, i) => { const y = co[i]; if (!y) return; const st = getComputedStyle(x); for (const k of PROPS) y.style[k] = st[k]; y.style.transition = "none"; y.style.animation = "none"; y.style.backdropFilter = "none"; y.style.webkitBackdropFilter = "none"; y.style.willChange = "auto"; });
+      this._dockCopy = { key, el: cl };
       const art = cl.querySelector("#mini .art, .art"); if (art) art.style.visibility = "hidden";      // (the real art is the one that grows)
       this.ghostMeta = cl.querySelector(".meta");
       this.ghost = np.inner.insertBefore(cl, np.wrapEl);       // (under the player's content: the cover stays in front of it)
@@ -3466,7 +3478,8 @@ const morph = {
     // 4) its surface: the mini player's own colour underneath, the player's background crossfading in on top
     if (!this.g?.isConnected) this.g = np.inner.insertBefore(h("div", { class: "lgm" }), np.inner.firstChild);
     this.g.style.display = g < 0.999 ? "block" : "none";
-    el.style.setProperty("--bgo", Math.max(0.003, g).toFixed(3));
+    // (the same stretch the bar's own contents fade over: one straight crossfade, no dark in-between)
+    el.style.setProperty("--bgo", Math.max(0.003, this.ghost ? ss(0, 0.25, g) : g).toFixed(3));
     // 2) the mini player's own controls, pinned to the container's corner, gone by 25%
     if (this.ghost) {
       if (this.whole) this.ghost.style.transform = `translate3d(${rc.l.toFixed(2)}px, ${rc.t.toFixed(2)}px, 0)`;   // (pinned to the corner)
@@ -3830,6 +3843,8 @@ function preloadNeighbors() {
   const want = new Set();
   for (const k of [-2, -1, 0, 1, 2]) { const s = lib.songs.get(player.queue[player.index + k]); if (s?.cover) want.add(s.cover); }
   for (const id of want) decodedCover(id);
+  const idle = window.requestIdleCallback || ((f) => setTimeout(f, 200));
+  idle(() => { for (const id of want) { const c = lib.cover(id); if (c?.small) bakeBackdrop(c.small); fog.warm?.(id); } });
   for (const id of [...coverCache.keys()]) if (!want.has(id)) coverCache.delete(id);
 }
 function coverEl(s) {
@@ -3849,22 +3864,29 @@ function npTrack(dir) {
   np.shownId = s.id;
   const cov = lib.cover(s.cover);
   const color = cov?.color || "hsl(345 90% 72%)";
-  if (document.documentElement.style.getPropertyValue("--accent") !== color) glowFade = performance.now();
-  document.documentElement.style.setProperty("--accent", color);
-  nc.tint(color);
-  // the blurred backdrops use the small cover (looks the same blurred, far cheaper) and crossfade into each other
-  setBackdrop(cov ? cov.small : null, color);
-  fog.setCover(s.cover);
-  np.cover.querySelector(".back .blur").style.backgroundImage = cov ? `url(${cov.small})` : "none";
-  np.ctx.replaceChildren(document.createTextNode(ctxLabel ? "PLAYING FROM" : "NOW PLAYING"), h("b", {}, ctxLabel || s.album || ""));
   np.title.textContent = s.title;
   np.artist.textContent = s.artist || "Unknown Artist";
-  np.lyrHeadArt.replaceChildren(...art(s.cover, { label: s.album, small: false }).childNodes);
-  np.lyrHeadT.textContent = s.title;
-  np.lyrHeadS.textContent = s.artist || "";
   updateNpFav();
+  // everything else (the whole app's colour, the backdrop, the lyrics header…) restyles a lot of the page: done just
+  // after the cover has slid in, not in the middle of it
+  const rest = () => {
+    if (player.current !== s) return;
+    if (document.documentElement.style.getPropertyValue("--accent") !== color) { glowFade = performance.now(); document.documentElement.style.setProperty("--accent", color); nc.tint(color); }
+    setBackdrop(cov ? cov.small : null, color);
+    fog.setCover(s.cover);
+    np.cover.querySelector(".back .blur").style.backgroundImage = cov ? `url(${cov.small})` : "none";
+    np.ctx.replaceChildren(document.createTextNode(ctxLabel ? "PLAYING FROM" : "NOW PLAYING"), h("b", {}, ctxLabel || s.album || ""));
+    np.lyrHeadArt.replaceChildren(...art(s.cover, { label: s.album, small: false }).childNodes);
+    np.lyrHeadT.textContent = s.title;
+    np.lyrHeadS.textContent = s.artist || "";
+    if (flipped) fillDetails();
+    preloadNeighbors();
+  };
   const front = np.cover.querySelector(".front");
-  if (already) { if (flipped) fillDetails(); preloadNeighbors(); return; }
+  if (already) return;
+  clearTimeout(npRestT);
+  const sliding = npOpen && dir && motion() && !$("#np").classList.contains("lyrics");
+  if (sliding) { npRestFn = rest; npRestT = setTimeout(() => { npRestT = 0; rest(); }, 560); } else rest();
   const fresh = h("div", { class: "slide" }, coverEl(s));
   const old = front.firstChild;
   if (npOpen && dir && old && motion() && !$("#np").classList.contains("lyrics")) {
@@ -3896,30 +3918,64 @@ function npTrack(dir) {
     swipeOffset = 0;
     if (flipped && dir) flip(false);
   }
-  if (flipped) fillDetails();
   if ($("#np").classList.contains("lyrics")) loadLyrics();
-  preloadNeighbors();
+}
+let npRestT = 0, npRestFn = null;
+// anything still waiting from a skip happens right now (the player is about to shrink into the bar, which must be current)
+function flushTrackLater() {
+  if (npRestT) { clearTimeout(npRestT); npRestT = 0; npRestFn?.(); }
+  if (trackLaterT) { clearTimeout(trackLaterT); trackLaterT = 0; trackLaterFn?.(); }
 }
 
 let bgFront = 0, bgShown = null;
+// the blurred backdrop, blurred once into a small picture (by the browser's own image threads where it can) instead
+// of a live 60px blur the phone redid on every frame anything moved or faded over it
+const bakedBg = new Map();
+function bakeBackdrop(url) {
+  if (!url) return Promise.resolve(null);
+  if (bakedBg.has(url)) return bakedBg.get(url);
+  const job = (async () => {
+    try {
+      if (!window.OffscreenCanvas) return null;
+      const blob = await (await fetch(url)).blob();
+      const bmp = await createImageBitmap(blob, { resizeWidth: 96, resizeHeight: 96, resizeQuality: "medium" });
+      const W = 72, H = 128, oc = new OffscreenCanvas(W, H), g = oc.getContext("2d");
+      if (!("filter" in g)) { bmp.close?.(); return null; }
+      g.fillStyle = "#000"; g.fillRect(0, 0, W, H);
+      g.filter = "blur(5px) saturate(1.6) brightness(.55)";
+      // drawn past the edges so the blur doesn't darken them; covers the tall screen like background-size: cover
+      const sz = H * 1.25; g.drawImage(bmp, (W - sz) / 2, (H - sz) / 2, sz, sz);
+      bmp.close?.();
+      return URL.createObjectURL(await oc.convertToBlob({ type: "image/png" }));
+    } catch { return null; }
+  })();
+  bakedBg.set(url, job);
+  if (bakedBg.size > 16) { const [k, v] = bakedBg.entries().next().value; bakedBg.delete(k); v.then((u) => u && setTimeout(() => URL.revokeObjectURL(u), 3000)); }
+  return job;
+}
 function setBackdrop(url, color) {
   const key = (url || "") + "|" + color;
   if (key === bgShown) return;
   bgShown = key;
   const layers = [np.bg, np.bg2l];
   const next = layers[1 - bgFront], prev = layers[bgFront];
+  let baked = null;
   const show = () => {
     if (bgShown !== key) return;
-    next.style.backgroundImage = url ? `url(${url})` : "none";
+    next.classList.toggle("baked", !!baked);
+    next.style.backgroundImage = baked ? `url(${baked})` : url ? `url(${url})` : "none";
     next.style.backgroundColor = color;
     next.style.opacity = "1";
     prev.style.opacity = "0";
     bgFront = 1 - bgFront;
   };
   if (!url) return show();
-  const im = new Image();
-  im.src = url;
-  (im.decode ? im.decode() : Promise.resolve()).catch(() => {}).then(show);      // only fade once it's ready: no blank flash
+  bakeBackdrop(url).then((b) => {
+    baked = b;
+    const im = new Image();
+    im.src = b || url;
+    (im.decode ? im.decode() : Promise.resolve()).catch(() => {}).then(show);      // only fade once it's ready: no blank flash
+  });
 }
 
 /** iPhone: the full player's play / pause is a real clear-glass button laid over the web one, while the player is open and still */
@@ -4032,6 +4088,11 @@ const fog = {
     if (!this.cv) { this.cv = h("canvas", { class: "fog", width: 40, height: 72 }); this.g = this.cv.getContext("2d", { alpha: false }); }
     return this.cv;
   },
+  async warm(id) {
+    if (!id || this.cache.has(id)) return;
+    const c = lib.cover(id);
+    if (c?.smallBlob) this.cache.set(id, (await coverPalette(c.smallBlob)) || FOG_DEFAULT);
+  },
   async setCover(id) {
     this.want = id;
     let p = id ? this.cache.get(id) : FOG_DEFAULT;
@@ -4124,13 +4185,14 @@ function startViz() {
     // paused and the bars have fallen: nothing moves, so look again only a few times a second (saves battery)
     const settled = !playing && bassS < 0.003 && smooth.every((v) => v < 0.005);
     // while you're touching, scrolling or something is animating: every frame, at the screen's own rate (90 / 120 Hz)
-    const lively = morph.active || now - lastInteract < 1200;
-    if ((settled || power.saver) && !lively) setTimeout(() => requestAnimationFrame(loop), settled ? 300 : 90);
+    // (no cap at all while you're using the app; a full minute without a touch: 24 frames a second to save battery)
+    const lively = morph.active || now - lastInteract < 60000;
+    if (settled && !lively) setTimeout(() => requestAnimationFrame(loop), 300);
     else requestAnimationFrame(loop);
     updateProgress();
     if (settled && idleDrawn) return;
     idleDrawn = settled;
-    if (!settled && !lively && now - lastDraw < 31) return;   // idle: ~30 frames a second is plenty (saves battery)
+    if (!settled && !lively && now - lastDraw < 40) return;   // idle a minute: 24 frames a second
     lastDraw = now;
     const an = player.analyser;
     if (an && playing) an.getByteFrequencyData(bins); else bins.fill(0);
@@ -4209,19 +4271,24 @@ function startViz() {
 
 // ============================================================ wiring
 // the moment you skip: move the cover and titles right away, the audio follows a few ms later
+let trackLaterT = 0, trackLaterFn = null;
 player.addEventListener("willtrack", (e) => {
   if (!miniDir) miniDir = e.detail?.dir || 0;
   if (npOpen) npTrack(e.detail?.dir || 0);
-  updateMini();
+  else updateMini();
 });
 player.addEventListener("track", (e) => {
   if (!miniDir && $("#mini").dataset.id !== player.current?.id) miniDir = e.detail?.dir || 0;
-  updateMini();
   npTrack(e.detail?.dir ?? 0);
-  if (!npOpen) { const c = lib.colorOf(player.current) || "hsl(345 90% 72%)"; document.documentElement.style.setProperty("--accent", c); nc.tint(c); }
-  markNow();                                      // just the rows that changed, not the whole page
   startViz();
-  saveSession();
+  const later = () => {
+    updateMini();
+    if (!npOpen) { const c = lib.colorOf(player.current) || "hsl(345 90% 72%)"; document.documentElement.style.setProperty("--accent", c); nc.tint(c); }
+    markNow();                                      // just the rows that changed, not the whole page
+    saveSession();
+  };
+  clearTimeout(trackLaterT);
+  if (npOpen) { trackLaterFn = later; trackLaterT = setTimeout(() => { trackLaterT = 0; later(); }, 600); } else later();     // (the bar is behind the player: no hurry)
 });
 player.addEventListener("state", () => { updateMini(); npState(); pageEl?.querySelectorAll(".row.now").forEach((r) => r.classList.toggle("paused", !player.playing)); });
 player.addEventListener("time", () => { if (!vizOn) updateProgress(); });

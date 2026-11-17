@@ -1044,3 +1044,11 @@ body.saver #dock .tviz, body.saver #mini canvas { visibility: hidden; }
 body.np-open:not(.np-morph) #aurora i { animation-play-state: paused; }
 
 #np .wrap > *:not(.stage), #np .vizbg, #np .lyr > *, #np .lyr .lhead .meta { will-change: opacity, transform; }
+
+/* the backdrop comes pre-blurred (a small baked picture): no live blur to redo whenever anything moves over it */
+#np .bg.baked { filter: none; transform: none; inset: 0; image-rendering: auto; }
+/* the glow is a soft gradient on its own: no blur filter on top */
+#np .glowpulse { filter: none !important; background: radial-gradient(circle, color-mix(in srgb, var(--accent) 45%, transparent), transparent 70%) !important; }
+/* while it morphs: the cover's hidden back face and the moving library glow aren't drawn at all */
+#np.morphing .cover:not(.flipped) .face.back { visibility: hidden; }
+body.np-morph #aurora i { animation-play-state: paused; }
