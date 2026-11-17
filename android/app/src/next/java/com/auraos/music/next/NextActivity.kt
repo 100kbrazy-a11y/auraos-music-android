@@ -82,6 +82,7 @@ object Snack { val text = mutableStateOf<String?>(null) }
 fun App() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    Morph.scope = scope
     val songs by Store.songs.collectAsState()
     val st by NativePlayer.state.collectAsState()
     val q by Ctl.queue.collectAsState()
@@ -130,7 +131,7 @@ fun App() {
         NativePlayer.artwork(c.id, bytes)
         Ctl.save()
     }
-    LaunchedEffect(full) { Morph.to(if (full) 1f else 0f) }
+    LaunchedEffect(full) { Morph.p.animateTo(if (full) 1f else 0f, tween(if (full) 460 else 400, easing = Ease)) }
     LaunchedEffect(Unit) { NativePlayer.errors.collect { Toasts.show("Couldn't play: $it"); Diag.log("playback: $it") } }
     LaunchedEffect(Unit) { while (true) { delay(5000); if (NativePlayer.state.value.playing) Ctl.save() } }
     BackHandler(enabled = full || Nav.stack.isNotEmpty() || Sel.ids.isNotEmpty()) {

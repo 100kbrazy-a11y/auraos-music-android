@@ -136,9 +136,10 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
 object Morph {
     val p = Animatable(0f)
     var mini = Rect.Zero; var miniArt = Rect.Zero; var cover = Rect.Zero; var screen = Rect.Zero
-    private val scope = kotlinx.coroutines.MainScope()
-    fun snap(v: Float) { scope.launch { p.snapTo(v.coerceIn(0f, 1f)) } }
-    fun to(v: Float) { scope.launch { p.animateTo(v, tween(if (v > 0.5f) 460 else 400, easing = Ease)) } }
+    /** set by the app's screen: animations need its frame clock (a plain MainScope crashes) */
+    var scope: kotlinx.coroutines.CoroutineScope? = null
+    fun snap(v: Float) { scope?.launch { p.snapTo(v.coerceIn(0f, 1f)) } }
+    fun to(v: Float) { scope?.launch { p.animateTo(v, tween(if (v > 0.5f) 460 else 400, easing = Ease)) } }
 }
 class MorphShape(private val r: Rect, private val rad: Float) : Shape {
     override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density) = Outline.Rounded(RoundRect(r, CornerRadius(rad)))
