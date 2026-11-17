@@ -12,6 +12,13 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -107,12 +114,30 @@ fun SheetHost() {
     if (d != null) BackHandler { Dialogs.close() }
     val sheet = Dialogs.isSheet.value
     AnimatedVisibility(d != null && sheet, enter = slideInVertically(tween(380, easing = Ease)) { it }, exit = slideOutVertically(tween(250)) { it }) {
-        var dy by remember { mutableStateOf(0f) }
+        val scope = rememberCoroutineScope()
+        val off = remember { Animatable(0f) }
+        val closeAt = with(LocalDensity.current) { 110.dp.toPx() }
+        fun settle(v: Float) { scope.launch { if (off.value > closeAt || v > 1800f) { Dialogs.close(); off.snapTo(0f) } else off.animateTo(0f, spring(0.8f, 500f)) } }
+        val conn = remember {
+            object : NestedScrollConnection {
+                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    if (available.y < 0 && off.value > 0f) { val c = maxOf(available.y, -off.value); scope.launch { off.snapTo(off.value + c) }; return Offset(0f, c) }
+                    return Offset.Zero
+                }
+                override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                    if (available.y > 0 && source == NestedScrollSource.Drag) { scope.launch { off.snapTo(off.value + available.y) }; return Offset(0f, available.y) }
+                    return Offset.Zero
+                }
+                override suspend fun onPreFling(available: Velocity): Velocity { if (off.value > 0f) { settle(available.y); return available }; return Velocity.Zero }
+            }
+        }
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-            Column(Modifier.fillMaxWidth().fillMaxHeight(0.86f).wrapContentHeight(Alignment.Bottom).offset { IntOffset(0, dy.coerceAtLeast(0f).roundToInt()) }
+            Column(Modifier.fillMaxWidth().fillMaxHeight(0.86f).wrapContentHeight(Alignment.Bottom).offset { IntOffset(0, off.value.roundToInt()) }
                 .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(C.surface).clickable(remember { MutableInteractionSource() }, null) { }
+                .nestedScroll(conn)
+                .draggable(rememberDraggableState { d -> scope.launch { off.snapTo((off.value + d).coerceAtLeast(0f)) } }, Orientation.Vertical, onDragStopped = { v -> settle(v) })
                 .navigationBarsPadding().imePadding().padding(top = 8.dp, bottom = 14.dp)) {
-                Box(Modifier.fillMaxWidth().pointerInput(Unit) { detectVerticalDragGestures(onDragEnd = { if (dy > 120) Dialogs.close(); dy = 0f }) { c, a -> c.consume(); dy += a } }.padding(top = 4.dp, bottom = 10.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp), contentAlignment = Alignment.Center) {
                     Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF55555C)))
                 }
                 Dialogs.cur.value?.invoke()
@@ -132,11 +157,11 @@ val Spring = CubicBezierEasing(0.34f, 1.4f, 0.64f, 1f)
 
 /** a pressable that shrinks a little, like the WebView's :active { transform: scale(.95) } */
 @Composable
-fun Modifier.press(scaleTo: Float = 0.95f, onLong: (() -> Unit)? = null, onClick: () -> Unit): Modifier {
+fun Modifier.press(scaleTo: Float = 0.95f, onLong: (() -> Unit)? = null, onDouble: (() -> Unit)? = null, onClick: () -> Unit): Modifier {
     val src = remember { MutableInteractionSource() }
     val p by src.collectIsPressedAsState()
     val s by animateFloatAsState(if (p) scaleTo else 1f, tween(150, easing = Spring), label = "p")
-    return this.scale(s).combinedClickable(src, null, onLongClick = onLong) { onClick() }
+    return this.scale(s).combinedClickable(src, null, onLongClick = onLong, onDoubleClick = onDouble) { onClick() }
 }
 
 // ------------------------------------------------------------------ building blocks
@@ -213,8 +238,8 @@ fun Switch(on: Boolean, onChange: (Boolean) -> Unit) {
 
 /** cover art, or the placeholder: a gradient of a colour from the name with a note / disc / person */
 @Composable
-fun Art(cover: String, size: Dp?, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(9.dp), ph: Ic = Ic.Note, phName: String = "") {
-    val m = (if (size != null) modifier.size(size) else modifier.aspectRatio(1f)).clip(shape)
+fun Art(cover: String, size: Dp?, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(9.dp), ph: Ic = Ic.Note, phName: String = "", square: Boolean = true) {
+    val m = (if (size != null) modifier.size(size) else if (square) modifier.aspectRatio(1f) else modifier).clip(shape)
     val f = if (cover.isNotEmpty()) Store.coverFile(cover) else null
     if (f != null && f.exists()) AsyncImage(f, null, m.background(C.surface2), contentScale = ContentScale.Crop)
     else {
@@ -270,17 +295,11 @@ fun SongRow(s: Song, list: List<Song>, label: String, number: Int? = null, playl
     val a = accent
     val now = Ctl.queue.value.getOrNull(st.index)?.id == s.id
     val selecting = Sel.ids.isNotEmpty(); val picked = s.id in Sel.ids
-    val trig = with(LocalDensity.current) { 90.dp.toPx() }
-    var dx by remember { mutableStateOf(0f) }
     Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-        if (dx > 8f) Box(Modifier.matchParentSize().clip(RoundedCornerShape(14.dp)).background(mix(a, 0.25f, C.surface2)).padding(start = 20.dp), contentAlignment = Alignment.CenterStart) { Icon(if (s.id in favs) Ic.Heart else Ic.HeartFill, tint = a) }
-        if (dx < -8f) Box(Modifier.matchParentSize().clip(RoundedCornerShape(14.dp)).background(mix(a, 0.25f, C.surface2)).padding(end = 20.dp), contentAlignment = Alignment.CenterEnd) { Icon(Ic.PlayNext, tint = a) }
-        Row(Modifier.fillMaxWidth().height(64.dp).offset { IntOffset(dx.roundToInt(), 0) }.clip(RoundedCornerShape(14.dp))
-            .background(if (picked) mix(a, 0.35f, C.bg) else C.bg.copy(alpha = if (dx != 0f) 1f else 0f))
-            .combinedClickable(onLongClick = { Sel.toggle(s.id) }) { if (selecting) Sel.toggle(s.id) else Ctl.play(ctx, list, list.indexOf(s).coerceAtLeast(0), label) }
-            .pointerInput(s.id) {
-                detectHorizontalDragGestures(onDragEnd = { if (dx > trig) Store.toggleFav(s.id) else if (dx < -trig) Ctl.playNext(ctx, listOf(s)); dx = 0f }, onDragCancel = { dx = 0f }) { c, amt -> c.consume(); dx = (dx + amt).coerceIn(-trig * 1.6f, trig * 1.6f) }
-            }.padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(14.dp))
+            .background(if (picked) mix(a, 0.35f, C.bg) else Color.Transparent)
+            .combinedClickable(onLongClick = { Sel.toggle(s.id) }, onDoubleClick = { if (!selecting) likeToast(Store.toggleFav(s.id)) }) { if (selecting) Sel.toggle(s.id) else Ctl.play(ctx, list, list.indexOf(s).coerceAtLeast(0), label) }
+            .padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (showArt) Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                 Art(s.cover, 48.dp, phName = s.album.ifEmpty { s.title })
                 if (now) { Box(Modifier.matchParentSize().clip(RoundedCornerShape(9.dp)).background(Color.Black.copy(alpha = 0.45f))); EqBars(st.playing) }
@@ -296,6 +315,8 @@ fun SongRow(s: Song, list: List<Song>, label: String, number: Int? = null, playl
         }
     }
 }
+
+fun likeToast(on: Boolean, what: String = "Favorites") = Toasts.show(if (on) "Added to $what" else "Removed from $what")
 
 // ------------------------------------------------------------------ sheets
 @Composable
@@ -543,7 +564,7 @@ object Lyr { val v = mutableStateOf(0); fun bump() { v.value++ } }
 // ------------------------------------------------------------------ cards
 @Composable
 fun AlbumCard(a: Album, modifier: Modifier = Modifier) {
-    Column(modifier.press(0.96f) { Nav.open(Page.AlbumP(a.key)) }) {
+    Column(modifier.press(0.96f, onDouble = { val on = !a.songs.all { Store.isFav(it.id) }; Store.setFav(a.songs.map { it.id }, on); likeToast(on) }) { Nav.open(Page.AlbumP(a.key)) }) {
         Art(a.cover?.cover ?: "", null, Modifier.fillMaxWidth(), RoundedCornerShape(14.dp), Ic.Disc, a.title)
         T(a.title, 14.sp, W700, modifier = Modifier.padding(top = 8.dp))
         T(a.artist, 13.sp, color = C.sub)

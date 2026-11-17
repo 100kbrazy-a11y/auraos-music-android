@@ -28,6 +28,18 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -120,17 +132,84 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
     }
 }
 
+/** the media bar → full player growth: 0 = bar, 1 = full screen. The bar's rect, its cover and the big cover's rect are measured live. */
+object Morph {
+    val p = Animatable(0f)
+    var mini = Rect.Zero; var miniArt = Rect.Zero; var cover = Rect.Zero; var screen = Rect.Zero
+    private val scope = kotlinx.coroutines.MainScope()
+    fun snap(v: Float) { scope.launch { p.snapTo(v.coerceIn(0f, 1f)) } }
+    fun to(v: Float) { scope.launch { p.animateTo(v, tween(if (v > 0.5f) 460 else 400, easing = Ease)) } }
+}
+class MorphShape(private val r: Rect, private val rad: Float) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density) = Outline.Rounded(RoundRect(r, CornerRadius(rad)))
+}
+
+/**
+ * Swipe a song sideways: it follows the finger, the next / previous song slides in beside it, and letting go past a quarter of the
+ * width finishes the move and skips; otherwise it springs back. [content] draws one song.
+ */
+@Composable
+fun SongSwiper(modifier: Modifier, gap: Dp = 16.dp, onDouble: (() -> Unit)? = null, content: @Composable (Song) -> Unit) {
+    val st by NativePlayer.state.collectAsState(); val q by Ctl.queue.collectAsState()
+    val rep by Prefs.repeat.collectAsState()
+    val i = st.index
+    val cur = q.getOrNull(i) ?: return
+    val prev = q.getOrNull(i - 1) ?: if (rep == 1) q.lastOrNull()?.takeIf { q.size > 1 } else null
+    val next = q.getOrNull(i + 1) ?: if (rep == 1) q.firstOrNull()?.takeIf { q.size > 1 } else null
+    val scope = rememberCoroutineScope()
+    val dx = remember { Animatable(0f) }
+    var w by remember { mutableStateOf(1f) }
+    val g = with(LocalDensity.current) { gap.toPx() }
+    LaunchedEffect(cur.id) { dx.snapTo(0f) }
+    val hasPrev by rememberUpdatedState(prev != null); val hasNext by rememberUpdatedState(next != null)
+    val idx by rememberUpdatedState(i); val size by rememberUpdatedState(q.size)
+    Box(modifier.onSizeChanged { w = it.width.toFloat() }
+        .pointerInput(Unit) {
+            detectHorizontalDragGestures(
+                onDragEnd = {
+                    scope.launch {
+                        val t = w * 0.25f
+                        if (dx.value < -t && hasNext) { dx.animateTo(-(w + g), tween(220, easing = FastOutSlowInEasing)); NativePlayer.jump(if (idx + 1 < size) idx + 1 else 0) }
+                        else if (dx.value > t && hasPrev) { dx.animateTo(w + g, tween(220, easing = FastOutSlowInEasing)); NativePlayer.jump(if (idx > 0) idx - 1 else size - 1) }
+                        else { dx.animateTo(0f, spring(0.75f, 400f)); return@launch }
+                        delay(900); if (dx.value != 0f) dx.snapTo(0f)          // in case the player didn't move
+                    }
+                },
+                onDragCancel = { scope.launch { dx.animateTo(0f) } },
+            ) { c, d ->
+                c.consume()
+                val v = dx.value + d
+                val edge = (v > 0 && !hasPrev) || (v < 0 && !hasNext)
+                scope.launch { dx.snapTo(if (edge) dx.value + d * 0.3f else v) }
+            }
+        }
+        .then(if (onDouble != null) Modifier.pointerInput(Unit) { detectTapGestures(onDoubleTap = { onDouble() }) } else Modifier)) {
+        if (prev != null && dx.value > 0f) Box(Modifier.matchParentSize().offset { IntOffset((dx.value - w - g).roundToInt(), 0) }) { content(prev) }
+        Box(Modifier.matchParentSize().offset { IntOffset(dx.value.roundToInt(), 0) }) { content(cur) }
+        if (next != null && dx.value < 0f) Box(Modifier.matchParentSize().offset { IntOffset((dx.value + w + g).roundToInt(), 0) }) { content(next) }
+    }
+}
+
 @Composable
 private fun MiniBar(s: Song, st: NativePlayer.St, onOpen: () -> Unit) {
     val a = accent
-    val trig = with(LocalDensity.current) { 60.dp.toPx() }
-    var hx by remember { mutableStateOf(0f) }; var vy by remember { mutableStateOf(0f) }
-    Box(Modifier.fillMaxWidth().height(62.dp).clickable { onOpen() }
-        .pointerInput(Unit) { detectHorizontalDragGestures(onDragStart = { hx = 0f }, onDragEnd = { if (hx < -trig) NativePlayer.next() else if (hx > trig) NativePlayer.prev(); hx = 0f }, onDragCancel = { hx = 0f }) { c, d -> c.consume(); hx += d } }
-        .pointerInput(Unit) { detectVerticalDragGestures(onDragStart = { vy = 0f }, onDragEnd = { if (vy < -trig) onOpen(); vy = 0f }, onDragCancel = { vy = 0f }) { c, d -> c.consume(); vy += d } }) {
-        Row(Modifier.fillMaxSize().padding(start = 10.dp, end = 6.dp).offset { IntOffset((hx / 3).roundToInt(), 0) }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Art(s.cover, 44.dp, shape = RoundedCornerShape(10.dp), phName = s.album)
-            Column(Modifier.weight(1f)) { T(s.title, 15.sp, W700); T(s.artist.ifBlank { "Unknown Artist" }, 13.sp, color = C.sub) }
+    val pv = Morph.p.value
+    var vy by remember { mutableStateOf(0f) }
+    val h = Morph.screen.height.coerceAtLeast(1f)
+    Box(Modifier.fillMaxWidth().height(62.dp).onGloballyPositioned { Morph.mini = it.boundsInRoot() }
+        .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { onOpen() }
+        .pointerInput(Unit) {
+            detectVerticalDragGestures(onDragStart = { vy = 0f }, onDragEnd = { if (Morph.p.value > 0.22f) onOpen() else Morph.to(0f); vy = 0f }, onDragCancel = { Morph.to(0f); vy = 0f }) { c, d ->
+                c.consume(); vy += d; Morph.snap(-vy / (h * 0.65f))
+            }
+        }.graphicsLayer { alpha = (1f - pv * 4f).coerceIn(0f, 1f) }) {
+        Row(Modifier.fillMaxSize().padding(start = 10.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            SongSwiper(Modifier.weight(1f).fillMaxHeight().clipToBounds(), 24.dp) { x ->
+                Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.then(if (x.id == s.id) Modifier.onGloballyPositioned { Morph.miniArt = it.boundsInRoot() } else Modifier)) { Art(x.cover, 44.dp, shape = RoundedCornerShape(10.dp), phName = x.album) }
+                    Column(Modifier.weight(1f)) { T(x.title, 15.sp, W700); T(x.artist.ifBlank { "Unknown Artist" }, 13.sp, color = C.sub) }
+                }
+            }
             IB(if (st.playing) Ic.Pause else Ic.Play) { NativePlayer.toggle() }
             IB(Ic.Next) { NativePlayer.next() }
         }
@@ -148,10 +227,25 @@ private fun Tabs(tab: Int, onTab: (Int) -> Unit) {
     var w by remember { mutableStateOf(0f) }
     var drag by remember { mutableStateOf<Float?>(null) }
     val cell = if (w > 0) w / 4 else 0f
-    val x by animateFloatAsState(drag ?: (tab * cell), spring(0.72f, 420f), label = "ind")
+    val x by animateFloatAsState(drag ?: (tab * cell), if (drag != null) snap() else spring(0.72f, 420f), label = "ind")
     val hover = drag?.let { ((it + cell / 2) / cell).toInt().coerceIn(0, 3) }
+    val cellS by rememberUpdatedState(cell); val onTabS by rememberUpdatedState(onTab); val tabS by rememberUpdatedState(tab)
     Box(Modifier.fillMaxWidth().height(62.dp).padding(horizontal = 4.dp).onSizeChanged { w = it.width.toFloat() }
-        .pointerInput(cell) { detectDragGestures(onDragStart = { drag = tab * cell }, onDragEnd = { val i = (((drag ?: 0f) + cell / 2) / cell).toInt().coerceIn(0, 3); drag = null; onTab(i) }, onDragCancel = { drag = null }) { c, d -> c.consume(); drag = ((drag ?: 0f) + d.x).coerceIn(0f, cell * 3) } }) {
+        .pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                var dragging = false
+                // press on the highlighted tab and slide, or slide anywhere along the bar: the bubble follows the finger
+                while (true) {
+                    val ev = awaitPointerEvent()
+                    val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!ch.pressed) break
+                    if (!dragging && kotlin.math.abs(ch.position.x - down.position.x) > viewConfiguration.touchSlop) dragging = true
+                    if (dragging) { ch.consume(); drag = (ch.position.x - cellS / 2).coerceIn(0f, cellS * 3) }
+                }
+                if (dragging) { val i = (((drag ?: tabS * cellS) + cellS / 2) / cellS).toInt().coerceIn(0, 3); drag = null; onTabS(i) }
+            }
+        }) {
         if (cell > 0) Box(Modifier.offset { IntOffset(x.roundToInt(), 0) }.padding(top = 5.dp).width(with(LocalDensity.current) { cell.toDp() }).height(52.dp)
             .scale(if (drag != null) 1.06f else 1f).clip(RoundedCornerShape(20.dp)).background(mix(a, if (drag != null) 0.32f else 0.24f, Color.White.copy(alpha = 0.06f))).border(1.dp, Color.White.copy(alpha = if (drag != null) 0.16f else 0.08f), RoundedCornerShape(20.dp)))
         Row(Modifier.fillMaxSize()) {
@@ -170,7 +264,7 @@ private fun Tabs(tab: Int, onTab: (Int) -> Unit) {
 
 // ------------------------------------------------------------------ now playing (#np)
 @Composable
-fun FullPlayer(s: Song, onClose: () -> Unit) {
+fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
     val ctx = LocalContext.current
     val a = accent
     val st by NativePlayer.state.collectAsState()
@@ -181,11 +275,12 @@ fun FullPlayer(s: Song, onClose: () -> Unit) {
     val live = motion && !saving
     val levels by rememberLevels(live && st.playing)
     val trig = with(LocalDensity.current) { 70.dp.toPx() }
-    var hx by remember { mutableStateOf(0f) }; var vy by remember { mutableStateOf(0f) }
+    var vy by remember { mutableStateOf(0f) }
     var heart by remember { mutableStateOf(false) }
     val heartA by animateFloatAsState(if (heart) 1f else 0f, tween(if (heart) 140 else 650), label = "h", finishedListener = { if (heart) heart = false })
     var drag by remember { mutableStateOf<Float?>(null) }
-    Box(Modifier.fillMaxSize().offset { IntOffset(0, vy.coerceAtLeast(0f).roundToInt()) }.background(Color(0xFF08080A))) {
+    Box(Modifier.fillMaxSize()) {
+      Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.background(Color(0xFF08080A)).clipToBounds()) {
         // .bg: the cover itself, hugely blurred and darkened; .bg2: vignette; .glowpulse: the accent breathing with the bass
         val f = if (s.cover.isNotEmpty()) Store.coverFile(s.cover) else null
         if (f != null && Build.VERSION.SDK_INT >= 31) AsyncImage(f, null, Modifier.fillMaxSize().scale(1.4f).blur(60.dp), contentScale = ContentScale.Crop,
@@ -197,8 +292,11 @@ fun FullPlayer(s: Song, onClose: () -> Unit) {
             val bass = levels.take(6).average().toFloat()
             Canvas(Modifier.fillMaxSize()) { val r = size.width * 0.45f * (1f + bass * 0.25f); val c = Offset(size.width / 2, size.height * 0.32f); drawCircle(Brush.radialGradient(listOf(a.copy(alpha = 0.25f + bass * 0.25f), Color.Transparent), c, r), r, c) }
         }
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().pointerInput(Unit) {
-            detectVerticalDragGestures(onDragStart = { vy = 0f }, onDragEnd = { if (vy > trig * 2) onClose(); vy = 0f }, onDragCancel = { vy = 0f }) { c, d -> c.consume(); vy += d }
+      }
+        Column(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.statusBarsPadding().navigationBarsPadding().pointerInput(Unit) {
+            detectVerticalDragGestures(onDragStart = { vy = 0f }, onDragEnd = { if (vy > trig * 1.5f) onClose() else Morph.to(1f); vy = 0f }, onDragCancel = { Morph.to(1f); vy = 0f }) { c, d ->
+                c.consume(); vy += d; Morph.snap(1f - vy.coerceAtLeast(0f) / Morph.screen.height.coerceAtLeast(1f) * 1.4f)
+            }
         }.padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 18.dp)) {
             Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 IB(Ic.Down, onClick = onClose)
@@ -219,12 +317,10 @@ fun FullPlayer(s: Song, onClose: () -> Unit) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         val side = minOf(maxWidth, maxHeight, 420.dp)
-                        Box(Modifier.size(side).graphicsLayer { translationX = hx / 2; rotationZ = hx / 80; val k = if (st.playing) 1f else 0.92f; scaleX = k; scaleY = k }
-                            .shadow(50.dp, RoundedCornerShape(22.dp))
-                            .pointerInput(s.id) { detectTapGestures(onDoubleTap = { if (!Store.isFav(s.id)) Store.toggleFav(s.id); heart = true }) }
-                            .pointerInput(s.id) { detectHorizontalDragGestures(onDragStart = { hx = 0f }, onDragEnd = { if (hx < -trig) NativePlayer.next() else if (hx > trig) NativePlayer.prev(); hx = 0f }, onDragCancel = { hx = 0f }) { c, d -> c.consume(); hx += d } },
-                            contentAlignment = Alignment.Center) {
-                            Art(s.cover, null, Modifier.fillMaxSize(), RoundedCornerShape(22.dp), phName = s.album)
+                        Box(Modifier.size(side).onGloballyPositioned { Morph.cover = it.boundsInRoot() }.graphicsLayer { alpha = if (hideCover) 0f else 1f; val k = if (st.playing) 1f else 0.92f; scaleX = k; scaleY = k }, contentAlignment = Alignment.Center) {
+                            SongSwiper(Modifier.fillMaxSize(), 28.dp, onDouble = { if (!Store.isFav(s.id)) Store.toggleFav(s.id); heart = true }) { x ->
+                                Box(Modifier.fillMaxSize().shadow(50.dp, RoundedCornerShape(22.dp))) { Art(x.cover, null, Modifier.fillMaxSize(), RoundedCornerShape(22.dp), phName = x.album) }
+                            }
                             if (heartA > 0.01f) Icon(Ic.HeartFill, Modifier.scale(0.6f + heartA * 0.6f).graphicsLayer { alpha = heartA }, 110.dp, Color.White)
                         }
                     }
@@ -291,8 +387,8 @@ private fun NpSheet(s: Song) {
         Act(Ic.Search, "Look Up Song Info…") { Dialogs.sheet { LookupSong(s) } }
         Act(if (Store.isFav(s.id)) Ic.HeartFill else Ic.Heart, if (Store.isFav(s.id)) "Remove from Favorites" else "Add to Favorites") { Store.toggleFav(s.id) }
         Act(Ic.List, "Add to Playlist…") { Dialogs.sheet { PlaylistPicker(listOf(s.id)) } }
-        Act(Ic.Disc, "Go to Album") { Nav.open(Page.AlbumP(s.albumKey)); NpState.open.value = false }
-        Act(Ic.Person, "Go to Artist") { Nav.open(Page.ArtistP(primaryArtist(s.artist).ifBlank { s.albumArtist })); NpState.open.value = false }
+        Act(Ic.Disc, "Go to Album") { Nav.open(Page.AlbumP(s.albumKey)); NpState.open.value = false; Morph.to(0f) }
+        Act(Ic.Person, "Go to Artist") { Nav.open(Page.ArtistP(primaryArtist(s.artist).ifBlank { s.albumArtist })); NpState.open.value = false; Morph.to(0f) }
         Act(Ic.Spark, "Start Radio") { Radio.start(ctx, s) }
         Act(Ic.Timer, "Sleep Timer", if (sleepAt > 0) "Pausing in ${((sleepAt - System.currentTimeMillis()) / 60000 + 1).coerceAtLeast(1)} min" else if (sleepEnd) "At the end of this song" else "Off") { Dialogs.sheet { SleepSheet() } }
         Act(Ic.Info, "Song Info") { Dialogs.show { SongInfo(s) } }

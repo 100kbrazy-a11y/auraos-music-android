@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -134,7 +135,7 @@ fun ArtistsScreen() {
         LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
             if (songs.isEmpty()) item { AddMusicEmpty() }
             items(artists, key = { it.key }) { (name, l) ->
-                Row(Modifier.fillMaxWidth().press(0.98f) { Nav.open(Page.ArtistP(name)) }.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(Modifier.fillMaxWidth().press(0.98f, onDouble = { Store.toggleFavArtist(name); likeToast(name.lowercase() in Store.favArtists.value, "favorite artists") }) { Nav.open(Page.ArtistP(name)) }.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     Art(Store.artistInfo(name)?.optString("image")?.takeIf { Store.coverFile(it).exists() } ?: l.firstOrNull { it.cover.isNotEmpty() }?.cover ?: "", 56.dp, shape = CircleShape, ph = Ic.Person, phName = name)
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) { T(name, 15.sp, W700); if (name.lowercase() in favA) Icon(Ic.HeartFill, size = 14.dp, tint = accent) }
@@ -291,8 +292,8 @@ fun ArtistPage(name: String) {
     Tinted(photo) {
         LazyColumn(state = ls, contentPadding = PaddingValues(bottom = LocalBottom.current)) {
             item {
-                Box(Modifier.fillMaxWidth().aspectRatio(1.05f)) {
-                    Art(photo, null, Modifier.fillMaxSize(), RoundedCornerShape(0.dp), Ic.Person, name)
+                Box(Modifier.fillMaxWidth().aspectRatio(1.05f).clipToBounds()) {
+                    Art(photo, null, Modifier.fillMaxSize(), RoundedCornerShape(0.dp), Ic.Person, name, square = false)
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.35f), 0.35f to Color.Transparent, 1f to C.bg)))
                     T(name, 36.sp, W800, lines = 2, spacing = (-0.6).sp, modifier = Modifier.align(Alignment.BottomStart).padding(start = 18.dp, end = 18.dp, bottom = 8.dp))
                 }

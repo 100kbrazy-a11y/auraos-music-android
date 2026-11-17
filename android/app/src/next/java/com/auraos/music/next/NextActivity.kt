@@ -31,6 +31,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.lerp
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -104,6 +112,7 @@ fun App() {
         NativePlayer.artwork(c.id, bytes)
         Ctl.save()
     }
+    LaunchedEffect(full) { Morph.to(if (full) 1f else 0f) }
     LaunchedEffect(Unit) { NativePlayer.errors.collect { Toasts.show("Couldn't play: $it"); Diag.log("playback: $it") } }
     LaunchedEffect(Unit) { while (true) { delay(5000); if (NativePlayer.state.value.playing) Ctl.save() } }
     BackHandler(enabled = full || Nav.stack.isNotEmpty() || Sel.ids.isNotEmpty()) {
@@ -111,7 +120,7 @@ fun App() {
     }
     val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     CompositionLocalProvider(LocalAccent provides acc, LocalBottom provides (if (cur != null) 163.dp else 100.dp) + nav) {
-        Box(Modifier.fillMaxSize().background(C.bg)) {
+        Box(Modifier.fillMaxSize().background(C.bg).onGloballyPositioned { Morph.screen = it.boundsInRoot() }) {
             Aurora(motion && !saving)
             HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
                 when (page) { 0 -> AlbumsScreen(); 1 -> ArtistsScreen(); 2 -> SongsScreen(); else -> PlaylistsScreen() }
@@ -142,8 +151,25 @@ fun App() {
                 }
                 Dock(cur, pager.currentPage, { i -> Nav.stack.clear(); Nav.tab.value = i; scope.launch { pager.animateScrollToPage(i) } }) { full = true }
             }
-            AnimatedVisibility(full && cur != null, enter = slideInVertically(tween(450, easing = Ease)) { it }, exit = slideOutVertically(tween(450, easing = Ease)) { it }) {
-                cur?.let { FullPlayer(it) { full = false } }
+            // the media bar grows into the player (and shrinks back): the bubble's outline widens to the screen, the cover flies
+            // from the bar to its place, and the player's own background and controls fade in on the way
+            val pv = Morph.p.value
+            if (cur != null && pv > 0.001f) {
+                val d = LocalDensity.current
+                val scr = Morph.screen
+                val from = if (Morph.mini != Rect.Zero) Morph.mini else Rect(scr.left, scr.bottom - with(d) { 150.dp.toPx() }, scr.right, scr.bottom - with(d) { 88.dp.toPx() })
+                val r = lerp(from, scr, pv)
+                val rad = with(d) { 26.dp.toPx() } * (1f - pv)
+                Box(Modifier.fillMaxSize().graphicsLayer { clip = true; shape = MorphShape(r, rad) }.background(mix(acc, 0.14f, Color(0xFF1A1A1F)))) {
+                    FullPlayer(cur, ((pv - 0.3f) / 0.6f).coerceIn(0f, 1f), pv < 0.995f) { full = false }
+                }
+                if (pv < 0.995f) {
+                    val to = if (Morph.cover != Rect.Zero) Morph.cover else Rect(scr.left + with(d) { 24.dp.toPx() }, scr.top + scr.height * 0.14f, scr.right - with(d) { 24.dp.toPx() }, scr.top + scr.height * 0.14f + scr.width - with(d) { 48.dp.toPx() })
+                    val ar = lerp(if (Morph.miniArt != Rect.Zero) Morph.miniArt else from, to, pv)
+                    Box(Modifier.offset { IntOffset(ar.left.roundToInt(), ar.top.roundToInt()) }.size(with(d) { ar.width.toDp() }, with(d) { ar.height.toDp() })) {
+                        Art(cur.cover, null, Modifier.fillMaxSize(), RoundedCornerShape((10f + 12f * pv).dp), phName = cur.album, square = false)
+                    }
+                }
             }
             SheetHost()
         }
