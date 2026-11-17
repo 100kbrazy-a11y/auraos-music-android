@@ -123,3 +123,88 @@ export async function bestAlbumMatch(a) {
   const r = res.find((x) => same(x.album, a.title) && (!a.artist || a.artist === "Unknown Artist" || same(x.artist, a.artist)));
   return r || null;
 }
+
+// ============================================================ genres: several sources, and suggestions when unsure
+/** "Song (feat. X) [Official Audio] - Remastered 2011" → "Song" */
+export const cleanTitle = (t) => String(t || "")
+  .replace(/\s*[([{][^)\]}]*\b(feat|ft|with|prod|remaster|official|audio|video|lyrics?|visuali[sz]er|explicit|clean|version|edit|mono|stereo|live|bonus)\b[^)\]}]*[)\]}]/gi, "")
+  .replace(/\s+[-–—]\s+.*\b(remaster(ed)?|version|edit|mix|live|mono|stereo|single)\b.*$/i, "")
+  .replace(/\s+(feat|ft)\.?\s.*$/i, "").trim();
+const mainArtist = (a) => String(a || "").split(/\s*(?:,|&|\bx\b|\bfeat\.?|\bft\.?|\bwith\b|\/)\s*/i)[0].trim();
+
+// words that make a MusicBrainz tag a genre (its tags also include things like "seen live" or "american")
+const GENREISH = /\b(rock|pop|rap|hip[ -]?hop|trap|drill|r&b|rnb|soul|funk|jazz|blues|metal|core|punk|emo|indie|alternative|grunge|shoegaze|electronic|electro|house|techno|trance|dubstep|drum and bass|dnb|edm|dance|disco|garage|ambient|lo-?fi|synth|wave|country|folk|bluegrass|americana|gospel|classical|orchestral|opera|soundtrack|reggae|reggaeton|dancehall|latin|salsa|bachata|cumbia|afro|amapiano|k-?pop|j-?pop|city pop|ska|grime|phonk|hyperpop|experimental|psychedelic|singer-songwriter|acoustic|chill|downtempo|trip[ -]?hop|breakbeat|jungle|bass|hardstyle|gabber|industrial|noise|post-|neo-|gangsta|boom bap|cloud rap|rage|plugg|g-funk|crunk|bounce|bossa|samba|flamenco|fado|celtic|world|new age|swing|bebop|big band|motown|doo-wop|rockabilly|surf|stoner|doom|black metal|death metal|thrash|nu metal|metalcore|deathcore|post-rock|math rock|art pop|dream pop|bedroom pop|chamber|baroque|minimal|idm|glitch|footwork|juke|afrobeats?)\b/i;
+const NICE = { "hip hop": "Hip-Hop", "hip-hop": "Hip-Hop", "rnb": "R&B", "r&b": "R&B", "rhythm and blues": "R&B", "edm": "EDM", "lo-fi": "Lo-Fi", "lofi": "Lo-Fi",
+  "k-pop": "K-Pop", "kpop": "K-Pop", "j-pop": "J-Pop", "dnb": "Drum and Bass", "uk garage": "UK Garage", "idm": "IDM", "hip-hop/rap": "Hip-Hop/Rap" };
+export function niceGenre(g) {
+  const k = String(g || "").trim().toLowerCase();
+  if (!k) return "";
+  return NICE[k] || k.replace(/\b[a-z]/g, (c) => c.toUpperCase()).replace(/\bAnd\b/g, "and").replace(/\bR&b\b/g, "R&B");
+}
+export const isGenre = (g) => GENREISH.test(String(g || ""));
+
+// MusicBrainz asks for at most one request a second and a name for the app
+let mbAt = 0;
+async function mb(path, params) {
+  const wait = mbAt + 1100 - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  mbAt = Date.now();
+  return (await getJson(`https://musicbrainz.org/ws/2/${path}?` + new URLSearchParams({ ...params, fmt: "json" }),
+    { "User-Agent": "AuraOSMusic/1.0 ( https://github.com/100kbrazy-a11y/auraos-music-android )", Accept: "application/json" })) || {};
+}
+const mbTags = (x) => (x?.genres?.length ? x.genres : x?.tags || []).filter((t) => (t.count ?? 1) > 0 && isGenre(t.name))
+  .sort((a, b) => (b.count || 0) - (a.count || 0)).map((t) => niceGenre(t.name));
+
+/** An artist's genres: iTunes' artist listing, then MusicBrainz (strongest first). */
+export async function artistGenres(name) {
+  name = mainArtist(name);
+  if (!name || /^unknown/i.test(name)) return [];
+  const out = [];
+  try {
+    const r = (await json("https://itunes.apple.com/search?" + new URLSearchParams({ term: name, media: "music", entity: "musicArtist", limit: "10" }))).results || [];
+    const m = r.find((x) => same(x.artistName, name) && norm(x.artistName).length >= norm(name).length - 1);
+    if (m?.primaryGenreName && isGenre(m.primaryGenreName)) out.push(niceGenre(m.primaryGenreName));
+  } catch {}
+  try {
+    const r = await mb("artist/", { query: `artist:"${name.replace(/"/g, "")}"`, limit: "5" });
+    const a = (r.artists || []).find((x) => same(x.name, name) && (x.score || 0) >= 90);
+    if (a) {
+      let tags = mbTags(a);
+      if (!tags.length && a.id) { const full = await mb(`artist/${a.id}`, { inc: "genres+tags" }); tags = mbTags(full); }
+      out.push(...tags.slice(0, 3));
+    }
+  } catch {}
+  return [...new Set(out)];
+}
+
+/**
+ * Genre for a song: tries the song as it's tagged, then with a cleaned-up title and just the main artist.
+ * Returns { genre (when sure), maybe: [genres from near matches] }.
+ */
+export async function songGenre(s) {
+  const maybe = [];
+  const tries = [];
+  const t0 = s.title || "", a0 = s.artist || "", t1 = cleanTitle(t0), a1 = mainArtist(a0);
+  tries.push([t0, a0]);
+  if (t1 && (t1 !== t0 || a1 !== a0)) tries.push([t1, a1]);
+  for (const [title, artist] of tries) {
+    let res = [];
+    try { res = await search(`${artist} ${title}`.trim(), "song", { ...s, title, artist }); } catch { continue; }
+    for (const r of res.slice(0, 6)) {
+      const g = r.genre || "";
+      const titleOk = same(r.title, title) || same(cleanTitle(r.title), title);
+      const artistOk = !artist || same(r.artist, artist) || same(mainArtist(r.artist), artist);
+      const durOk = !s.duration || !r.duration || Math.abs(r.duration - s.duration) <= 8;
+      if (titleOk && artistOk && durOk) {
+        if (g) return { genre: g, maybe };
+        try { const d = await details(r); if (d.genre) return { genre: d.genre, maybe }; } catch {}
+      } else if (g && (artistOk || titleOk)) maybe.push(niceGenre(g));      // close, but not sure: a suggestion
+    }
+  }
+  return { genre: "", maybe: [...new Set(maybe)] };
+}
+
+/** Genres people pick from when nothing was found */
+export const COMMON_GENRES = ["Hip-Hop/Rap", "Trap", "Drill", "R&B", "Pop", "Rock", "Alternative", "Indie", "Metal", "Punk", "Emo", "Electronic", "House",
+  "Techno", "Dance", "Drum and Bass", "Dubstep", "Lo-Fi", "Ambient", "Jazz", "Soul", "Funk", "Blues", "Country", "Folk", "Singer-Songwriter",
+  "Reggae", "Reggaeton", "Latin", "Afrobeats", "K-Pop", "J-Pop", "Classical", "Soundtrack", "Gospel", "Phonk", "Hyperpop", "Experimental"];

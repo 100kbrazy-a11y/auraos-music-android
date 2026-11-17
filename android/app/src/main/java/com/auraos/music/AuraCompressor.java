@@ -48,7 +48,7 @@ final class AuraCompressor {
         }
         File out = new File(base + ".m4a");
         try {
-            return encode(in, out, false, 256);
+            return encode(in, out, false, Math.max(128, Math.min(256, Math.round(opusKbps * 1.6f))));   // (AAC needs a bit more for the same quality)
         } catch (Exception e) {
             out.delete();
             throw e;

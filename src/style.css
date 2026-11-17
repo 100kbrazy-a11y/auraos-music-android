@@ -975,3 +975,41 @@ body.nomotion .yt-results > * { animation: none; }
 /* long lists: rows and cards off screen aren't laid out or painted until they're about to scroll in */
 .list > .row { content-visibility: auto; contain-intrinsic-size: auto 62px; }
 .grid > .card { content-visibility: auto; contain-intrinsic-size: auto 210px; }
+
+/* popups: rows with a switch or a count on the right */
+#sheet .act .meta { flex: 1; min-width: 0; }
+#sheet .act .meta .s { font-size: 12.5px; font-weight: 450; color: var(--sub); margin-top: 2px; line-height: 1.3; }
+#sheet .act .badge { min-width: 26px; height: 22px; padding: 0 8px; border-radius: 999px; display: grid; place-items: center; font-size: 12px; font-weight: 800;
+  color: #fff; background: color-mix(in srgb, var(--accent) 70%, transparent); flex: none; }
+.group .item .badge { flex: none; }
+
+/* picking genres yourself */
+.gpick { padding: 2px 0 6px; }
+.gp-item { padding: 12px 20px 10px; border-bottom: 1px solid var(--line); overflow: hidden; transition: height .32s var(--ease), opacity .25s, padding .32s var(--ease); }
+.gp-item.done .gp-sub { color: var(--accent); font-weight: 700; }
+.gp-item.gone { height: 0 !important; opacity: 0; padding-top: 0; padding-bottom: 0; }
+.gp-head { display: flex; align-items: center; gap: 12px; }
+.gp-head .art { width: 46px; height: 46px; border-radius: 9px; overflow: hidden; flex: none; }
+.gp-head .meta { min-width: 0; flex: 1; }
+.gp-head .t { font-weight: 750; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gp-head .s { color: var(--sub); font-size: 12.5px; }
+.gp-chips, .gp-more { padding: 10px 0 0; flex-wrap: wrap; overflow: visible; }
+.gp-chips .chip.sugg { background: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+.gp-chips .chip.ghost, .gp-more .chip.ghost { background: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .2); }
+.gp-more { display: none; }
+.gp-more.open { display: flex; }
+.gp-type { display: flex; gap: 8px; width: 100%; margin-top: 4px; }
+.gp-type .field { flex: 1; min-width: 0; margin: 0; }
+
+/* Android: the mini player → full player container transform. The container starts with the mini player's own surface… */
+#np .lgm { background: color-mix(in srgb, var(--accent) 14%, rgba(26, 26, 31, .95)); box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  backdrop-filter: blur(24px) saturate(1.5); -webkit-backdrop-filter: blur(24px) saturate(1.5); }
+/* …and the mini player's title, buttons and progress ride pinned in its corner while they fade */
+#np .mghost { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 0; pointer-events: none; will-change: transform, opacity; }
+#np .mghost .mg-meta { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+#np .mghost .t { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+#np .mghost .s { color: var(--sub); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#np .mghost .ib { display: grid; place-items: center; color: var(--text); }
+#np .mghost .mg-bar { background: rgba(255, 255, 255, .12); border-radius: 1px; overflow: hidden; }
+#np .mghost .mg-bar b { display: block; height: 100%; background: var(--accent); border-radius: 1px; width: 100%; transform-origin: left; }
+#np .stage, #np .face.front, #np .lyr .lhead .art { will-change: transform; }

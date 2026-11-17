@@ -17,7 +17,7 @@ import { idb } from "./store.js";
 import { diag } from "./diag.js";
 import { DiskFile, dropPicked, initLibraryURL, songFileURLNow, moveSongsToDisk, delSongFile } from "./files.js";
 import { nc, symbolFor } from "./native-chrome.js";
-import { search as searchOnline, details as resultDetails, bestSongMatch, bestAlbumMatch, same } from "./lookup.js";
+import { search as searchOnline, details as resultDetails, bestSongMatch, bestAlbumMatch, same, songGenre, artistGenres, niceGenre, COMMON_GENRES } from "./lookup.js";
 
 const native = Capacitor.isNativePlatform();
 const ios = Capacitor.getPlatform() === "ios" || /iP(hone|ad|od)/.test(navigator.userAgent);
@@ -50,6 +50,7 @@ const ICONS = {
   history: ["M12 21a9 9 0 1 0-8.5-6M3 9.5V15h5.5M12 7.5V12l3 2"], browse: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM15.5 8.5l-2 5-5 2 2-5z"],
   chevron: ["M7 10l5 5 5-5"], logout: ["M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"],
   filter: ["M4 6h16M7 12h10M10 18h4"], tag: ["M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01"],
+  compress: ["M4 14h6v6M20 10h-6V4M14 10l6.5-6.5M3.5 20.5 10 14"],
   sun: ["M12 7.6a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8zM12 2.2v2.2M12 19.6v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.2 12h2.2M19.6 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"],
   moon: ["M20.2 14.6A8.4 8.4 0 0 1 9.4 3.8a8.4 8.4 0 1 0 10.8 10.8z"],
   pin: ["M9 3.5h6l-.8 6.2 3.8 3.3v2H6v-2l3.8-3.3zM12 15v5.5"],
@@ -860,44 +861,132 @@ function filterSheet() {
 }
 
 /** Look up genres online for songs that don't have one (one lookup per album, then single songs). */
+/**
+ * Find genres for songs without one. For each album (or song without an album), in order, until one is sure:
+ *  1. the album on iTunes / Deezer   2. up to three of its songs (as tagged, then cleaned up: no "feat.", "Remastered"…)
+ *  3. the artist's genre (iTunes' artist listing, then MusicBrainz)   4. the genre most of your other songs by the artist have
+ * What's still unknown opens a picker with suggestions (near matches, the artist's genres, your library's).
+ */
 async function findGenres(songs) {
   const todo = (songs || [...lib.songs.values()]).filter((s) => !genresOf(s).length);
   if (!todo.length) return snack("Every song already has a genre");
-  const pb = progressBox("Finding genres");
-  let found = 0, done = 0;
-  const pause = () => new Promise((r) => setTimeout(r, 300));
-  const albumKeys = [...new Set(todo.filter((s) => s.album).map((s) => albumKey(s)))];
-  const total = albumKeys.length + todo.filter((s) => !s.album).length || 1;
-  try {
-    for (const k of albumKeys) {
-      const a = lib.albumMap.get(k);
-      pb.set(done++ / total, a?.title || "");
-      if (!a) continue;
-      let genre = "";
-      try {
-        const m = await bestAlbumMatch(a);
-        if (m) genre = m.genre || (await resultDetails(m)).genre || "";
-        if (!genre) { const sm = await bestSongMatch(a.tracks[0]); if (sm) genre = sm.genre || (await resultDetails(sm)).genre || ""; }
-      } catch {}
-      if (genre) for (const t of a.tracks) if (!genresOf(t).length) { await lib.updateSong(t.id, { genre }); found++; }
-      await pause();
-    }
-    for (const s of todo.filter((x) => !x.album && !genresOf(x).length)) {
-      pb.set(done++ / total, s.title);
-      try {
-        const m = await bestSongMatch(s);
-        const genre = m ? m.genre || (await resultDetails(m)).genre : "";
-        if (genre) { await lib.updateSong(s.id, { genre }); found++; }
-      } catch {}
-      await pause();
-    }
-  } finally {
-    pb.close();
+  const groups = [];
+  const byAlbum = new Map();
+  for (const s of todo) {
+    if (s.album) { const k = albumKey(s); if (!byAlbum.has(k)) { const g = { key: k, album: s.album, title: s.album, artist: s.albumartist || s.artist || "", tracks: [] }; byAlbum.set(k, g); groups.push(g); } byAlbum.get(k).tracks.push(s); }
+    else groups.push({ key: "s" + s.id, album: "", title: s.title, artist: s.artist || "", tracks: [s] });
   }
+  let stop = false, found = 0, offline = 0;
+  const pb = progressBox("Finding genres", () => { stop = true; });
+  const artistCache = new Map();
+  const mainOf = (a) => String(a || "").split(/\s*(?:,|&|\bx\b|\bfeat\.?|\bft\.?|\bwith\b|\/)\s*/i)[0].trim();
+  const artistOnline = async (name) => {
+    const k = mainOf(name).toLowerCase();
+    if (!k) return [];
+    if (!artistCache.has(k)) artistCache.set(k, artistGenres(name).catch(() => []));
+    return artistCache.get(k);
+  };
+  const libraryGenre = (name) => {                   // the genre most of your other songs by this artist have
+    const k = mainOf(name).toLowerCase();
+    const count = new Map();
+    for (const x of lib.songs.values()) {
+      if (mainOf(x.albumartist || x.artist).toLowerCase() !== k) continue;
+      for (const g of genresOf(x)) count.set(g, (count.get(g) || 0) + 1);
+    }
+    return [...count.entries()].sort((a, b) => b[1] - a[1]).map((e) => e[0]);
+  };
+  const fails = [];
+  try {
+    for (let i = 0; i < groups.length && !stop; i++) {
+      const g = groups[i];
+      const label = g.album ? `${g.title} · ${g.artist}` : `${g.title}${g.artist ? " · " + g.artist : ""}`;
+      const step = (t) => pb.set(i / groups.length, `${i + 1} of ${groups.length} · ${label}`, { text: t });
+      let genre = "", why = "";
+      const maybe = new Set();
+      try {
+        if (g.album) {
+          step("Looking up the album…");
+          const a = lib.albumMap.get(g.key);
+          const m = a ? await bestAlbumMatch(a) : null;
+          if (m) genre = m.genre || (await resultDetails(m)).genre || "";
+          if (genre) why = "album";
+        }
+        for (const t of g.tracks.slice(0, 3)) {
+          if (genre || stop) break;
+          step(`Looking up “${t.title}”…`);
+          const r = await songGenre(t);
+          if (r.genre) { genre = r.genre; why = "song"; }
+          r.maybe.forEach((x) => maybe.add(x));
+        }
+        if (!genre && g.artist) {
+          step(`Looking up ${mainOf(g.artist)}…`);
+          const ag = await artistOnline(g.artist);
+          if (ag.length) { genre = ag[0]; why = "artist"; ag.slice(1).forEach((x) => maybe.add(x)); }
+        }
+      } catch (e) { offline++; diag.log(`genres: ${label}: ${e?.message || e}`); }
+      if (!genre && g.artist) { const lg = libraryGenre(g.artist); if (lg.length) { genre = lg[0]; why = "your library"; } }
+      if (genre) {
+        genre = niceGenre(genre);
+        for (const t of g.tracks) if (!genresOf(lib.songs.get(t.id) || t).length) { await lib.updateSong(t.id, { genre }); found++; }
+        diag.log(`genre for ${label}: ${genre} (from the ${why})`);
+      } else fails.push({ ...g, maybe: [...maybe] });
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  } finally { pb.close(); }
   lib.rebuild();
   refresh();
-  const left = todo.filter((s) => !genresOf(lib.songs.get(s.id) || s).length).length;
-  snack(found ? `Found genres for ${plural(found, "song")}` + (left ? ` · ${left} not found` : "") : "Couldn't find genres online — check your internet connection");
+  const left = fails.reduce((n, g) => n + g.tracks.length, 0);
+  if (!left) return snack(`Found genres for ${plural(found, "song")}`);
+  if (!found && offline === groups.length) snack("Couldn't reach the music databases — pick genres yourself, or try again online", null, null, 6000);
+  else snack(found ? `Found genres for ${plural(found, "song")} · pick the rest yourself` : "No genres found online — pick them yourself", null, null, 5000);
+  genrePicker(fails);
+}
+
+/** Pick genres for what couldn't be found: suggestions for each album / song, or any genre you like. */
+function genrePicker(groups) {
+  const libGenres = (() => { const c = new Map(); for (const x of lib.songs.values()) for (const g of genresOf(x)) c.set(g, (c.get(g) || 0) + 1); return [...c.entries()].sort((a, b) => b[1] - a[1]).map((e) => e[0]); })();
+  const mainOf = (a) => String(a || "").split(/\s*(?:,|&|\bx\b|\bfeat\.?|\bft\.?|\bwith\b|\/)\s*/i)[0].trim().toLowerCase();
+  const artistLib = (name) => { const k = mainOf(name), c = new Map(); for (const x of lib.songs.values()) if (mainOf(x.albumartist || x.artist) === k) for (const g of genresOf(x)) c.set(g, (c.get(g) || 0) + 1); return [...c.keys()]; };
+  const count = h("div", { class: "s" });
+  const list = h("div", { class: "gpick" });
+  let left = groups.length;
+  const upd = () => { count.textContent = left ? `${plural(left, groups.length === 1 ? "item" : "item")} without a genre — tap one to set it` : "All done"; };
+  upd();
+  const apply = async (g, genre, block) => {
+    genre = niceGenre(genre);
+    for (const t of g.tracks) await lib.updateSong(t.id, { genre });
+    nc.haptic("success");
+    block.classList.add("done");
+    block.querySelector(".gp-sub").textContent = `${genre} · set`;
+    setTimeout(() => { block.style.height = block.offsetHeight + "px"; requestAnimationFrame(() => block.classList.add("gone")); setTimeout(() => block.remove(), 360); }, 450);
+    left--; upd();
+    pageDirty = true;
+    if (!left) setTimeout(() => { closeSheet(); lib.rebuild(); refresh(); snack("Every song has a genre now"); }, 900);
+  };
+  for (const g of groups) {
+    const t0 = g.tracks[0];
+    const sugg = [...new Set([...g.maybe, ...artistLib(g.artist), ...libGenres.slice(0, 4)].map(niceGenre).filter(Boolean))].slice(0, 6);
+    const chips = h("div", { class: "chips gp-chips" });
+    const more = h("div", { class: "chips gp-more" });
+    const block = h("div", { class: "gp-item" },
+      h("div", { class: "gp-head" }, art(t0.cover, { label: g.title }), h("div", { class: "meta" }, h("div", { class: "t" }, g.title),
+        h("div", { class: "s gp-sub" }, [g.artist, g.album ? plural(g.tracks.length, "song") : "Single"].filter(Boolean).join(" · ")))),
+      chips, more);
+    for (const x of sugg) chips.append(h("button", { class: "chip sugg", onclick: () => apply(g, x, block) }, x));
+    chips.append(h("button", { class: "chip ghost", onclick: () => {
+      if (more.childElementCount) { more.classList.toggle("open"); return; }
+      const all = [...new Set([...libGenres, ...COMMON_GENRES].map(niceGenre))].filter((x) => !sugg.includes(x));
+      for (const x of all) more.append(h("button", { class: "chip", onclick: () => apply(g, x, block) }, x));
+      const inp = h("input", { class: "field gp-input", placeholder: "Or type one, e.g. Cloud Rap", enterkeyhint: "done" });
+      const go = () => { const v = inp.value.trim(); if (v) { inp.blur(); apply(g, v, block); } };
+      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+      more.append(h("div", { class: "gp-type" }, inp, h("button", { class: "btn tonal", onclick: go }, "Set")));
+      more.classList.add("open");
+    } }, sugg.length ? "More…" : "Choose…"));
+    list.append(block);
+  }
+  openSheet(h("div", {}, h("div", { class: "sh-head" }, icon("search"), h("div", { class: "meta" }, h("div", { class: "t" }, "Pick genres"), count)), list),
+    { onClose: () => { lib.rebuild(); refresh(); } });
 }
 
 // Play / Shuffle buttons. Upright they sit under the title; sideways they move into the top bar.
@@ -1507,37 +1596,12 @@ function pageSettings() {
     h("div", { class: "stats" }, stat(lib.songs.size, "songs"), stat(lib.albums.length, "albums"), stat(new Set([...lib.songs.values()].map((x) => (x.albumartist || x.artist || "").toLowerCase()).filter(Boolean)).size, "artists"),
       stat(Object.keys(lib.meta.playlists).length, "playlists")), used);
 
-  // ---- adding music
-  const add = group("Add Music",
-    item("add", "Add Songs", "Music files from your phone", pickSongs),
-    item("pack", "Add Music Pack", "A …-musicpack.zip someone shared with you", pickPacks),
-    native && item("search", "Search YouTube Music", "Find songs, albums, playlists and artists and add them · experimental", () => push({ type: "ytsearch" })),
-    item("globe", "Add from Link", "Paste a YouTube or YouTube Music song, album, playlist or artist link", () => addFromLink()));
-
-  // ---- library health: only what needs doing
-  const noCover = lib.albums.filter((a) => !a.cover).length;
-  const noGenre = [...lib.songs.values()].filter((x) => !genresOf(x).length).length;
-  const afSw = toggle(s.autofill !== false);
-  const health = group("Library Health",
-    noCover ? item("globe", "Find Missing Covers", `${plural(noCover, "album")} without a cover`, () => findCovers(true), h("span", { class: "badge" }, String(noCover))) : null,
-    noGenre ? item("search", "Find Genres", `${plural(noGenre, "song")} without a genre`, () => findGenres(), h("span", { class: "badge" }, String(noGenre))) : null,
-    !noCover && !noGenre && lib.songs.size ? h("div", { class: "item" }, icon("check"), h("div", { class: "meta" }, h("div", { class: "t" }, "All set"), h("div", { class: "s" }, "Every album has a cover and every song a genre"))) : null,
-    item("spark", "Fill In Info Automatically", "Look up missing albums, years, genres and covers when you add songs", () => {
-      s.autofill = s.autofill === false; lib.saveMeta(); afSw.classList.toggle("on", s.autofill !== false);
-    }, afSw),
-    AuraPlayer?.compress ? (() => {
-      const left = [...lib.songs.values()].filter(needsCompress).length;
-      const saved = fmtSize(lib.meta.compressSaved || 0);
-      const sub = !player.nat ? "Starts once the new player is on"
-        : s.compress === false ? "Off · new songs are kept as they are"
-        : comp.running ? `Compressing · ${Math.min(comp.done + 1, comp.total)} of ${comp.total} · ${saved} saved`
-        : left ? `${plural(left, "song")} waiting · ${saved} saved so far` : `Opus 160 kbps, near-lossless · ${saved} saved`;
-      const sw = toggle(s.compress !== false);
-      return item("pack", "Compress Music", sub, () => {
-        s.compress = s.compress === false; lib.saveMeta(); sw.classList.toggle("on", s.compress !== false);
-        if (s.compress !== false) scheduleCompress(300); refresh();
-      }, sw);
-    })() : null);
+  // ---- your music: three rows, each opens a popup (keeps Settings short)
+  const issues = libraryIssues();
+  const mine = group("Your Music",
+    item("add", "Add Music", native ? "Songs, music packs, YouTube Music" : "Songs, music packs or a YouTube link", () => addMusicMenu()),
+    lib.songs.size ? item("folder", "Library", issues.text, () => libraryMenu(), issues.n ? h("span", { class: "badge" }, String(issues.n)) : null) : null,
+    item("info", "Diagnostics", "What the app did recently — share it when something goes wrong", showDiagnostics));
 
   // ---- playback
   const xfVal = h("span", { class: "val" });
@@ -1564,6 +1628,9 @@ function pageSettings() {
   drawEq(); drawChips();
   const [eqRow, eqBox, eqUpd] = fold("eq", "Equalizer", () => s.eq || "Flat", h("div", {}, eqViz, chips));
   eqLabel = eqUpd;
+  const [xfRow, xfBox, xfUpd] = fold("queue", "Crossfade", () => (+s.crossfade ? `${+s.crossfade} s` : "Off"),
+    h("div", {}, h("div", { class: "s fold-note" }, "Blend the end of each song into the next"), h("div", { class: "sl-wrap" }, xf)));
+  xf.addEventListener("input", () => xfUpd());
   const natSw = toggle(s.nativePlayer !== false), svSw = toggle(s.autoSaver !== false);
   const natSub = () => !nativePlayerAvailable ? "" : migr.running ? `Moving songs for it · ${migr.done} of ${migr.total}` : player.nat ? "On · Android's own audio engine (less crackling, better battery)" : s.nativePlayer === false ? "Off · using the old player" : "Starting…";
   const play = group("Playback",
@@ -1572,12 +1639,7 @@ function pageSettings() {
       if (s.nativePlayer !== false) { const left = [...lib.songs.values()].some((x) => x.store !== "disk"); if (left) moveLibrary(); else switchToNative(); }
       else snack("The old player comes back the next time you open the app");
     }, natSw),
-    item("spark", "Save Battery Automatically", "Pause the moving background and visualizer in Battery Saver or below 20%", () => {
-      s.autoSaver = s.autoSaver === false; lib.saveMeta(); svSw.classList.toggle("on", s.autoSaver !== false);
-      if (s.autoSaver === false) setSaver(false); else judgePower(lastPower);
-    }, svSw),
-    h("div", { class: "item" }, icon("queue"), h("div", { class: "meta" }, h("div", { class: "t" }, "Crossfade"), h("div", { class: "s" }, "Blend the end of each song into the next")), xfVal),
-    h("div", { class: "sl-wrap" }, xf),
+    xfRow, xfBox,
     eqRow, eqBox);
 
   // ---- look & feel
@@ -1597,6 +1659,10 @@ function pageSettings() {
     item("spark", "Motion Effects", "Sliding pages, glow, living background", () => {
       s.motion = !motion(); lib.saveMeta(); mSw.classList.toggle("on", motion()); document.body.classList.toggle("nomotion", !motion());
     }, mSw),
+    item("spark", "Save Battery Automatically", "Pause the moving background in Battery Saver or below 20%", () => {
+      s.autoSaver = s.autoSaver === false; lib.saveMeta(); svSw.classList.toggle("on", s.autoSaver !== false);
+      if (s.autoSaver === false) setSaver(false); else judgePower(lastPower);
+    }, svSw),
     item("folder", "Keep Media Bar Tucked", "Sideways: just the album cover, tucked under the tabs", () => {
       miniTuck.pin(!s.tuckPinned); pinSw.classList.toggle("on", !!s.tuckPinned);
     }, pinSw),
@@ -1604,7 +1670,7 @@ function pageSettings() {
 
   // ---- sharing & accounts
   const ovVal = h("span", { class: "val" }, "");
-  const share = group("Sharing & Accounts",
+  const share = group("Accounts & Sharing",
     canDragOut() && item("pack", "Drag to Other Apps", "Hold a song, album or playlist, then drag it into Files, Messages… Albums and playlists become music packs.", async () => {
       const { granted } = await DragOut.canOverlay();
       if (granted) return snack("Naming packs when you drop them is on");
@@ -1613,16 +1679,7 @@ function pageSettings() {
     item("artist", "YouTube Account", ytSignedInNow() ? "Signed in · tap to sign out" : "Sign in if YouTube asks you to (for Add from Link)", () => youtubeAccount()));
   if (canDragOut()) DragOut.canOverlay().then(({ granted }) => (ovVal.textContent = granted ? "Names on" : "Names off")).catch(() => {});
 
-  // ---- help & storage
-  const help = group("Help & Storage",
-    item("info", "Diagnostics", "What the app did recently — share it when something goes wrong", showDiagnostics),
-    item("trash", "Remove All Music", "Deletes the songs stored in this app", async () => {
-      if (!lib.songs.size) return;
-      if (await confirmBox("Remove all music?", `This deletes all ${plural(lib.songs.size, "song")} from this app. Music packs and files on your phone aren't touched.`, "Remove All")) {
-        player.pause(); await lib.removeSongs([...lib.songs.keys()]); player.queue = []; player.index = -1; updateMini(); refresh(); snack("Removed all music");
-      }
-    }));
-  p.append(...[summary, add, lib.songs.size ? health : null, play, look, share, help].filter(Boolean),
+  p.append(...[summary, mine, play, look, share].filter(Boolean),
     h("div", { class: "empty", style: { padding: "10px 30px 40px", fontSize: "12px" } }, "AuraOS Music · music packs work on iPhone, Android and the desktop app"));
   return p;
 }
@@ -1650,17 +1707,37 @@ function addMusicMenu() {
   ]);
 }
 
+/** what in the library could use attention (shown on the Library row) */
+function libraryIssues() {
+  const noCover = lib.albums.filter((a) => !a.cover).length;
+  const noGenre = [...lib.songs.values()].filter((x) => !genresOf(x).length).length;
+  const toComp = AuraPlayer?.compress ? [...lib.songs.values()].filter((x) => needsCompress(x, true)).length : 0;
+  const parts = [noCover && plural(noCover, "missing cover"), noGenre && `${noGenre} without a genre`, toComp && `${toComp} to compress`].filter(Boolean);
+  return { noCover, noGenre, toComp, n: (noCover ? 1 : 0) + (noGenre ? 1 : 0) + (toComp ? 1 : 0), text: comp.running ? `Compressing · ${Math.min(comp.done + 1, comp.total)} of ${comp.total}` : parts.length ? parts.join(" · ") : "Covers, genres, compression, clean-up · all set" };
+}
+
 function libraryMenu() {
   const s = lib.meta.settings;
-  const missing = [...lib.songs.values()].filter((x) => !genresOf(x).length).length;
+  const is = libraryIssues();
   const counts = h("div", { class: "s" }, `${plural(lib.songs.size, "song")} · ${plural(lib.albums.length, "album")}`);
-  usage().then((u) => { if (u.usage) counts.textContent += ` · ${fmtSize(u.usage)} used`; });
-  const afSw = h("span", { class: "switch" + (s.autofill !== false ? " on" : "") });
+  usage().then((u) => { if (u.usage) counts.textContent += ` · ${fmtSize(u.usage)}`; });
+  const sw = (on) => h("span", { class: "switch" + (on ? " on" : "") });
+  const afSw = sw(s.autofill !== false), cSw = sw(s.compress !== false);
+  const saved = fmtSize(lib.meta.compressSaved || 0);
+  const failed = [...lib.songs.values()].filter((x) => x.compressed === -1 && !isOpus(x)).length;
   menuSheet(h("div", { class: "sh-head" }, icon("folder"), h("div", { class: "meta" }, h("div", { class: "t" }, "Library"), counts)), [
-    { icon: "image", label: "Find Missing Covers", sub: "Look up album art online", run: () => findCovers(true) },
-    { icon: "tag", label: "Find Genres", sub: missing ? `Look up genres online for ${plural(missing, "song")} that don't have one` : "Every song has a genre", run: () => findGenres() },
-    { icon: "spark", label: "Fill In Song Info Automatically", sub: "When you add songs, look up missing albums, years, genres and covers", right: afSw, stay: true,
+    { icon: "image", label: "Find Missing Covers", sub: is.noCover ? `${plural(is.noCover, "album")} without a cover` : "Every album has a cover", run: () => findCovers(true),
+      right: is.noCover ? h("span", { class: "badge" }, String(is.noCover)) : null },
+    { icon: "search", label: "Find Genres", sub: is.noGenre ? `${plural(is.noGenre, "song")} without a genre` : "Every song has a genre", run: () => findGenres(),
+      right: is.noGenre ? h("span", { class: "badge" }, String(is.noGenre)) : null },
+    { icon: "spark", label: "Fill In Info Automatically", sub: "Look up missing albums, years, genres and covers when you add songs", right: afSw, stay: true,
       run: () => { s.autofill = s.autofill === false; lib.saveMeta(); afSw.classList.toggle("on", s.autofill !== false); } },
+    AuraPlayer?.compress && { icon: "pack", label: "Compress Music", sub: s.compress === false ? "Off · songs are kept as they are" : `Everything becomes Opus (near-lossless, a fraction of the size)${lib.meta.compressSaved ? ` · ${saved} saved` : ""}`,
+      right: cSw, stay: true,
+      run: () => { s.compress = s.compress === false; lib.saveMeta(); cSw.classList.toggle("on", s.compress !== false); if (s.compress !== false) scheduleCompress(300); } },
+    AuraPlayer?.compress && { icon: "compress", label: "Compress Now", sub: comp.running ? `Compressing · ${Math.min(comp.done + 1, comp.total)} of ${comp.total}`
+      : is.toComp ? `${plural(is.toComp, "song")} to go${failed ? ` (${failed} failed before — tried again)` : ""}` : "Everything is compressed", run: () => compressNow(),
+      right: is.toComp ? h("span", { class: "badge" }, String(is.toComp)) : null },
     { gap: true },
     { icon: "trash", label: "Remove All Music", sub: "Deletes the songs stored in this app", danger: true, run: () => removeAllMusic() },
   ]);
@@ -3190,7 +3267,7 @@ function prepareNp() {
 // Everything is a function of p, so a finger can hold it at any in-between stage; letting go hands it to a spring.
 const SPRING_OPEN = { k: 210, c: 21 }, SPRING_CLOSE = { k: 240, c: 24 }, SPRING_BACK = { k: 260, c: 22 };
 // the player opens and closes on one smooth curve (fast start, long gentle landing, no overshoot)
-const GLIDE_MS = 450;
+const GLIDE_MS = 350;
 function bezier(x1, y1, x2, y2) {
   const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx, cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
   const X = (t) => ((ax * t + bx) * t + cx) * t, Y = (t) => ((ay * t + by) * t + cy) * t, dX = (t) => (3 * ax * t + 2 * bx) * t + cx;
@@ -3201,7 +3278,7 @@ function bezier(x1, y1, x2, y2) {
     return Y(t);
   };
 }
-const GLIDE = bezier(0.32, 0.72, 0, 1);
+const GLIDE = bezier(0.2, 0, 0, 1);            // (quick start, long soft landing)
 const morph = {
   p: 0, v: 0, rect: null, raf: 0, active: false, nat: null,
   dist() { return Math.max(220, (this.rect?.top || innerHeight * 0.8) * 0.95); },  // how far a finger travels for the whole morph (≈ the top edge follows it)
@@ -3215,7 +3292,54 @@ const morph = {
     const lh = this.lyrHead();
     this.nat = { cover: R(np.cover), stage: R(np.stage), titles: R(titles), pp: R(np.pp), prev: R(ctrls.children[1]), next: R(ctrls.children[3]), seek: R(np.seek),
       viz: R(np.viz), lart: lh ? R(lh.querySelector(".art")) : null, lmeta: lh ? R(lh.querySelector(".meta")) : null };
+    if (!nc.on) this.measureDroid(lh);
     el.classList.add("morphing");
+  },
+  /** Android: the mini player's pieces (where they are now), the hero art, and the full player's parts that fade */
+  measureDroid(lh) {
+    const r = this.rect || (this.rect = anchorRect());
+    const m = $("#mini"), R = (x) => (x ? x.getBoundingClientRect() : null);
+    const box = (x) => { const b = R(x); return b && b.width ? { x: b.left, y: b.top, w: b.width, h: b.height } : null; };
+    const mArt = m && !m.hidden ? m.querySelector(".art") : null;
+    const cs = (x, prop, d) => (x ? parseFloat(getComputedStyle(x)[prop]) || d : d);
+    const dk = $("#dock");
+    this.bar = { art: box(mArt), artRad: cs(mArt, "borderTopLeftRadius", 10), rad: cs(m && !m.hidden ? m : dk, "borderTopLeftRadius", 18), dockH: dk.offsetHeight || 140 };
+    if (!this.bar.art) this.bar.art = { x: r.left + 10, y: r.top + 8, w: 48, h: 48 };
+    // the hero: the big cover (its stage moves, its front face rounds), or the lyrics header's little cover
+    const front = np.cover.querySelector(".face.front");
+    if (lh) {
+      const a = lh.querySelector(".art");
+      this.hero = { moveEl: a, radEl: a, nat: R(a), origin: { x: 0, y: 0 }, rad: cs(a, "borderTopLeftRadius", 10) };
+    } else {
+      const c = R(np.cover), st = R(np.stage);
+      this.hero = { moveEl: np.stage, radEl: front, nat: c, origin: { x: c.left - st.left, y: c.top - st.top }, rad: cs(front, "borderTopLeftRadius", 22) };
+    }
+    // everything else in the full player fades (in the last 40%)
+    const w = np.wrapEl, out = [];
+    for (const c of w.children) {
+      if (!lh && c === np.stage) continue;
+      if (lh && c.classList.contains("lyr")) { for (const k of c.children) { if (k === lh) out.push(lh.querySelector(".meta")); else out.push(k); } continue; }
+      out.push(c);
+    }
+    out.push(np.viz);
+    this.fades = out.filter(Boolean);
+    // the mini player's own title, buttons and progress, drawn pinned to the container (the real ones step aside)
+    this.ghost?.remove();
+    this.ghost = null;
+    if (m && !m.hidden && !miniTuck.tucked) {
+      const gh = h("div", { class: "mghost" });
+      for (const sel of [".meta", ".prev", ".pp", ".nx", ".bar"]) {
+        const x = m.querySelector(sel), b = box(x);
+        if (!x || !b || getComputedStyle(x).display === "none") continue;
+        const c = x.cloneNode(true);
+        c.classList.add("mg-" + sel.slice(1));
+        if (sel === ".meta") this.ghostMeta = c;
+        Object.assign(c.style, { position: "absolute", left: (b.x - r.left).toFixed(1) + "px", top: (b.y - r.top).toFixed(1) + "px", width: b.w.toFixed(1) + "px", height: b.h.toFixed(1) + "px", margin: "0", transform: "none", opacity: "1" });
+        gh.append(c);
+      }
+      const el = $("#np");
+      this.ghost = el.insertBefore(gh, this.g?.isConnected ? this.g.nextSibling : el.firstChild);
+    }
   },
   /** the lyrics view's header (small cover + title), when that's what the player shows */
   lyrHead() {
@@ -3247,7 +3371,72 @@ const morph = {
     document.documentElement.classList.add("native-morph");
     this.set(this.p);
   },
+  /**
+   * Android: one container transform. p = 1 is the mini player, 0 is full screen; g = 1 - p drives everything at once:
+   *  - the container (the mini player's own box) grows to the whole screen: x, y, width, height, corner radius
+   *  - the mini player's title / buttons / progress stay pinned in it and fade out over the first 25%
+   *  - the album art is the one shared element: size, position and corner radius from the thumbnail to the big cover
+   *  - the full player's controls fade in over the last 40% (nothing flies, so nothing collides or gets clipped)
+   *  - the background crossfades with the growth; the bottom bar slides down and fades as soon as it starts
+   */
   set(p) {
+    if (nc.on) return this.setIOS(p);
+    this.p = p; this.active = true;
+    const el = $("#np"), r = this.rect || (this.rect = anchorRect());
+    if (!this.nat) this.measure();
+    const W = innerWidth, H = innerHeight, g = 1 - Math.max(0, Math.min(1, p));
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const ss = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const B = this.bar;
+    // 1) the container
+    const rc = { l: lerp(r.left, 0, g), t: lerp(r.top, 0, g), r: lerp(r.right, W, g), b: lerp(r.bottom, H, g) };
+    const rad = lerp(B.rad, 0, g);
+    document.body.classList.add("np-morph");
+    for (const c of el.children) {
+      if (c.classList.contains("lgm")) continue;
+      if (g >= 0.9995) { c.style.clipPath = ""; continue; }
+      let m = c._mb;
+      if (!m) { const br = c.getBoundingClientRect(); m = c._mb = { l: br.left, t: br.top, r: br.right, b: br.bottom, s: br.width / (c.offsetWidth || br.width || 1) || 1 }; }
+      if (m.r - m.l < 1) continue;
+      const k = 1 / m.s;
+      c.style.clipPath = `inset(${((rc.t - m.t) * k).toFixed(1)}px ${((m.r - rc.r) * k).toFixed(1)}px ${((m.b - rc.b) * k).toFixed(1)}px ${((rc.l - m.l) * k).toFixed(1)}px round ${(rad * k).toFixed(1)}px)`;
+    }
+    // 4) its surface: the mini player's glass, crossfading into the player's own background as it grows
+    if (!this.g?.isConnected) this.g = el.insertBefore(h("div", { class: "lgm" }), el.firstChild);
+    const gs = this.g.style;
+    gs.display = g < 0.999 ? "block" : "none";
+    gs.left = rc.l.toFixed(1) + "px"; gs.top = rc.t.toFixed(1) + "px";
+    gs.width = (rc.r - rc.l).toFixed(1) + "px"; gs.height = (rc.b - rc.t).toFixed(1) + "px";
+    gs.borderRadius = rad.toFixed(1) + "px"; gs.opacity = "1";               // (stays solid underneath: never see-through midway)
+    el.style.setProperty("--bgo", g.toFixed(3));                            // the player's background crossfades in on top
+    // 2) the mini player's own controls, pinned to the container's corner, gone by 25%
+    if (this.ghost) {
+      this.ghost.style.transform = `translate3d(${rc.l.toFixed(1)}px, ${rc.t.toFixed(1)}px, 0)`;
+      this.ghost.style.opacity = Math.max(0, 1 - g / 0.25).toFixed(3);
+      this.ghost.style.visibility = g >= 0.25 ? "hidden" : "";
+    }
+    // 3) the album art
+    const hero = this.hero;
+    if (hero && B.art && hero.nat && hero.nat.width) {
+      const sz = lerp(B.art.w, hero.nat.width, g), s1 = sz / hero.nat.width;
+      const x = lerp(B.art.x, hero.nat.left, g), y = lerp(B.art.y, hero.nat.top, g);
+      const t = hero.moveEl, o = hero.origin;
+      t.style.transformOrigin = `${o.x.toFixed(1)}px ${o.y.toFixed(1)}px`;
+      t.style.transform = `translate3d(${(x - hero.nat.left).toFixed(1)}px, ${(y - hero.nat.top).toFixed(1)}px, 0) scale(${s1.toFixed(4)})`;
+      hero.radEl.style.borderRadius = (lerp(B.artRad, hero.rad, g) / s1).toFixed(2) + "px";
+      // the fading title keeps clear of the growing art (it's never overlapped)
+      if (this.ghostMeta) this.ghostMeta.style.transform = `translate3d(${Math.max(0, x + sz - (B.art.x + B.art.w) - (rc.l - r.left)).toFixed(1)}px, ${Math.max(0, y - B.art.y - (rc.t - r.top)).toFixed(1)}px, 0)`;
+    }
+    // the full player's controls: the last 40%, rising a touch into place
+    const fo = ss(0.6, 1, g);
+    for (const x of this.fades) { x.style.opacity = fo.toFixed(3); x.style.transform = fo < 1 ? `translate3d(0, ${((1 - fo) * 14).toFixed(1)}px, 0)` : ""; }
+    // the bottom bar (tabs and the bubble around them) slides down and fades straight away
+    const nav = Math.min(1, g / 0.3), dk = $("#dock");
+    dk.style.transition = "none";
+    dk.style.transform = nav > 0 ? `translate3d(0, ${(nav * (B.dockH * 0.6 + 16)).toFixed(1)}px, 0)` : "";
+    dk.style.opacity = (1 - nav).toFixed(3);
+  },
+  setIOS(p) {
     this.p = p; this.active = true;
     const el = $("#np"), r = this.rect || (this.rect = anchorRect());
     if (!this.nat) this.measure();
@@ -3338,6 +3527,13 @@ const morph = {
     for (const x of [np.stage, ...pieces.flip.map((f) => f.el), ...pieces.fade, pieces.cover].filter(Boolean)) { x.style.transform = ""; x.style.opacity = ""; x.style.transformOrigin = ""; }
     for (const c of el.children) { c.style.clipPath = ""; c._mb = null; }
     document.body.classList.remove("np-morph");
+    if (!nc.on) {
+      this.ghost?.remove(); this.ghost = null; this.ghostMeta = null;
+      for (const x of this.fades || []) { x.style.opacity = ""; x.style.transform = ""; }
+      if (this.hero) { this.hero.moveEl.style.transform = ""; this.hero.moveEl.style.transformOrigin = ""; this.hero.radEl.style.borderRadius = ""; }
+      this.fades = null; this.hero = null; this.bar = null;
+      const dk = $("#dock"); dk.style.transform = ""; dk.style.opacity = ""; dk.style.transition = "";
+    }
   },
   /** arrive: finish the moment it reaches `to` and hand its speed to done(v) (for momentum into the bubble) */
   animate(to, sp, done, arrive = false) {
@@ -3364,7 +3560,7 @@ const morph = {
     cancelAnimationFrame(this.raf);
     const from = this.p, dist = Math.abs(to - from);
     if (dist < 0.002) { this.set(to); this.v = 0; return done?.(0); }
-    const dur = Math.max(180, GLIDE_MS * Math.pow(Math.min(1, dist), 0.6));
+    const dur = Math.max(140, GLIDE_MS * Math.pow(Math.min(1, dist), 0.6));
     const t0 = performance.now();
     const step = (ts) => {
       const x = Math.min(1, (ts - t0) / dur);
@@ -3395,6 +3591,7 @@ function anchorRect() {
   const a = nc.on && nc.anchorBox;                // iPhone: the native bubble says exactly where it is
   if (a && a.w > 0) return { left: a.x, top: a.y, right: a.x + a.w, bottom: a.y + a.h, width: a.w, height: a.h };
   const side = matchMedia("(orientation: landscape) and (min-width: 640px)").matches;
+  if (!nc.on && !side && !$("#mini").hidden) return $("#mini").getBoundingClientRect();   // (Android: the mini player itself grows)
   const el = side ? ($("#mini").hidden ? $("#tabs") : $("#mini")) : $("#dock");
   const r = el.getBoundingClientRect();
   if (side && miniTuck.tucked && !$("#mini").hidden) return { top: r.top, bottom: r.bottom, left: r.left, right: r.left + 68 };
@@ -3988,12 +4185,16 @@ async function switchToNative() {
 // ---- Android: songs are compressed to Opus 160 kbps (near-lossless to the ear, a fraction of the size), one at a time
 // in the background, with the phone's own encoder. Songs already small (YouTube downloads, MP3s up to ~200 kbps) are left alone.
 const COMP_KBPS = 160;
-const comp = { running: false, done: 0, total: 0, t: 0 };
+const comp = { running: false, done: 0, total: 0, t: 0, retry: false, stop: false, fails: 0, onProgress: null, cur: "" };
 const canCompress = () => !!AuraPlayer?.compress && player.nat && lib.meta.settings.compress !== false;
-function needsCompress(s) {
-  if (s.store !== "disk" || s.compressed || /\.(opus|ogg)$/i.test(s.file)) return false;
-  const kbps = s.duration > 0 && s.size ? (s.size * 8) / s.duration / 1000 : 0;
-  return kbps ? kbps > 200 : s.size > 8e6;
+// every song ends up Opus: lossless / high-bitrate ones at 160 kbps; songs already smaller than that at their own bitrate
+// (so nothing ever gets bigger). Songs that are already Opus (e.g. new YouTube downloads) are left as they are.
+const isOpus = (s) => /\.(opus|ogg|webm)$/i.test(s.file || "") || /^Opus/i.test(s.codec || "");
+const srcKbps = (s) => (s.duration > 0 && s.size ? (s.size * 8) / s.duration / 1000 : 0);
+const targetKbps = (s) => { const k = srcKbps(s); return k ? Math.max(64, Math.min(COMP_KBPS, Math.round(k / 8) * 8)) : COMP_KBPS; };
+function needsCompress(s, retry = comp.retry) {
+  if (s.store !== "disk" || isOpus(s) || s.compressed === 1 || s.compressed === 2) return false;
+  return s.compressed !== -1 || retry;
 }
 function scheduleCompress(ms = 3000) {
   if (!canCompress()) return;
@@ -4004,21 +4205,30 @@ async function compressLibrary() {
   if (comp.running || !canCompress()) return;
   comp.running = true;
   let sinceSave = 0;
+  const tried = new Set();                     // (each song at most once per run)
   try {
     for (;;) {
-      const todo = [...lib.songs.values()].filter(needsCompress);
+      const todo = [...lib.songs.values()].filter((x) => !tried.has(x.id) && needsCompress(x));
       if (!todo.length) break;
       comp.total = comp.done + todo.length;
       let progressed = false;
       for (const s of todo) {
-        if (!canCompress()) break;
+        if (!canCompress() || comp.stop) break;
+        comp.cur = s.title || "";
+        comp.onProgress?.();
         const busy = new Set([player.current?.id, player.queue[player.index + 1]]);    // (the song playing and the next one: later)
         if (busy.has(s.id)) continue;
+        tried.add(s.id);
         const old = s.file, stem = old.replace(/\.[^./]+$/, "") + ".c";
         try {
-          const r = await AuraPlayer.compress({ from: "Songs/" + old, to: "Songs/" + stem, kbps: COMP_KBPS });
+          const r = await AuraPlayer.compress({ from: "Songs/" + old, to: "Songs/" + stem, kbps: targetKbps(s) });
           const nf = stem + "." + String(r.file).split(".").pop();
           if (!lib.songs.has(s.id) || player.current?.id === s.id || lib.songs.get(s.id).file !== old) { await delSongFile({ store: "disk", file: nf }); continue; }
+          if (r.size > (r.before || s.size) * 1.05) {             // (came out bigger: keep the original)
+            await delSongFile({ store: "disk", file: nf }); await lib.updateSong(s.id, { compressed: 2 });
+            diag.log(`kept ${s.title} as it is (compressing wouldn't make it smaller)`);
+            comp.done++; progressed = true; continue;
+          }
           await lib.updateSong(s.id, { file: nf, size: r.size, type: r.type, codec: r.codec, compressed: 1 });
           await delSongFile({ store: "disk", file: old });
           lib.meta.compressSaved = (lib.meta.compressSaved || 0) + Math.max(0, (r.before || s.size) - r.size);
@@ -4027,19 +4237,47 @@ async function compressLibrary() {
           if (player.nat && player.queue.includes(s.id)) player.markQueue();     // the native player needs the new file
         } catch (e) {
           diag.log(`couldn't compress ${s.title}: ${e?.message || e}`);
-          if (lib.songs.has(s.id)) await lib.updateSong(s.id, { compressed: -1 });  // (left as it is; never tried again)
+          comp.fails++;
+          if (lib.songs.has(s.id)) await lib.updateSong(s.id, { compressed: -1 });  // (left as it is; Compress Now tries again)
         }
         comp.done++; progressed = true;
-        if (stack.at(-1)?.type === "settings" && comp.done % 3 === 0) refresh();
+        comp.onProgress?.();
         await new Promise((r) => setTimeout(r, 60));
       }
       if (!progressed) break;                  // only the playing songs are left: they're done after a song change
     }
   } finally {
-    comp.running = false;
+    comp.running = false; comp.retry = false; comp.stop = false; comp.cur = "";
     lib.saveMeta();
+    comp.onProgress?.(true);
     if (stack.at(-1)?.type === "settings") refresh();
   }
+}
+/** Settings › Library › Compress Now: everything not yet Opus, right away (songs that failed before get another go) */
+async function compressNow() {
+  if (!AuraPlayer?.compress) return;
+  if (!player.nat) return snack("Compressing starts once the new player is on (Settings › Playback › Native Player)");
+  lib.meta.settings.compress = true; lib.saveMeta();
+  comp.retry = true;
+  const left = [...lib.songs.values()].filter((s) => needsCompress(s, true)).length;
+  if (!left) return snack("Everything is already compressed");
+  const before = lib.meta.compressSaved || 0;
+  comp.done = 0; comp.total = left; comp.fails = 0;
+  const pb = progressBox("Compressing your music", () => { comp.stop = true; });
+  comp.onProgress = (end) => {
+    if (end) {
+      comp.onProgress = null; pb.close();
+      const saved = (lib.meta.compressSaved || 0) - before;
+      const left2 = [...lib.songs.values()].filter((s) => needsCompress(s, true)).length;
+      snack(`Compressed ${plural(comp.done - comp.fails, "song")} · ${fmtSize(saved)} saved` + (comp.fails ? ` · ${comp.fails} couldn't be` : "") + (left2 && !comp.fails ? ` · ${left2} left (playing now)` : ""),
+        comp.fails ? "Details" : null, comp.fails ? showDiagnostics : null, 9000);
+      return;
+    }
+    pb.set(comp.total ? comp.done / comp.total : 0, `${Math.min(comp.done + 1, comp.total)} of ${comp.total}`, { text: comp.cur ? `Compressing · ${comp.cur}` : "" });
+  };
+  clearTimeout(comp.t);
+  if (comp.running) { comp.onProgress(); return; }      // (already going: it picks up the retries on its next round)
+  compressLibrary();
 }
 player.addEventListener("track", () => scheduleCompress(8000));
 lib.onAdded = () => scheduleCompress(5000);     // new songs: once the adding has settled
@@ -4202,6 +4440,6 @@ async function boot() {
     const audio = files.filter((f) => !/\.zip$/i.test(f.name));
     if (audio.length) importAudio(audio);
   });
-  window.__app = { render, showQueue, morphP: () => (morph.active ? morph.p : null), morphAt: (p) => { if (!npOpen) { prepareNp(); morph.rect = anchorRect(); } cancelAnimationFrame(morph.raf); morph.set(p); }, morphClear: () => morph.clear(), nc, compressLibrary, comp, needsCompress, ytCache, ytJobs, artistMenu, toggleFavArtist, progressBox, DiskFile, miniTuck, morph, filt, findGenres, filterSheet, get lyr() { return lyrView; }, np, browse, similarSongs, playWithMix, lyricsPicker, lookupDialog, autoFill, lib, player, push, goTab, openNp, closeNp, toggleLyrics, sharePack, importPacks, importAudio, startSelect, refresh, back, stack: () => stack };
+  window.__app = { findGenres, compressNow, libraryMenu, render, showQueue, morphP: () => (morph.active ? morph.p : null), morphAt: (p) => { if (!npOpen) { prepareNp(); morph.rect = anchorRect(); } cancelAnimationFrame(morph.raf); morph.set(p); }, morphClear: () => morph.clear(), nc, compressLibrary, comp, needsCompress, ytCache, ytJobs, artistMenu, toggleFavArtist, progressBox, DiskFile, miniTuck, morph, filt, findGenres, filterSheet, get lyr() { return lyrView; }, np, browse, similarSongs, playWithMix, lyricsPicker, lookupDialog, autoFill, lib, player, push, goTab, openNp, closeNp, toggleLyrics, sharePack, importPacks, importAudio, startSelect, refresh, back, stack: () => stack };
 }
 boot();

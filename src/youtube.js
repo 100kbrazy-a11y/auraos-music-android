@@ -241,7 +241,9 @@ async function fetchAudio(id, onFrac, onStage) {
           const ps = info.playability_status;
           if (ps && ps.status && ps.status !== "OK") return { why: `${name}: ${ps.status}${ps.reason ? " – " + ps.reason : ""}` };
           let fmt;
-          try { fmt = info.chooseFormat({ type: "audio", quality: "best", format: "mp4" }); } catch { return { why: `${name}: no m4a audio` }; }
+          // Android: YouTube's own Opus stream (better than its AAC, and no re-encoding needed); otherwise / if missing: AAC
+          if (Capacitor.getPlatform() === "android") { try { fmt = info.chooseFormat({ type: "audio", quality: "best", format: "webm" }); } catch {} }
+          if (!fmt) { try { fmt = info.chooseFormat({ type: "audio", quality: "best", format: "mp4" }); } catch { return { why: `${name}: no audio` }; } }
           let url = await timed(fmt.decipher(yt.session.player), 30000, "Unscrambling the audio address");
           if (pot) { const u = new URL(url); u.searchParams.set("pot", pot); url = u.toString(); }
           return { info, fmt, url };
@@ -252,7 +254,12 @@ async function fetchAudio(id, onFrac, onStage) {
       const size = +got.fmt.content_length || 0;
       diag.log(`YouTube: ${name} gave an address for ${id} (${Math.round(size / 1024)} KB)`);
       onStage?.("Downloading…", 0);
-      const file = await download(got.url, size, ua, id, onFrac, WEBBY.has(name) ? (name === "YTMUSIC" ? "https://music.youtube.com" : "https://www.youtube.com") : "");
+      const opus = /webm|opus/i.test(got.fmt.mime_type || "");
+      const ext = opus ? "webm" : "m4a";
+      const kbps = Math.round((+got.fmt.bitrate || +got.fmt.average_bitrate || 0) / 1000);
+      const file = await download(got.url, size, ua, id, onFrac, WEBBY.has(name) ? (name === "YTMUSIC" ? "https://music.youtube.com" : "https://www.youtube.com") : "", ext);
+      file.ext = ext;
+      file.codec = `${opus ? "Opus" : "AAC"}${kbps ? ` · ${kbps} kbps` : ""} · from YouTube`;
       goodClient = name;
       const b = got.info.basic_info || {};
       return { ...file, client: name, meta: { title: b.title || "", artist: b.author || "", duration: b.duration || 0, thumb: lastThumb(b.thumbnail) } };
@@ -265,11 +272,11 @@ async function fetchAudio(id, onFrac, onStage) {
 
 /** Download natively, straight to a file. iPhone: into Library/Incoming (the library moves it into place).
  *  Android: into the cache, then handed over as a Blob (Android keeps songs inside the app's database). */
-async function download(url, size, ua, id, onFrac, origin = "") {
+async function download(url, size, ua, id, onFrac, origin = "", ext = "m4a") {
   const { Filesystem, Directory } = await import("@capacitor/filesystem");
   const dir = onDisk ? Directory.Library : Directory.Cache;
   // (Android's downloader doesn't create folders: there it goes straight into the files folder, which always exists)
-  const rel = `${onDisk && Capacitor.getPlatform() === "ios" ? "Incoming/" : ""}yt-${id}-${Date.now().toString(36)}.m4a`;
+  const rel = `${onDisk && Capacitor.getPlatform() === "ios" ? "Incoming/" : ""}yt-${id}-${Date.now().toString(36)}.${ext}`;
   let sub = null;
   const full = size ? `${url}&range=0-${size - 1}` : url;
   // (every download in flight hears every progress event: only listen to this one's)
@@ -288,7 +295,7 @@ async function download(url, size, ua, id, onFrac, origin = "") {
     diag.log(`YouTube: download finished · ${Math.round(got / 1024)} KB${r?.status ? " · HTTP " + r.status : ""}`);
     if (got < 20000 || (size && got < size * 0.9)) throw new Error(`download refused (${got} bytes)`);
     keep = onDisk;
-    return onDisk ? { rel, size: got } : { blob: blob.type ? blob : new Blob([blob], { type: "audio/mp4" }), size: got };
+    return onDisk ? { rel, size: got } : { blob: blob.type ? blob : new Blob([blob], { type: ext === "webm" ? "audio/webm" : "audio/mp4" }), size: got };
   } finally {
     try { await sub?.remove(); } catch {}
     if (!keep) { try { await Filesystem.deleteFile({ path: rel, directory: dir }); } catch {} }
@@ -363,12 +370,12 @@ async function addTracks(tracks, lib, onProgress, opts = {}) {
       const tags = tidy({ title: t.title || a.meta.title, artist: t.artist || a.meta.artist, album: t.album });
       const cover = await coverP;
       const info = { ...tags, track: t.track || 0, duration: t.duration || a.meta.duration || 0,
-        codec: "AAC · from YouTube", source: `https://music.youtube.com/watch?v=${t.id}` };
+        codec: a.codec || "AAC · from YouTube", source: `https://music.youtube.com/watch?v=${t.id}` };
       if (t.albumartist) info.albumartist = t.albumartist;
       if (t.year) info.year = String(t.year);
       const r = await addOne(() => a.blob
-        ? lib.addKnown(a.blob, "m4a", info, cover)                // (no tag reading: YouTube already told us)
-        : lib.addLocalFile(a.rel, a.size, "m4a", { albumartist: "", disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", ...info }, cover));
+        ? lib.addKnown(a.blob, a.ext || "m4a", info, cover)       // (no tag reading: YouTube already told us)
+        : lib.addLocalFile(a.rel, a.size, a.ext || "m4a", { albumartist: "", disc: 0, year: "", genre: "", composer: "", label: "", copyright: "", isrc: "", bpm: "", ...info }, cover));
       r.skipped ? skipped++ : (added++, songs.push(r.song));
       streak = 0;
       keep(i, r.song.id);
