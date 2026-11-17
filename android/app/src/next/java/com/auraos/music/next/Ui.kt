@@ -194,7 +194,7 @@ fun Modifier.graphicsScale(s: Float): Modifier = this.graphicsLayer { scaleX = s
 /** the glass pill of tool buttons at the top right: search, filter, settings */
 @Composable
 fun Tools(filter: (() -> Unit)? = null) {
-    Row(Modifier.clip(RoundedCornerShape(22.dp)).background(Color.White.copy(alpha = 0.07f)).glass(RoundedCornerShape(22.dp), Color.Transparent).padding(horizontal = 2.dp)) {
+    Row(Modifier.clip(RoundedCornerShape(22.dp)).background(Color.White.copy(alpha = 0.07f)).glass(RoundedCornerShape(22.dp), Color.Transparent, corner = 22.dp).padding(horizontal = 2.dp)) {
         IB(Ic.Search, box = 42.dp) { Nav.open(Page.Search) }
         IB(Ic.Filter, box = 42.dp, on = Filt.active()) { if (filter != null) filter() else Dialogs.sheet { FilterSheet() } }
         IB(Ic.Gear, box = 42.dp) { Nav.open(Page.Settings) }
@@ -590,7 +590,7 @@ fun SelectionBar() {
     val by = songs.associateBy { it.id }
     val list = Sel.ids.mapNotNull { by[it] }
     val a = accent
-    Row(Modifier.fillMaxWidth().shadow(20.dp).glass(androidx.compose.ui.graphics.RectangleShape, mix(a, 0.22f, C.surface), strong = true).statusBarsPadding().height(60.dp).padding(start = 4.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+    Row(Modifier.fillMaxWidth().shadow(20.dp).glass(androidx.compose.ui.graphics.RectangleShape, mix(a, 0.22f, C.surface), strong = true, corner = 0.dp).statusBarsPadding().height(60.dp).padding(start = 4.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         IB(Ic.Close) { Sel.ids.clear() }
         T("${list.size} selected", 17.sp, W750, modifier = Modifier.weight(1f).padding(start = 4.dp))
         IB(Ic.HeartFill.takeIf { list.all { Store.isFav(it.id) } } ?: Ic.Heart) { Store.setFav(list.map { it.id }); Sel.ids.clear() }

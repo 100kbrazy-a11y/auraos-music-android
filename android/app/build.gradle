@@ -46,14 +46,13 @@ repositories {
 }
 
 dependencies {
-    nextImplementation platform("androidx.compose:compose-bom:2024.02.00")
+    nextImplementation platform("androidx.compose:compose-bom:2024.09.03")
     nextImplementation "androidx.compose.ui:ui"
     nextImplementation "androidx.compose.foundation:foundation"
     nextImplementation "androidx.compose.material3:material3"
     nextImplementation "androidx.compose.material:material-icons-core"
     nextImplementation "androidx.activity:activity-compose:1.8.2"
     nextImplementation "io.coil-kt:coil-compose:2.5.0"
-    nextImplementation "dev.chrisbanes.haze:haze:0.7.3"
     nextImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
     implementation "androidx.media3:media3-exoplayer:1.4.1"
     implementation "androidx.media3:media3-session:1.4.1"

@@ -44,9 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auraos.music.NativePlayer
-import dev.chrisbanes.haze.HazeDefaults
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.haze
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -143,9 +141,10 @@ fun App() {
     val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     CompositionLocalProvider(LocalAccent provides acc, LocalBottom provides (if (cur != null) 163.dp else 100.dp) + nav) {
         Box(Modifier.fillMaxSize().background(C.bg).onGloballyPositioned { Morph.screen = it.boundsInRoot() }) {
-            val haze = remember { HazeState() }
-          CompositionLocalProvider(LocalHaze provides haze) {
-           Box(Modifier.fillMaxSize().haze(haze, HazeDefaults.style(backgroundColor = C.bg))) {
+            val backdrop = rememberGraphicsLayer()
+          CompositionLocalProvider(LocalBackdrop provides backdrop) {
+           CompositionLocalProvider(LocalBackdrop provides null) {   // glass inside the backdrop can't look through itself
+           Box(Modifier.fillMaxSize().backdropSource(backdrop)) {
             Aurora(motion && !saving)
             HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
                 when (page) { 0 -> AlbumsScreen(); 1 -> ArtistsScreen(); 2 -> SongsScreen(); else -> PlaylistsScreen() }
@@ -165,12 +164,13 @@ fun App() {
                 }
             }
            }
+           }
             AnimatedVisibility(Sel.ids.isNotEmpty(), enter = slideInVertically { -it }, exit = slideOutVertically { -it }) { SelectionBar() }
             Column(Modifier.align(Alignment.BottomCenter)) {
                 if (busy.isNotEmpty()) Box(Modifier.padding(horizontal = 24.dp, vertical = 4.dp).align(Alignment.CenterHorizontally).clip(RoundedCornerShape(14.dp)).background(C.surface2).padding(horizontal = 14.dp, vertical = 8.dp)) { T(busy, 13.sp, W650) }
                 AnimatedVisibility(Snack.text.value != null, enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut()) {
                     Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-                        Box(Modifier.shadow(30.dp, RoundedCornerShape(14.dp)).glass(RoundedCornerShape(14.dp), Color(0xFFECECF0), strong = true).clip(RoundedCornerShape(14.dp)).background(Color(0xFFECECF0).copy(alpha = if (Prefs.liquid.value) 0.5f else 0.85f)).heightIn(min = 48.dp).padding(horizontal = 18.dp, vertical = 12.dp), contentAlignment = Alignment.CenterStart) {
+                        Box(Modifier.shadow(30.dp, RoundedCornerShape(14.dp)).glass(RoundedCornerShape(14.dp), Color(0xFF2A2A30), strong = true, corner = 14.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFECECF0).copy(alpha = if (Prefs.liquid.value) 0.5f else 0.85f)).heightIn(min = 48.dp).padding(horizontal = 18.dp, vertical = 12.dp), contentAlignment = Alignment.CenterStart) {
                             T(Snack.text.value ?: "", 15.sp, W550, Color(0xFF19191D), lines = 3)
                         }
                     }

@@ -123,7 +123,7 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
     val levels by rememberLevels(cur != null && st.playing && motion && !saving, 40)
     Box(Modifier.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp).fillMaxWidth()
         .shadow(40.dp, RoundedCornerShape(26.dp), ambientColor = Color.Black, spotColor = Color.Black)
-        .glass(RoundedCornerShape(26.dp), mix(a, 0.09f, Color(0xFF1A1A20))).clip(RoundedCornerShape(26.dp))) {
+        .glass(RoundedCornerShape(26.dp), mix(a, 0.09f, Color(0xFF1A1A20)), corner = 26.dp).clip(RoundedCornerShape(26.dp))) {
         if (cur != null && motion && !saving) Bars(levels, a.copy(alpha = 0.32f), Modifier.matchParentSize().graphicsLayer { alpha = 0.9f })
         Column {
             if (cur != null) MiniBar(cur, st, onOpen)
