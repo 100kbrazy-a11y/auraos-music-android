@@ -204,7 +204,7 @@ class Library extends EventTarget {
     diag.step = `Cover · ${name}`;
     song.cover = await timed(this.storeCover(tags, picture || folderCover), 30000, `Saving the cover of ${name}`);
     song.store = await putSongFile(blob.type ? blob : new Blob([blob], { type }), file, source || blob.source);
-    await idb.put("songs", song);
+    await idb.put("songs", song); this.onAdded?.(song);
     this.songs.set(song.id, song);
     return { song, skipped: false };
   }
@@ -223,7 +223,7 @@ class Library extends EventTarget {
     diag.step = `Cover · ${tags.title}`;
     song.cover = await timed(this.storeCover(tags, picture), 30000, `Saving the cover of ${tags.title}`);
     song.store = await putSongFile(blob.type ? blob : new Blob([blob], { type }), file);
-    await idb.put("songs", song);
+    await idb.put("songs", song); this.onAdded?.(song);
     this.songs.set(song.id, song);
     return { song, skipped: false };
   }
@@ -237,9 +237,9 @@ class Library extends EventTarget {
     const song = { id: uid(), file, ...tags, size, added: Date.now(), type };
     diag.step = `Cover · ${tags.title}`;
     song.cover = await timed(this.storeCover(tags, picture), 30000, `Saving the cover of ${tags.title}`);
-    try { song.store = await putSongFile({ size, type }, file, { path: await libraryFileURL(rel), offset: 0, length: -1 }); }
+    try { song.store = await putSongFile({ size, type }, file, { path: await libraryFileURL(rel), rel, offset: 0, length: -1 }); }
     finally { await dropPicked(rel); }
-    await idb.put("songs", song);
+    await idb.put("songs", song); this.onAdded?.(song);
     this.songs.set(song.id, song);
     return { song, skipped: false };
   }

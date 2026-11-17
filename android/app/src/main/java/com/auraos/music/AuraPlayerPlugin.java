@@ -161,6 +161,39 @@ public class AuraPlayerPlugin extends Plugin {
         });
     }
 
+    // ------------------------------------------------------------------ compressing songs (Opus 160 kbps)
+    private final java.util.concurrent.ExecutorService work = java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    /** from: the song's file (relative to the app's files folder); to: the output without extension. */
+    @PluginMethod
+    public void compress(PluginCall call) {
+        final String from = call.getString("from", ""), to = call.getString("to", "");
+        final int kbps = call.getInt("kbps", 160);
+        work.execute(() -> {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            long t0 = android.os.SystemClock.elapsedRealtime();
+            try {
+                java.io.File dir = getContext().getFilesDir();
+                java.io.File in = new java.io.File(dir, from);
+                if (!in.exists()) { call.reject("the song's file isn't there"); return; }
+                java.io.File outBase = new java.io.File(dir, to);
+                java.io.File parent = outBase.getParentFile();
+                if (parent != null) parent.mkdirs();
+                AuraCompressor.Result r = AuraCompressor.run(in, outBase.getPath(), kbps);
+                JSObject o = new JSObject();
+                o.put("file", r.file);
+                o.put("size", r.size);
+                o.put("before", in.length());
+                o.put("codec", r.codec);
+                o.put("type", r.mime);
+                o.put("ms", android.os.SystemClock.elapsedRealtime() - t0);
+                call.resolve(o);
+            } catch (Throwable e) {
+                call.reject(e.getMessage() != null ? e.getMessage() : e.toString());
+            }
+        });
+    }
+
     // ------------------------------------------------------------------ battery (for the automatic power saver)
     @PluginMethod
     public void power(PluginCall call) { call.resolve(readPower()); }

@@ -4,11 +4,18 @@ import { lib, albumKey, mimeFor } from "./library.js";
 import { getJson as getJsonHttp, getBlob } from "./http.js";
 import { player, EQ_PRESETS, EQ_BANDS, nativePlayerAvailable, AuraPlayer } from "./player.js";
 import { LyricsView, fetchLyrics, searchLyrics, cleanTitle } from "./lyrics.js";
-import { persistStorage, usage } from "./store.js";
+import { persistStorage, usage as webUsage } from "./store.js";
+/** space used: the web view's own storage, plus the song files kept outside it (the phone apps keep songs as real files) */
+async function usage() {
+  const u = await webUsage();
+  let files = 0;
+  for (const x of lib.songs.values()) if (x.store === "disk") files += x.size || 0;
+  return { ...u, usage: (u.usage || 0) + files };
+}
 import { squareJpeg, coverColor, coverPalette, splitArtists, primaryArtist } from "./tags.js";
 import { idb } from "./store.js";
 import { diag } from "./diag.js";
-import { DiskFile, dropPicked, initLibraryURL, songFileURLNow, moveSongsToDisk } from "./files.js";
+import { DiskFile, dropPicked, initLibraryURL, songFileURLNow, moveSongsToDisk, delSongFile } from "./files.js";
 import { nc, symbolFor } from "./native-chrome.js";
 import { search as searchOnline, details as resultDetails, bestSongMatch, bestAlbumMatch, same } from "./lookup.js";
 
@@ -1388,6 +1395,19 @@ function pageSettings() {
     item("spark", "Fill In Info Automatically", "Look up missing albums, years, genres and covers when you add songs", () => {
       s.autofill = s.autofill === false; lib.saveMeta(); afSw.classList.toggle("on", s.autofill !== false);
     }, afSw),
+    AuraPlayer?.compress ? (() => {
+      const left = [...lib.songs.values()].filter(needsCompress).length;
+      const saved = fmtSize(lib.meta.compressSaved || 0);
+      const sub = !player.nat ? "Starts once the new player is on"
+        : s.compress === false ? "Off · new songs are kept as they are"
+        : comp.running ? `Compressing · ${Math.min(comp.done + 1, comp.total)} of ${comp.total} · ${saved} saved`
+        : left ? `${plural(left, "song")} waiting · ${saved} saved so far` : `Opus 160 kbps, near-lossless · ${saved} saved`;
+      const sw = toggle(s.compress !== false);
+      return item("pack", "Compress Music", sub, () => {
+        s.compress = s.compress === false; lib.saveMeta(); sw.classList.toggle("on", s.compress !== false);
+        if (s.compress !== false) scheduleCompress(300); refresh();
+      }, sw);
+    })() : null,
     lib.songs.size ? item("trash", "Remove All Music", "Deletes the songs stored in this app", () => removeAllMusic()) : null);
 
   // ---- playback
@@ -2710,7 +2730,7 @@ function setupMiniGestures() {
     if (openDrag) {                       // let go: open fully, or (if barely pulled) sink back into the bubble
       openDrag = false;
       morph.v = (upV * 1000) / morph.dist();
-      if (morph.p < 0.72 || upV < -0.5) morph.animate(0, SPRING_OPEN, () => morph.clear());
+      if (morph.p < 0.72 || upV < -0.5) morph.glide(0, () => morph.clear());
       else closeNp({ fromDrag: true });
       return;
     }
@@ -2976,10 +2996,14 @@ function openNpNow(native) {
   npEl.classList.add("opening");
   clearTimeout(openingT);
   if (!nc.on) nc.haptic("soft");
-  requestAnimationFrame(() => morph.animate(0, SPRING_OPEN, () => { morph.clear(); openingT = setTimeout(() => npEl.classList.remove("opening"), 120); }));   // …and grow out of it, overshooting a touch
+  requestAnimationFrame(() => morph.glide(0, () => { morph.clear(); openingT = setTimeout(() => npEl.classList.remove("opening"), 60); }));   // …and glide out of it
 }
 function prepareNp() {
   unflipNow();                                   // always reopen on the artwork, not the details
+  {                                              // …in the view you used last: big cover or lyrics
+    const want = !!lib.meta.settings.npLyrics, el0 = $("#np");
+    if (el0.classList.contains("lyrics") !== want) { el0.classList.toggle("lyrics", want); np.lyrBtn?.classList.toggle("on", want); }
+  }
   npOpen = true;
   progCache.np = progCache.nps = -1;
   npTrack(0);
@@ -2998,27 +3022,51 @@ function prepareNp() {
 // ---- the morph between the bubble and the full player. p = 0 is full screen, p = 1 is the bubble.
 // Everything is a function of p, so a finger can hold it at any in-between stage; letting go hands it to a spring.
 const SPRING_OPEN = { k: 210, c: 21 }, SPRING_CLOSE = { k: 240, c: 24 }, SPRING_BACK = { k: 260, c: 22 };
+// the player opens and closes on one smooth curve (fast start, long gentle landing, no overshoot)
+const GLIDE_MS = 450;
+function bezier(x1, y1, x2, y2) {
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx, cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const X = (t) => ((ax * t + bx) * t + cx) * t, Y = (t) => ((ay * t + by) * t + cy) * t, dX = (t) => (3 * ax * t + 2 * bx) * t + cx;
+  return (x) => {
+    if (x <= 0) return 0; if (x >= 1) return 1;
+    let t = x;
+    for (let i = 0; i < 8; i++) { const d = dX(t); if (Math.abs(d) < 1e-6) break; t -= (X(t) - x) / d; t = Math.min(1, Math.max(0, t)); }
+    return Y(t);
+  };
+}
+const GLIDE = bezier(0.32, 0.72, 0, 1);
 const morph = {
   p: 0, v: 0, rect: null, raf: 0, active: false, nat: null,
   dist() { return Math.max(220, (this.rect?.top || innerHeight * 0.8) * 0.95); },  // how far a finger travels for the whole morph (≈ the top edge follows it)
   /** where the player's pieces sit when it's full screen (measured once per morph, with nothing moved) */
   measure() {
     const el = $("#np"), pieces = this.pieces();
-    for (const x of [np.stage, ...pieces.flip.map((f) => f.el), ...pieces.fade]) { x.style.transform = ""; x.style.opacity = ""; }
+    for (const x of [np.stage, ...pieces.flip.map((f) => f.el), ...pieces.fade, pieces.cover].filter(Boolean)) { x.style.transform = ""; x.style.opacity = ""; }
     const R = (x) => x.getBoundingClientRect();
     const titles = np.wrapEl.querySelector(".titles");
     const ctrls = np.wrapEl.querySelector(".ctrls");
-    this.nat = { cover: R(np.cover), stage: R(np.stage), titles: R(titles), pp: R(np.pp), prev: R(ctrls.children[1]), next: R(ctrls.children[3]), seek: R(np.seek) };
+    const lh = this.lyrHead();
+    this.nat = { cover: R(np.cover), stage: R(np.stage), titles: R(titles), pp: R(np.pp), prev: R(ctrls.children[1]), next: R(ctrls.children[3]), seek: R(np.seek),
+      viz: R(np.viz), lart: lh ? R(lh.querySelector(".art")) : null, lmeta: lh ? R(lh.querySelector(".meta")) : null };
     el.classList.add("morphing");
   },
+  /** the lyrics view's header (small cover + title), when that's what the player shows */
+  lyrHead() {
+    const lh = np.wrapEl.querySelector(".lyr .lhead");
+    return $("#np").classList.contains("lyrics") && lh && getComputedStyle(lh).display !== "none" ? lh : null;
+  },
   pieces() {
-    const w = np.wrapEl, ctrls = w.querySelector(".ctrls");
+    const w = np.wrapEl, ctrls = w.querySelector(".ctrls"), lh = this.lyrHead();
+    const viz = nc.on ? [] : [{ el: np.viz, from: "viz", nat: "viz", stretch: true }];       // the bar's visualizer grows into the big one
+    const head = lh ? [{ el: lh.querySelector(".meta"), from: "text", nat: "lmeta" }] : [{ el: w.querySelector(".titles"), from: "text", nat: "titles" }];
+    const lyrRest = lh ? [...w.querySelector(".lyr").children].filter((x) => x !== lh) : [w.querySelector(".lyr")];
     return {
-      flip: [{ el: w.querySelector(".titles"), from: "text", nat: "titles" }, { el: np.pp, from: "play", nat: "pp" },
+      flip: [...head, { el: np.pp, from: "play", nat: "pp" },
         { el: ctrls.children[1], from: "prev", nat: "prev" }, { el: ctrls.children[3], from: "next", nat: "next" },
-        { el: np.seek, from: "bar", nat: "seek", stretch: true }],
-      fade: [w.querySelector(".top"), w.querySelector(".lyr"), w.querySelector(".times"), w.querySelector(".extras"),
-        ctrls.children[0], ctrls.children[4], np.viz].filter(Boolean),
+        { el: np.seek, from: "bar", nat: "seek", stretch: true }, ...viz],
+      fade: [w.querySelector(".top"), ...lyrRest, w.querySelector(".times"), w.querySelector(".extras"),
+        ctrls.children[0], ctrls.children[4], ...(nc.on ? [np.viz] : [])].filter(Boolean),
+      cover: lh ? lh.querySelector(".art") : null,
     };
   },
   /** iPhone: switch to real Liquid Glass (a picture of the library + native glass behind the see-through web view) */
@@ -3047,9 +3095,22 @@ const morph = {
     const e = q >= 0 ? 1 - Math.pow(1 - Math.min(q, 1), 1.15) + Math.max(0, q - 1) : q;      // past 1 / below 0: the bounces
     const rc = { l: lerp(full.l, bubble.l, e), t: lerp(full.t, bubble.t, e), r: lerp(full.r, bubble.r, e), b: lerp(full.b, bubble.b, e) };
     const rad = q <= 0 ? 0 : Math.min(40, 400 * q) * (1 - Math.min(1, q)) + bubbleRad * Math.min(1, q);
-    el.style.clipPath = this.native ? "none" : `inset(${rc.t.toFixed(1)}px ${(W - rc.r).toFixed(1)}px ${(H - rc.b).toFixed(1)}px ${rc.l.toFixed(1)}px round ${rad.toFixed(1)}px)`;
+    const clip = `inset(${rc.t.toFixed(1)}px ${(W - rc.r).toFixed(1)}px ${(H - rc.b).toFixed(1)}px ${rc.l.toFixed(1)}px round ${rad.toFixed(1)}px)`;
+    if (nc.on) el.style.clipPath = this.native ? "none" : clip;
+    else {               // (a clipped #np would stop the glass from seeing the library behind it: clip its layers instead)
+      document.body.classList.add("np-morph");
+      for (const c of el.children) {
+        if (c.classList.contains("lgm")) continue;
+        if (q <= 0.0005) { c.style.clipPath = ""; continue; }
+        let m = c._mb;
+        if (!m) { const br = c.getBoundingClientRect(); m = c._mb = { l: br.left, t: br.top, r: br.right, b: br.bottom, s: br.width / (c.offsetWidth || br.width || 1) || 1 }; }
+        if (m.r - m.l < 1) continue;                                   // (not showing)
+        const k = 1 / m.s;
+        c.style.clipPath = `inset(${((rc.t - m.t) * k).toFixed(1)}px ${((m.r - rc.r) * k).toFixed(1)}px ${((m.b - rc.b) * k).toFixed(1)}px ${((rc.l - m.l) * k).toFixed(1)}px round ${(rad * k).toFixed(1)}px)`;
+      }
+    }
     // the glass itself (behind the player's controls)
-    if (!this.g?.isConnected) this.g = el.insertBefore(h("div", { class: "lgm" }), np.wrapEl);
+    if (!this.g?.isConnected) this.g = el.insertBefore(h("div", { class: "lgm" }), el.firstChild);   // (under every layer of the player)
     const gs = this.g.style;
     const glassO = 1 - ss(0, NEAR, NEAR - q);            // full glass while stretching; fades as the real background arrives
     gs.display = glassO > 0.002 && !this.native ? "block" : "none";
@@ -3061,7 +3122,8 @@ const morph = {
     // 3) the pieces travel from where they are in the bar to where they'll be
     const u = ss(0.06, 1, q);
     const parts = anchorParts(r), N = this.nat;
-    const flipTo = (x, from, nat, origin) => {
+    const flipTo = (x, from, nat, origin, uu = u) => {
+      const u = uu;
       if (!from || !nat || !nat.width) return;
       const sx = lerp(1, from.w / nat.width, u), sy = lerp(1, from.h / nat.height, u);
       const s1 = origin === "uniform" ? Math.min(sx, sy) : null;
@@ -3069,14 +3131,16 @@ const morph = {
       x.style.transformOrigin = "0 0";
       x.style.transform = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0) scale(${(s1 ?? sx).toFixed(4)}, ${(s1 ?? sy).toFixed(4)})`;
     };
-    // the cover: move its stage so the cover lands exactly on the bar's album art
-    if (N.cover.width) {
+    const pieces = this.pieces();
+    // the cover: lyrics view → the small header cover flies; otherwise the stage moves so the big cover lands on the bar's art
+    // (the lyrics header sits at the card's top: it travels with the card's edge, so it's never cut off)
+    if (pieces.cover && N.lart?.width) flipTo(pieces.cover, parts.art, N.lart, "uniform", Math.max(0, Math.min(1, e)));
+    else if (N.cover.width) {
       const s1 = lerp(1, parts.art.w / N.cover.width, u);
       const dx = (parts.art.x - N.cover.left) * u, dy = (parts.art.y - N.cover.top) * u;
       np.stage.style.transformOrigin = `${(N.cover.left - N.stage.left).toFixed(1)}px ${(N.cover.top - N.stage.top).toFixed(1)}px`;
       np.stage.style.transform = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0) scale(${s1.toFixed(4)})`;
     }
-    const pieces = this.pieces();
     for (const f of pieces.flip) {
       const from = parts[f.from];
       if (!from || !from.w) {                         // nothing like it in the bar (e.g. no back button upright): it fades
@@ -3084,8 +3148,8 @@ const morph = {
         f.el.style.opacity = (1 - ss(0.12, 0.62, q)).toFixed(3);
         continue;
       }
-      flipTo(f.el, from, N[f.nat], f.stretch ? "stretch" : "uniform");
-      f.el.style.opacity = !parts.showText ? (1 - ss(0.3, 0.8, q)).toFixed(3) : (1 - ss(0.85, 1, q) * 0.6).toFixed(3);
+      flipTo(f.el, from, N[f.nat], f.stretch ? "stretch" : "uniform", f.nat === "lmeta" ? Math.max(0, Math.min(1, e)) : u);
+      f.el.style.opacity = f.from === "viz" ? (1 - ss(0.9, 1, q) * 0.5).toFixed(3) : !parts.showText ? (1 - ss(0.3, 0.8, q)).toFixed(3) : (1 - ss(0.85, 1, q) * 0.6).toFixed(3);
     }
     // the bubble / tabs / top bar fade in and out with it (crossfading with the pieces that travel), never popping
     nc.chromeFade(+ss(0.78, 1, q).toFixed(3));
@@ -3104,7 +3168,9 @@ const morph = {
     el.classList.remove("morphing");
     np.wrapEl.style.transform = ""; np.wrapEl.style.opacity = "";
     const pieces = this.pieces();
-    for (const x of [np.stage, ...pieces.flip.map((f) => f.el), ...pieces.fade]) { x.style.transform = ""; x.style.opacity = ""; x.style.transformOrigin = ""; }
+    for (const x of [np.stage, ...pieces.flip.map((f) => f.el), ...pieces.fade, pieces.cover].filter(Boolean)) { x.style.transform = ""; x.style.opacity = ""; x.style.transformOrigin = ""; }
+    for (const c of el.children) { c.style.clipPath = ""; c._mb = null; }
+    document.body.classList.remove("np-morph");
   },
   /** arrive: finish the moment it reaches `to` and hand its speed to done(v) (for momentum into the bubble) */
   animate(to, sp, done, arrive = false) {
@@ -3126,6 +3192,22 @@ const morph = {
     };
     this.raf = requestAnimationFrame(step);
   },
+  /** glide to `to` (0 open, 1 the bar) on the one curve; a partly-dragged player takes proportionally less time */
+  glide(to, done) {
+    cancelAnimationFrame(this.raf);
+    const from = this.p, dist = Math.abs(to - from);
+    if (dist < 0.002) { this.set(to); this.v = 0; return done?.(0); }
+    const dur = Math.max(180, GLIDE_MS * Math.pow(Math.min(1, dist), 0.6));
+    const t0 = performance.now();
+    const step = (ts) => {
+      const x = Math.min(1, (ts - t0) / dur);
+      this.set(from + (to - from) * GLIDE(x));
+      if (x < 1) { this.raf = requestAnimationFrame(step); return; }
+      this.v = 0;
+      done?.(0);
+    };
+    this.raf = requestAnimationFrame(step);
+  },
   grab() { this.dragEdge.reset(); cancelAnimationFrame(this.raf); this.rect = anchorRect(); this.start = this.p || 0; this.v = 0; npPlayButton(); if (npOpen) this.goNative(true); },
   dragEdge: edge(),
   drag(dy) {                         // dy > 0: towards the bubble
@@ -3137,7 +3219,7 @@ const morph = {
   release(vPxPerMs) {               // finish whichever way it was going
     this.v = (vPxPerMs * 1000) / this.dist();
     if (this.p > 0.32 || vPxPerMs > 0.5) closeNp({ fromDrag: true });
-    else { if (!nc.on) nc.haptic("tick"); this.animate(0, SPRING_BACK, () => this.clear()); }
+    else { if (!nc.on) nc.haptic("tick"); this.glide(0, () => this.clear()); }
   },
 };
 
@@ -3160,7 +3242,10 @@ function anchorParts(r) {
   const side = matchMedia("(orientation: landscape) and (min-width: 640px)").matches, tucked = side && miniTuck.tucked;
   const art = tucked ? { x: r.left + 10, y: r.top + 9, w: 48, h: 48 } : side ? { x: r.left + 9, y: r.top + 9, w: 48, h: 48 } : { x: r.left + 10, y: r.top + 9, w: 44, h: 44 };
   const w = r.right - r.left;
-  return { art, text: { x: art.x + art.w + 12, y: r.top + 12, w: Math.max(40, w - art.w - 170), h: 40 },
+  const cv = [$("#dock .tviz"), $("#mini canvas")].find((c) => c && c.offsetParent !== null && c.clientWidth > 0);
+  const cr = cv?.getBoundingClientRect();
+  const viz = cr && cr.width ? { x: cr.left, y: cr.top, w: cr.width, h: cr.height } : null;
+  return { art, viz, text: { x: art.x + art.w + 12, y: r.top + 12, w: Math.max(40, w - art.w - 170), h: 40 },
     play: side ? { x: r.right - 104, y: r.top + 10, w: 46, h: 46 } : { x: r.right - 100, y: r.top + 10, w: 42, h: 42 }, showText: !tucked,
     prev: side && !tucked ? { x: r.right - 152, y: r.top + 11, w: 44, h: 44 } : null,
     next: tucked ? null : side ? { x: r.right - 52, y: r.top + 11, w: 44, h: 44 } : { x: r.right - 50, y: r.top + 9, w: 44, h: 44 },
@@ -3227,9 +3312,10 @@ function closeNp(opts = {}) {
     el.classList.remove("open");
     morph.clear();
     unflipNow();
-    if (nc.on) { nc.show(true); nc.haptic("thud"); } else { nc.haptic(v > 6 ? "thud" : "soft"); bubbleImpulse(v); }
+    if (nc.on) { nc.show(true); nc.haptic("thud"); } else nc.haptic("soft");
   };
-  morph.animate(1, SPRING_CLOSE, done, !nc.on);           // (no stop-and-bounce: it lands with its speed)
+  if (nc.on) morph.animate(1, SPRING_CLOSE, done);
+  else morph.glide(1, done);                              // the same smooth curve as opening, landing softly in the bar
   return true;
 }
 /** back to the front of the cover at once (no turning animation) — the player always reopens on the artwork */
@@ -3405,6 +3491,7 @@ function toggleLyrics(force) {
   const el = $("#np");
   const on = el.classList.toggle("lyrics", force);
   np.lyrBtn.classList.toggle("on", on);
+  if (!!lib.meta.settings.npLyrics !== on) { lib.meta.settings.npLyrics = on; lib.saveMeta(); }
   if (on) { loadLyrics(); lyrView.start(); } else lyrView.stop();
 }
 async function loadLyrics() {
@@ -3697,7 +3784,7 @@ const migr = { done: 0, total: 0, running: false };
 async function startNativePlayer() {
   if (!nativePlayerAvailable || lib.meta.settings.nativePlayer === false) return;
   const left = globalThis.__auraMock ? 0 : [...lib.songs.values()].filter((s) => s.store !== "disk").length;
-  if (!left) { await player.useNative(); return; }
+  if (!left) { await player.useNative(); scheduleCompress(6000); return; }
   setTimeout(moveLibrary, 4000);                         // after start-up settles; the old player plays meanwhile
 }
 async function moveLibrary() {
@@ -3725,8 +3812,68 @@ async function switchToNative() {
   if (!(await player.useNative())) return;
   if (had) { player._qDirty = true; await player.natLoad(false, t); }
   snack("The new player is on: smoother sound, better battery, lock screen controls");
+  scheduleCompress(5000);
   if (stack.at(-1)?.type === "settings") refresh();
 }
+
+// ---- Android: songs are compressed to Opus 160 kbps (near-lossless to the ear, a fraction of the size), one at a time
+// in the background, with the phone's own encoder. Songs already small (YouTube downloads, MP3s up to ~200 kbps) are left alone.
+const COMP_KBPS = 160;
+const comp = { running: false, done: 0, total: 0, t: 0 };
+const canCompress = () => !!AuraPlayer?.compress && player.nat && lib.meta.settings.compress !== false;
+function needsCompress(s) {
+  if (s.store !== "disk" || s.compressed || /\.(opus|ogg)$/i.test(s.file)) return false;
+  const kbps = s.duration > 0 && s.size ? (s.size * 8) / s.duration / 1000 : 0;
+  return kbps ? kbps > 200 : s.size > 8e6;
+}
+function scheduleCompress(ms = 3000) {
+  if (!canCompress()) return;
+  clearTimeout(comp.t);
+  comp.t = setTimeout(compressLibrary, ms);
+}
+async function compressLibrary() {
+  if (comp.running || !canCompress()) return;
+  comp.running = true;
+  let sinceSave = 0;
+  try {
+    for (;;) {
+      const todo = [...lib.songs.values()].filter(needsCompress);
+      if (!todo.length) break;
+      comp.total = comp.done + todo.length;
+      let progressed = false;
+      for (const s of todo) {
+        if (!canCompress()) break;
+        const busy = new Set([player.current?.id, player.queue[player.index + 1]]);    // (the song playing and the next one: later)
+        if (busy.has(s.id)) continue;
+        const old = s.file, stem = old.replace(/\.[^./]+$/, "") + ".c";
+        try {
+          const r = await AuraPlayer.compress({ from: "Songs/" + old, to: "Songs/" + stem, kbps: COMP_KBPS });
+          const nf = stem + "." + String(r.file).split(".").pop();
+          if (!lib.songs.has(s.id) || player.current?.id === s.id || lib.songs.get(s.id).file !== old) { await delSongFile({ store: "disk", file: nf }); continue; }
+          await lib.updateSong(s.id, { file: nf, size: r.size, type: r.type, codec: r.codec, compressed: 1 });
+          await delSongFile({ store: "disk", file: old });
+          lib.meta.compressSaved = (lib.meta.compressSaved || 0) + Math.max(0, (r.before || s.size) - r.size);
+          if (++sinceSave >= 10) { sinceSave = 0; lib.saveMeta(); }
+          diag.log(`compressed ${s.title}: ${fmtSize(r.before)} → ${fmtSize(r.size)} in ${(r.ms / 1000).toFixed(1)} s (${r.codec})`);
+          if (player.nat && player.queue.includes(s.id)) player.markQueue();     // the native player needs the new file
+        } catch (e) {
+          diag.log(`couldn't compress ${s.title}: ${e?.message || e}`);
+          if (lib.songs.has(s.id)) await lib.updateSong(s.id, { compressed: -1 });  // (left as it is; never tried again)
+        }
+        comp.done++; progressed = true;
+        if (stack.at(-1)?.type === "settings" && comp.done % 3 === 0) refresh();
+        await new Promise((r) => setTimeout(r, 60));
+      }
+      if (!progressed) break;                  // only the playing songs are left: they're done after a song change
+    }
+  } finally {
+    comp.running = false;
+    lib.saveMeta();
+    if (stack.at(-1)?.type === "settings") refresh();
+  }
+}
+player.addEventListener("track", () => scheduleCompress(8000));
+lib.onAdded = () => scheduleCompress(5000);     // new songs: once the adding has settled
 
 async function restoreSession() {
   const ss = lib.meta.session;
@@ -3764,7 +3911,7 @@ async function restoreSession() {
 
 function back() {
   if (closeSheet()) return true;
-  if (npOpen) { if ($("#np").classList.contains("lyrics")) toggleLyrics(false); else closeNp(); return true; }
+  if (npOpen) { closeNp(); return true; }           // (lyrics stay on for next time)
   if (sel) { endSelect(); return true; }
   if (pop()) return true;
   if (stack[0].type !== "albums") { goTab("albums"); return true; }
@@ -3816,7 +3963,7 @@ async function boot() {
       if (!npOpen || !morph.active) return;
       const v = e.v || 0;
       morph.v = (v * 1000) / morph.dist();
-      if (morph.p < 0.72 || v < -0.5) morph.animate(0, SPRING_OPEN, () => morph.clear());
+      if (morph.p < 0.72 || v < -0.5) morph.glide(0, () => morph.clear());
       else closeNp({ fromDrag: true });
     },
   });
@@ -3883,6 +4030,6 @@ async function boot() {
     const audio = files.filter((f) => !/\.zip$/i.test(f.name));
     if (audio.length) importAudio(audio);
   });
-  window.__app = { nc, ytCache, ytJobs, artistMenu, toggleFavArtist, progressBox, DiskFile, miniTuck, morph, filt, findGenres, filterSheet, get lyr() { return lyrView; }, np, browse, similarSongs, playWithMix, lyricsPicker, lookupDialog, autoFill, lib, player, push, goTab, openNp, closeNp, toggleLyrics, sharePack, importPacks, importAudio, startSelect, refresh, back, stack: () => stack };
+  window.__app = { morphP: () => (morph.active ? morph.p : null), morphAt: (p) => { if (!npOpen) { prepareNp(); morph.rect = anchorRect(); } cancelAnimationFrame(morph.raf); morph.set(p); }, morphClear: () => morph.clear(), nc, compressLibrary, comp, needsCompress, ytCache, ytJobs, artistMenu, toggleFavArtist, progressBox, DiskFile, miniTuck, morph, filt, findGenres, filterSheet, get lyr() { return lyrView; }, np, browse, similarSongs, playWithMix, lyricsPicker, lookupDialog, autoFill, lib, player, push, goTab, openNp, closeNp, toggleLyrics, sharePack, importPacks, importAudio, startSelect, refresh, back, stack: () => stack };
 }
 boot();

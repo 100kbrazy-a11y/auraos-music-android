@@ -51,6 +51,13 @@ export async function putSongFile(blob, file, source) {
     diag.step = `Saved ${name}`;
     return "disk";
   }
+  if (PLAT === "android" && source?.rel) {         // already a file in the files folder (a download): just move it into place
+    await loadFs();
+    const folder = (ROOT + file).replace(/\/[^/]*$/, "");
+    try { await F.mkdir({ directory: DIR, path: folder, recursive: true }); } catch {}
+    await timed(F.rename({ from: source.rel, to: ROOT + file, directory: DIR, toDirectory: DIR }), 30000, "Saving the song");
+    return "disk";
+  }
   if (!onDisk) {
     await idb.put("files", blob instanceof File ? new Blob([blob], { type: blob.type }) : blob, file);
     return "db";
@@ -90,7 +97,11 @@ export async function songBlob(s) {
 }
 
 /** Remove a file the picker brought in (path relative to Library), once it has been imported. */
-export async function dropPicked(rel) { if (isIOS && rel) { try { await NC.removeFile({ to: rel }); } catch {} } }
+export async function dropPicked(rel) {
+  if (!rel) return;
+  if (isIOS) { try { await NC.removeFile({ to: rel }); } catch {} }
+  else if (PLAT === "android") { try { await loadFs(); await F.deleteFile({ directory: DIR, path: rel }); } catch {} }   // (gone already once moved)
+}
 
 export async function delSongFile(s) {
   if (s.store === "disk") {

@@ -268,7 +268,8 @@ async function fetchAudio(id, onFrac, onStage) {
 async function download(url, size, ua, id, onFrac, origin = "") {
   const { Filesystem, Directory } = await import("@capacitor/filesystem");
   const dir = onDisk ? Directory.Library : Directory.Cache;
-  const rel = `${onDisk ? "Incoming/" : ""}yt-${id}-${Date.now().toString(36)}.m4a`;
+  // (Android's downloader doesn't create folders: there it goes straight into the files folder, which always exists)
+  const rel = `${onDisk && Capacitor.getPlatform() === "ios" ? "Incoming/" : ""}yt-${id}-${Date.now().toString(36)}.m4a`;
   let sub = null;
   const full = size ? `${url}&range=0-${size - 1}` : url;
   // (every download in flight hears every progress event: only listen to this one's)
