@@ -69,6 +69,7 @@ object NativePlayer {
             o.put("id", it.id); o.put("path", it.path); o.put("title", it.title); o.put("artist", it.artist); o.put("album", it.album)
             AuraPlaybackService.item(ctx.applicationContext, o)
         }
+        s.crossfade = fadeSecs; s.beatMatch = fadeMatch
         s.setQueue(list, index, posMs, play, false)
     }
 
@@ -91,6 +92,19 @@ object NativePlayer {
     fun repeat(mode: Int) {
         AuraPlaybackService.instance?.setRepeat(if (mode == 2) Player.REPEAT_MODE_ONE else if (mode == 1) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF)
     }
-    fun crossfade(secs: Float) { AuraPlaybackService.instance?.let { it.crossfade = secs; it.beatMatch = true } }
+    private var fadeSecs = 0f
+    private var fadeMatch = true
+    fun crossfade(secs: Float, match: Boolean) { fadeSecs = secs; fadeMatch = match; AuraPlaybackService.instance?.let { it.crossfade = secs; it.beatMatch = match } }
+    fun jump(i: Int) { AuraPlaybackService.instance?.skipTo(i, 0, true) }
+    fun artwork(id: String, bytes: ByteArray?) { AuraPlaybackService.instance?.setArtwork(id, bytes) }
+    val sleepAt = MutableStateFlow(0L)
+    private var sleepJob: Job? = null
+    /** Pause after [mins] minutes (0 = cancel) */
+    fun sleep(mins: Int) {
+        sleepJob?.cancel()
+        if (mins <= 0) { sleepAt.value = 0; return }
+        sleepAt.value = System.currentTimeMillis() + mins * 60000L
+        sleepJob = scope.launch { delay(mins * 60000L); AuraPlaybackService.instance?.pause(); sleepAt.value = 0 }
+    }
     fun eq(gains: FloatArray, pre: Float) { AuraAudioProcessor.setEq(gains, pre) }
 }
