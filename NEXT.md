@@ -34,6 +34,14 @@ Adding: songs, folders (cover.jpg used), Music Packs (manifest + playlist), YouT
 Other: Music Pack export, find missing covers, autofill genre/year, battery saver pauses motion, remove all music, diagnostics log.
 **Compiles and signs in CI. Not yet run on a phone.**
 
+## UI matched to the WebView app (round 3)
+Built from screenshots of the real web UI plus `src/style.css`: same colour tokens (`Design.kt` = `:root`), the app's own SVG icon paths
+(`Icons.kt`), accent taken from the playing song's cover (coverColor() ported), pages tinted by their cover, floating dock (media bar + tab pill
+with a draggable sliding highlight + visualizer), 4 tabs (Albums · Artists · Songs · Playlists), glass tool pill (Search · Filter · Settings),
+Filter sheet, bottom-sheet menus, centred dialogs, light snackbar, grouped Settings cards, full player (blurred cover background, glow,
+76dp white play button, 5px seek, extras row), lyrics mode with Earlier / Later / Wrong lyrics?, queue and EQ sheets.
+YouTube Music search lives in Search (Your Library / YouTube Music), Add Music is a sheet.
+
 ## Still different from the WebView app
 - YouTube sign-in (TV code) for Add from Link: not built.
 - Drag songs out to other apps: replaced by Share (song file / Music Pack).
