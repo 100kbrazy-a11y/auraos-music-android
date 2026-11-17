@@ -403,7 +403,7 @@ function buildTabs() {
   nav.innerHTML = "";
   nav.append(h("div", { class: "brand" }, h("img", { src: "./icon-192.png", alt: "" }), "Strata Music"));
   nav.append(h("div", { class: "ind" }));
-  if (!$("#dock .tviz")) $("#dock").prepend(h("canvas", { class: "tviz" }));
+  $("#dock .tviz")?.remove();            // (the visualizer is only in the full-screen player)
   for (const t of TABS) {
     nav.append(h("button", { "data-tab": t.id, onclick: () => goTab(t.id) }, h("span", { class: "pill" }, icon(t.icon)), h("span", { class: "lbl" }, t.label)));
   }
@@ -2910,7 +2910,7 @@ function updateMini() {
   if (m.dataset.id !== s.id) {
     m.dataset.id = s.id;
     m.innerHTML = "";
-    m.append(h("canvas"), art(s.cover, { label: s.album }), h("div", { class: "meta" }, h("div", { class: "t" }, s.title), h("div", { class: "s" }, s.artist || s.album || "")),
+    m.append(art(s.cover, { label: s.album }), h("div", { class: "meta" }, h("div", { class: "t" }, s.title), h("div", { class: "s" }, s.artist || s.album || "")),
       h("button", { class: "ib prev", onclick: (e) => { e.stopPropagation(); miniDir = -1; player.prev(); } }, icon("prev")),
       h("button", { class: "ib pp", onclick: (e) => { e.stopPropagation(); player.toggle(); } }, icon(player.playing ? "pause" : "play")),
       h("button", { class: "ib nx", onclick: (e) => { e.stopPropagation(); miniDir = 1; player.next(); } }, icon("next")),
@@ -4173,18 +4173,12 @@ function startViz() {
   vizOn = true;
   const bins = new Uint8Array(1024);
   let smooth = new Float32Array(40), bassS = 0;
-  let cvAt = 0, cvPick = null, lastDraw = 0, idleDrawn = false;
+  let lastDraw = 0, idleDrawn = false;
   const loop = (now = performance.now()) => {
     // upright the little visualizer plays along the bottom of the bubble behind the tabs; sideways, in the player bar
     // (which little canvas is showing: looked up a few times a second, not every frame — that forced a layout each time)
-    if (performance.now() - cvAt > 250) { cvAt = performance.now(); cvPick = [$("#dock .tviz"), $("#mini canvas")].find((c) => c && c.offsetParent !== null && c.clientWidth > 0 && !$("#mini").hidden) || null; }
-    const miniCv = cvPick;
-    if (!npOpen && !miniCv) {
-      // nothing visible to draw into right now (e.g. mid-rotation): check back shortly instead of stopping for good
-      vizOn = false;
-      if (player.current) setTimeout(startViz, 400);
-      return;
-    }
+    // the visualizer lives only in the full-screen player: closed, nothing to draw (it starts again when it opens)
+    if (!npOpen) { vizOn = false; updateProgress(); return; }
     const playing = player.playing;
     // paused and the bars have fallen: nothing moves, so look again only a few times a second (saves battery)
     const settled = !playing && bassS < 0.003 && smooth.every((v) => v < 0.005);
@@ -4210,28 +4204,6 @@ function startViz() {
     const bass = (bins[2] + bins[3] + bins[4] + bins[5]) / 1020;
     bassS += (bass - bassS) * 0.25;
     // tucked: five little bars over the album cover
-    const drawFive = (cv) => {
-      const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
-      if (!W) return;
-      if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
-      const g = cv.getContext("2d");
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
-      g.clearRect(0, 0, W, H);
-      // in the strip *under* the cover, so they never cover the artwork
-      const ax = 10, aw = 48, ab = H - 6;
-      const n = 5, gap = 3, bw = (aw - 4 - gap * (n - 1)) / n, maxH = 11;
-      g.fillStyle = "rgba(255,255,255,.92)";
-      g.shadowColor = "rgba(0,0,0,.45)"; g.shadowBlur = 4;
-      for (let i = 0; i < n; i++) {
-        const lo = Math.floor((i * N) / n), hi = Math.floor(((i + 1) * N) / n);
-        let v = 0; for (let k = lo; k < hi; k++) v = Math.max(v, smooth[k]);
-        const bh = Math.max(2, v * maxH);
-        const x = ax + 2 + i * (bw + gap);
-        g.beginPath();
-        g.roundRect?.(x, ab - bh, bw, bh, 1.5) ?? g.rect(x, ab - bh, bw, bh);
-        g.fill();
-      }
-    };
     const draw = (cv, alphaTop, full) => {
       // the full-screen one is soft bars at low opacity behind everything: drawn at 1× density it looks the same and is
       // ~7× fewer pixels to fill and hand to the GPU every frame (at full density it slowed every frame, skips included)
@@ -4259,23 +4231,12 @@ function startViz() {
     if (npOpen) {
       if (fx()) fog.draw(bass, bassS, playing);
       if (!power.saver && !(morph.active && morph.p > 0.42)) draw(np.viz, 0.75, true);     // (not while it's still invisible mid-grow)
-      // the bar's own little visualizer keeps playing in its copy as the bar fades in / out (no pop when it lands), and
-      // in the real one hidden underneath, so it's already current the frame the real bar takes over
-      const gcv = morph.active && morph.p > 0.55 && morph.ghost?.isConnected ? morph.ghost.querySelector("canvas.tviz, canvas") : null;
-      if (gcv && !power.saver) {
-        draw(gcv, 0.5);
-        if (miniCv && miniCv.width === gcv.width && miniCv.height === gcv.height) { const mg = miniCv.getContext("2d"); mg.clearRect(0, 0, miniCv.width, miniCv.height); mg.drawImage(gcv, 0, 0); }
-      }
       if (fx()) {
         const fade = Math.min(1, (performance.now() - glowFade) / 700);      // new colour: the glow eases back in
         np.glow.style.opacity = ((0.2 + bassS * 0.55) * fade * fade).toFixed(3);
         np.glow.style.transform = `scale(${(1 + bassS * 0.25).toFixed(3)})`;
       }
-    } else if (miniCv && !power.saver) {
-      if (miniTuck.tucked && miniCv.closest("#mini")) drawFive(miniCv);
-      else draw(miniCv, 0.5);
-    } else if (miniCv && !miniCv._cleared) { miniCv.getContext("2d").clearRect(0, 0, miniCv.width, miniCv.height); }
-    if (miniCv) miniCv._cleared = power.saver;
+    }
   };
   requestAnimationFrame(loop);
 }
