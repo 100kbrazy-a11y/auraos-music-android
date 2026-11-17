@@ -37,6 +37,7 @@ object Prefs {
     val eqName = MutableStateFlow("Flat")
     val eqCustom = MutableStateFlow(List(10) { 0f })
     val motion = MutableStateFlow(true)
+    val liquid = MutableStateFlow(true)
     val autoSaver = MutableStateFlow(true)
     val compress = MutableStateFlow(true)
     val autofill = MutableStateFlow(true)
@@ -54,7 +55,7 @@ object Prefs {
         beatMatch.value = s.optBoolean("beatMatch", true); trimSilence.value = s.optBoolean("trimSilence", true)
         keepAwake.value = s.optBoolean("keepAwake", false); eqName.value = s.optString("eq", "Flat")
         eqCustom.value = s.optJSONArray("eqCustom")?.let { a -> (0 until 10).map { a.optDouble(it, 0.0).toFloat() } } ?: List(10) { 0f }
-        motion.value = s.optBoolean("motion", true); autoSaver.value = s.optBoolean("autoSaver", true)
+        motion.value = s.optBoolean("motion", true); liquid.value = s.optBoolean("liquidGlass", true); autoSaver.value = s.optBoolean("autoSaver", true)
         compress.value = s.optBoolean("compress", true); autofill.value = s.optBoolean("autofill", true)
         npLyrics.value = s.optBoolean("npLyrics", false); sort.value = s.optInt("nativeSort", 0)
         applyAudio()
@@ -69,6 +70,7 @@ object Prefs {
     fun setAwake(v: Boolean) { keepAwake.value = v; put("keepAwake", v) }
     fun setEq(name: String) { eqName.value = name; put("eq", name); applyAudio() }
     fun setEqBand(i: Int, v: Float) { val l = eqGains().toMutableList(); l[i] = v; eqCustom.value = l; s.put("eqCustom", JSONArray(l.map { it.toDouble() })); setEq("Custom") }
+    fun setLiquid(v: Boolean) { liquid.value = v; put("liquidGlass", v) }
     fun setMotion(v: Boolean) { motion.value = v; put("motion", v) }
     fun setAutoSaver(v: Boolean) { autoSaver.value = v; put("autoSaver", v) }
     fun setCompress(v: Boolean) { compress.value = v; put("compress", v); if (v) Tasks.poke() }

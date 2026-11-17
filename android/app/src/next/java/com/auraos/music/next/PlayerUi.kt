@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -121,8 +122,8 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
     val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
     val levels by rememberLevels(cur != null && st.playing && motion && !saving, 40)
     Box(Modifier.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp).fillMaxWidth()
-        .shadow(40.dp, RoundedCornerShape(26.dp), ambientColor = Color.Black, spotColor = Color.Black).clip(RoundedCornerShape(26.dp))
-        .background(mix(a, 0.09f, Color(0xF01A1A20))).border(1.dp, Color.White.copy(alpha = 0.09f), RoundedCornerShape(26.dp))) {
+        .shadow(40.dp, RoundedCornerShape(26.dp), ambientColor = Color.Black, spotColor = Color.Black)
+        .glass(RoundedCornerShape(26.dp), mix(a, 0.09f, Color(0xFF1A1A20))).clip(RoundedCornerShape(26.dp))) {
         if (cur != null && motion && !saving) Bars(levels, a.copy(alpha = 0.32f), Modifier.matchParentSize().graphicsLayer { alpha = 0.9f })
         Column {
             if (cur != null) MiniBar(cur, st, onOpen)
@@ -228,7 +229,14 @@ private fun Tabs(tab: Int, onTab: (Int) -> Unit) {
     var w by remember { mutableStateOf(0f) }
     var drag by remember { mutableStateOf<Float?>(null) }
     val cell = if (w > 0) w / 4 else 0f
-    val x by animateFloatAsState(drag ?: (tab * cell), if (drag != null) snap() else spring(0.72f, 420f), label = "ind")
+    val liquid by Prefs.liquid.collectAsState()
+    val x by animateFloatAsState(drag ?: (tab * cell), if (drag != null) snap() else if (liquid) spring(0.55f, 300f) else spring(0.72f, 420f), label = "ind")
+    // liquid: the bubble stretches in the direction it moves (and squashes a little), then wobbles back into shape
+    var vel by remember { mutableStateOf(0f) }
+    var lastX by remember { mutableStateOf(0f) }
+    LaunchedEffect(x) { vel = x - lastX; lastX = x }
+    val stretchT = if (liquid && cell > 0) (kotlin.math.abs(vel) / cell * 2.2f).coerceAtMost(0.45f) else 0f
+    val stretch by animateFloatAsState(stretchT, spring(0.4f, 600f), label = "st")
     val hover = drag?.let { ((it + cell / 2) / cell).toInt().coerceIn(0, 3) }
     val cellS by rememberUpdatedState(cell); val onTabS by rememberUpdatedState(onTab); val tabS by rememberUpdatedState(tab)
     Box(Modifier.fillMaxWidth().height(62.dp).padding(horizontal = 4.dp).onSizeChanged { w = it.width.toFloat() }
@@ -248,7 +256,10 @@ private fun Tabs(tab: Int, onTab: (Int) -> Unit) {
             }
         }) {
         if (cell > 0) Box(Modifier.offset { IntOffset(x.roundToInt(), 0) }.padding(top = 5.dp).width(with(LocalDensity.current) { cell.toDp() }).height(52.dp)
-            .scale(if (drag != null) 1.06f else 1f).clip(RoundedCornerShape(20.dp)).background(mix(a, if (drag != null) 0.32f else 0.24f, Color.White.copy(alpha = 0.06f))).border(1.dp, Color.White.copy(alpha = if (drag != null) 0.16f else 0.08f), RoundedCornerShape(20.dp)))
+            .graphicsLayer { val k = if (drag != null) 1.06f else 1f; scaleX = k * (1f + stretch); scaleY = k * (1f - stretch * 0.35f) }
+            .then(if (liquid) Modifier.clip(RoundedCornerShape(20.dp)).background(mix(a, if (drag != null) 0.30f else 0.22f, Color.White.copy(alpha = 0.08f)))
+                .drawWithContent { drawContent(); drawRect(Brush.verticalGradient(0f to Color.White.copy(alpha = 0.22f), 0.45f to Color.Transparent)); drawRoundRect(Brush.linearGradient(listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.05f), Color.White.copy(alpha = 0.25f))), cornerRadius = CornerRadius(20.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(1.2.dp.toPx())) }
+            else Modifier.clip(RoundedCornerShape(20.dp)).background(mix(a, if (drag != null) 0.32f else 0.24f, Color.White.copy(alpha = 0.06f))).border(1.dp, Color.White.copy(alpha = if (drag != null) 0.16f else 0.08f), RoundedCornerShape(20.dp))))
         Row(Modifier.fillMaxSize()) {
             tabs.forEachIndexed { i, (label, ic) ->
                 val on = (hover ?: tab) == i

@@ -122,6 +122,8 @@ fun SettingsPage() {
                     SwitchItem(Ic.Sun, "Keep the Screen On", "While the full player is open", awake) { Prefs.setAwake(it) }
                 }
                 Group("Look & Feel") {
+                    val liquid by Prefs.liquid.collectAsState()
+                    SwitchItem(Ic.Spark, "Liquid Glass", if (liquid) "Clear glass with a lit rim and stretchy, bouncy motion" else "Off · classic frosted blur", liquid) { Prefs.setLiquid(it) }
                     SwitchItem(Ic.Spark, "Motion Effects", "Sliding pages, glow, living background", motion) { Prefs.setMotion(it) }
                     SwitchItem(Ic.Spark, "Save Battery Automatically", if (saving) "Saving now · the moving background is paused" else "Pause the moving background in Battery Saver or below 20%", saver) { Prefs.setAutoSaver(it) }
                 }
