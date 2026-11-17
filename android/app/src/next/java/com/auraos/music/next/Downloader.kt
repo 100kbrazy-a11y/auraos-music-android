@@ -61,7 +61,7 @@ object Downloader {
                 val cover = if (t.thumb.isNotBlank()) try { URL(t.thumb).readBytes() } catch (_: Exception) { null } else null
                 val title = t.title.ifBlank { j.optString("title") }
                 val artist = t.artist.ifBlank { j.optString("artist") }
-                Store.register(tmp, ext, Meta(title = title, artist = artist, album = t.album.ifBlank { null }, cover = cover))
+                Store.register(tmp, ext, Meta(title = title, artist = artist, album = t.album.ifBlank { null }, track = t.track.takeIf { it > 0 }, cover = cover))
                 upd(t.id) { it.copy(status = "Added", frac = 1f, done = true) }
                 return
             } catch (x: Exception) { last = x.message ?: x.javaClass.simpleName }

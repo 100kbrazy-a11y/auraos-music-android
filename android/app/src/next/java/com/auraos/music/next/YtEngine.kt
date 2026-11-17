@@ -28,7 +28,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
-data class Track(val id: String, val title: String, val artist: String, val album: String, val thumb: String)
+data class Track(val id: String, val title: String, val artist: String, val album: String, val thumb: String, val track: Int = 0)
 
 /**
  * The tiny hidden browser. One WebView, loaded as https://www.youtube.com, running assets/engine/engine.js (YouTube.js +
@@ -169,7 +169,9 @@ object Engine {
         val a = j.optJSONArray("tracks") ?: org.json.JSONArray()
         j.optString("title") to (0 until a.length()).map {
             val o = a.getJSONObject(it)
-            Track(o.getString("id"), o.optString("title"), o.optString("artist"), o.optString("album"), o.optString("thumb"))
+            Track(o.getString("id"), o.optString("title"), o.optString("artist"), o.optString("album"), o.optString("thumb"), o.optInt("track"))
         }
     }
+
+    suspend fun artist(id: String): JSONObject = use { e -> JSONObject(e.call("artist", JSONObject.quote(id))) }
 }

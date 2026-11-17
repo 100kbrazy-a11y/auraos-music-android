@@ -116,6 +116,8 @@ async function search({ q, type }) {
     } else if (type === "playlist" && it.id) {
       const id = String(it.id).replace(/^VL/, "");
       r = { kind: "playlist", id, title: txt(it.title), artist: "", album: "", thumb, sub: ["Playlist", it.author?.name || names(it.authors)].filter(Boolean).join(" · ") };
+    } else if (type === "artist" && /^UC/.test(it.id || "")) {
+      r = { kind: "artist", id: it.id, title: it.name || txt(it.title), artist: "", album: "", thumb, sub: ["Artist", it.subscribers].filter(Boolean).join(" · ") };
     }
     if (r && r.title && !seen.has(r.kind + r.id)) { seen.add(r.kind + r.id); out.push(r); }
   }
@@ -138,12 +140,17 @@ async function tracks(a) {
     return { title: b.title || "", tracks: [{ id, title: b.title || "", artist: b.author || "", album: "", thumb: thumbOf(b.thumbnail) }] };
   }
   if (kind === "album") {
-    const al = await timed(yt.music.getAlbum(id), 30000, "Reading the album");
-    const album = txt(al.header?.title);
-    const cover = thumbOf(al.header?.thumbnails ?? al.header?.thumbnail);
-    const out = (al.contents || []).filter((t) => /^[\w-]{11}$/.test(t.id || "")).map((t) => ({
-      id: t.id, title: txt(t.title), artist: names(t.artists || t.authors) || txt(al.header?.author?.name), album, thumb: cover,
-    }));
+    const al = await timed(yt.music.getAlbum(id), 45000, "Reading the album");
+    const hdr = al.header || {};
+    const album = (txt(hdr.title) || "Album").replace(/^(Album|Single|EP)\s*-\s*/i, "");
+    const artist = a.artist || (hdr.strapline_text_one ? txt(hdr.strapline_text_one) : "") || hdr.author?.name || (txt(hdr.subtitle).split(/\s*•\s*/)[1] || "");
+    const cover = thumbOf(hdr.thumbnails ?? hdr.thumbnail);
+    let n = 0; const out = [];
+    for (const t of al.contents || []) {
+      if (!/^[\w-]{11}$/.test(t.id || "")) continue;
+      n++;
+      out.push({ id: t.id, title: txt(t.title), artist, album, thumb: cover || thumbOf(t.thumbnail), track: parseInt(txt(t.index), 10) || n });
+    }
     return { title: album, tracks: out };
   }
   const pl = await timed(yt.getPlaylist(id), 30000, "Reading the playlist");
@@ -153,13 +160,49 @@ async function tracks(a) {
   return { title: txt(pl.info?.title), tracks: out };
 }
 
-const FN = { audio: (a) => audio(a), search, tracks };
+/** An artist's page: name, photo, albums + singles/EPs, top songs */
+async function artist(id) {
+  const yt = await client();
+  const page = await timed(yt.music.getArtist(id), 45000, "Reading the artist page");
+  const hdr = page.header || {};
+  const name = txt(hdr.title).replace(/\s*-\s*Topic$/i, "").trim();
+  const sections = page.sections || [];
+  const out = new Map();
+  const add = (it, single) => {
+    const bid = it?.id || it?.endpoint?.payload?.browseId || "";
+    if (!/^MPREb/.test(bid) || out.has(bid)) return;
+    out.set(bid, { id: bid, title: txt(it.title), year: String(it.year || (txt(it.subtitle).match(/\b(19|20)\d\d\b/) || [""])[0]), single, thumb: thumbOf(it.thumbnail) });
+  };
+  for (const sec of sections) {
+    const title = txt(sec.header?.title ?? sec.title).toLowerCase();
+    if (!/album|single|\bep\b/.test(title)) continue;
+    const single = /single|\bep\b/.test(title) && !/album/.test(title);
+    for (const it of sec.contents || []) add(it, single);
+    const more = sec.header?.more_content?.endpoint || sec.endpoint;
+    if (more?.call && mod.YTNodes?.MusicTwoRowItem) {
+      try {
+        const p = await timed(more.call(yt.actions || yt.session?.actions, { client: "YTMUSIC", parse: true }), 45000, "Reading the full list");
+        for (const it of p?.contents_memo?.getType?.(mod.YTNodes.MusicTwoRowItem) || []) add(it, single);
+      } catch (e) { log("full list unavailable: " + (e.message || e)); }
+    }
+  }
+  const top = [];
+  for (const sec of sections) {
+    if (!/song/i.test(txt(sec.title ?? sec.header?.title))) continue;
+    for (const it of sec.contents || []) if (/^[\w-]{11}$/.test(it?.id || "")) top.push({ id: it.id, title: txt(it.title), artist: name, album: it.album?.name || "", thumb: thumbOf(it.thumbnail) });
+    if (top.length) break;
+  }
+  const byYear = (x, y) => String(x.year || "9999").localeCompare(String(y.year || "9999"));
+  return { id, name, thumb: thumbOf(hdr.thumbnail ?? hdr.thumbnails), albums: [...out.values()].sort(byYear), top };
+}
+
+const FN = { audio: (a) => audio(a), search, tracks, artist: (a) => artist(a) };
 window.__eng = {
   run(id, fn, argJson) {
     (async () => {
       try {
         const arg = argJson ? JSON.parse(argJson) : null;
-        const res = await FN[fn](fn === "audio" ? String(arg) : arg);
+        const res = await FN[fn](fn === "audio" || fn === "artist" ? String(arg) : arg);
         Android.result(id, JSON.stringify(res));
       } catch (e) { Android.fail(id, String(e?.message || e)); }
     })();

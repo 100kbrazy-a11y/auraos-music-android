@@ -14,6 +14,18 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -157,7 +169,7 @@ fun App() {
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (tab) {
                 0 -> SongsScreen(songs) { l, i -> Ctl.play(ctx, l, i) }
-                1 -> GroupScreen("Albums", songs, { it.album }) { l, i -> Ctl.play(ctx, l, i) }
+                1 -> AlbumsScreen(songs) { l, i -> Ctl.play(ctx, l, i) }
                 2 -> GroupScreen("Artists", songs, { it.artist }) { l, i -> Ctl.play(ctx, l, i) }
                 3 -> PlaylistsScreen(songs) { l, i -> Ctl.play(ctx, l, i) }
                 4 -> GetScreen()
@@ -191,10 +203,17 @@ fun Empty(ic: Ic, text: String) {
 }
 
 @Composable
-fun Cover(s: Song?, size: Dp, modifier: Modifier = Modifier) {
-    val m = modifier.size(size).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+fun Cover(s: Song?, size: Dp, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) {
+    val m = modifier.size(size).clip(shape).background(MaterialTheme.colorScheme.surfaceVariant)
     if (s != null && s.cover.isNotEmpty()) AsyncImage(File(Store.app.filesDir, s.cover), null, m, contentScale = ContentScale.Crop)
     else Box(m, contentAlignment = Alignment.Center) { Icon(Ic.Note, size = size / 2, tint = dim) }
+}
+
+@Composable
+fun CoverFill(s: Song?, modifier: Modifier = Modifier) {
+    val m = modifier.aspectRatio(1f).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+    if (s != null && s.cover.isNotEmpty()) AsyncImage(File(Store.app.filesDir, s.cover), null, m, contentScale = ContentScale.Crop)
+    else Box(m, contentAlignment = Alignment.Center) { Icon(Ic.Disc, size = 48.dp, tint = dim) }
 }
 
 @Composable
@@ -204,7 +223,18 @@ fun SongRow(s: Song, playing: Boolean, onClick: () -> Unit) {
     var info by remember { mutableStateOf(false) }
     val favs by Store.favs.collectAsState()
     val pls by Store.playlists.collectAsState()
-    Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(start = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    val trig = with(LocalDensity.current) { 90.dp.toPx() }
+    var dx by remember { mutableStateOf(0f) }
+    Box(Modifier.fillMaxWidth()) {
+    if (dx > 8f) Box(Modifier.matchParentSize().background(MaterialTheme.colorScheme.secondaryContainer).padding(start = 20.dp), contentAlignment = Alignment.CenterStart) { Icon(if (s.id in favs) Ic.Heart else Ic.HeartFill, tint = MaterialTheme.colorScheme.primary) }
+    if (dx < -8f) Box(Modifier.matchParentSize().background(MaterialTheme.colorScheme.secondaryContainer).padding(end = 20.dp), contentAlignment = Alignment.CenterEnd) { Icon(Ic.List, tint = MaterialTheme.colorScheme.primary) }
+    Row(Modifier.fillMaxWidth().offset { IntOffset(dx.roundToInt(), 0) }.background(MaterialTheme.colorScheme.background).clickable { onClick() }
+        .pointerInput(s.id) {
+            detectHorizontalDragGestures(
+                onDragEnd = { if (dx > trig) Store.toggleFav(s.id) else if (dx < -trig) pick = true; dx = 0f },
+                onDragCancel = { dx = 0f },
+            ) { change, amount -> change.consume(); dx = (dx + amount).coerceIn(-trig * 1.6f, trig * 1.6f) }
+        }.padding(start = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Cover(s, 46.dp)
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(s.title, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (playing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
@@ -221,6 +251,7 @@ fun SongRow(s: Song, playing: Boolean, onClick: () -> Unit) {
                 DropdownMenuItem(leadingIcon = { Icon(Ic.Trash, size = 20.dp) }, text = { Text("Delete from this phone") }, onClick = { Store.remove(s); menu = false })
             }
         }
+    }
     }
     if (pick) AlertDialog(onDismissRequest = { pick = false }, confirmButton = { TextButton(onClick = { pick = false }) { Text("Close") } },
         title = { Text("Add to playlist") },
@@ -294,7 +325,7 @@ fun GroupScreen(title: String, songs: List<Song>, key: (Song) -> String, onPlay:
                 val sorted = list.sortedWith(compareBy({ it.album.lowercase() }, { it.track }, { it.title.lowercase() }))
                 item(key = "g-$name") {
                     Row(Modifier.fillMaxWidth().clickable { open = if (name in open) open - name else open + name }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Cover(sorted.first(), 52.dp)
+                        Cover(sorted.firstOrNull { it.cover.isNotEmpty() } ?: sorted.first(), 52.dp, shape = if (title == "Artists") CircleShape else RoundedCornerShape(8.dp))
                         Column(Modifier.padding(start = 12.dp).weight(1f)) {
                             Text(name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${list.size} songs · ${fmt(list.sumOf { it.durMs })}", fontSize = 12.sp, color = dim)
@@ -303,6 +334,52 @@ fun GroupScreen(title: String, songs: List<Song>, key: (Song) -> String, onPlay:
                     }
                 }
                 if (name in open) items(sorted, key = { "s-" + it.id }) { s -> SongRow(s, s.id == st.id) { onPlay(sorted, sorted.indexOf(s)) } }
+            }
+        }
+    }
+}
+
+@Composable
+fun AlbumsScreen(songs: List<Song>, onPlay: (List<Song>, Int) -> Unit) {
+    val st by NativePlayer.state.collectAsState()
+    var open by remember { mutableStateOf<String?>(null) }
+    val albums = remember(songs) { songs.groupBy { it.album.ifBlank { "Unknown Album" } }.toSortedMap(String.CASE_INSENSITIVE_ORDER) }
+    val o = open
+    if (o != null && albums[o] != null) {
+        BackHandler { open = null }
+        val list = albums.getValue(o).sortedWith(compareBy({ it.track }, { it.title.lowercase() }))
+        val who = list.map { it.artist }.distinct().let { if (it.size == 1) it[0] else "Various artists" }
+        Column(Modifier.fillMaxSize()) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) { IconBtn(Ic.Back) { open = null } }
+            LazyColumn(Modifier.fillMaxSize()) {
+                item {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        CoverFill(list.firstOrNull { it.cover.isNotEmpty() } ?: list.first(), Modifier.fillMaxWidth(0.7f))
+                        Spacer(Modifier.height(12.dp))
+                        Text(o, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text("$who · ${list.size} songs · ${fmt(list.sumOf { it.durMs })}", color = dim, fontSize = 13.sp)
+                        Row(Modifier.padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { onPlay(list, 0) }) { Icon(Ic.Play, size = 18.dp, tint = MaterialTheme.colorScheme.onPrimary); Spacer(Modifier.width(6.dp)); Text("Play") }
+                            OutlinedButton(onClick = { Prefs.setShuffle(true); onPlay(list, list.indices.random()) }) { Icon(Ic.Shuffle, size = 18.dp); Spacer(Modifier.width(6.dp)); Text("Shuffle") }
+                        }
+                    }
+                }
+                items(list, key = { it.id }) { s -> SongRow(s, s.id == st.id) { onPlay(list, list.indexOf(s)) } }
+            }
+        }
+        return
+    }
+    Column(Modifier.fillMaxSize()) {
+        Header("Albums", "${albums.size} albums · ${songs.size} songs")
+        if (songs.isEmpty()) Empty(Ic.Disc, "Nothing here yet")
+        LazyVerticalGrid(GridCells.Fixed(2), contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            gridItems(albums.entries.toList(), key = { it.key }) { e ->
+                val list = e.value
+                Column(Modifier.clickable { open = e.key }) {
+                    CoverFill(list.firstOrNull { it.cover.isNotEmpty() } ?: list.first(), Modifier.fillMaxWidth())
+                    Text(e.key, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
+                    Text(list.map { it.artist }.distinct().let { if (it.size == 1) it[0] else "Various artists" }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp, color = dim)
+                }
             }
         }
     }
@@ -361,7 +438,9 @@ fun GetScreen() {
     var type by remember { mutableStateOf("song") }
     var results by remember { mutableStateOf(listOf<JSONObject>()) }
     var msg by remember { mutableStateOf("") }
+    var artist by remember { mutableStateOf<JSONObject?>(null) }
     val dl by Downloader.items.collectAsState()
+    fun fail(e: Exception) { msg = e.message ?: "Something went wrong" }
     fun run() {
         msg = "Searching…"
         scope.launch {
@@ -373,32 +452,79 @@ fun GetScreen() {
                 } else {
                     results = Engine.search(t, type); msg = if (results.isEmpty()) "Nothing found" else ""
                 }
-            } catch (e: Exception) { msg = e.message ?: "Something went wrong" }
+            } catch (e: Exception) { fail(e) }
         }
     }
+    fun openArtist(id: String) { msg = "Reading the artist…"; scope.launch { try { artist = Engine.artist(id); msg = "" } catch (e: Exception) { fail(e) } } }
+    fun addAlbum(id: String, who: String, title: String) {
+        scope.launch { try { val (_, tr) = Engine.tracks(JSONObject().put("kind", "album").put("id", id).put("artist", who)); Downloader.enqueue(tr); msg = "Added “$title” (${tr.size} songs)" } catch (e: Exception) { fail(e) } }
+    }
+    fun jsonList(a: org.json.JSONArray?): List<JSONObject> = if (a == null) emptyList() else (0 until a.length()).map { a.getJSONObject(it) }
+    val ar = artist
+    if (ar != null) BackHandler { artist = null }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
         Header("Get music", "Search YouTube Music or paste a link")
         OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), placeholder = { Text("Search, or paste a link") }, singleLine = true,
-            leadingIcon = { Icon(Ic.Search, size = 20.dp, tint = dim) }, trailingIcon = { IconBtn(Ic.Check, MaterialTheme.colorScheme.primary, 20.dp) { if (q.isNotBlank()) run() } })
+            leadingIcon = { Icon(Ic.Search, size = 20.dp, tint = dim) }, trailingIcon = { IconBtn(Ic.Check, MaterialTheme.colorScheme.primary, 20.dp) { if (q.isNotBlank()) { artist = null; run() } } })
         Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("song" to "Songs", "album" to "Albums", "playlist" to "Playlists").forEach { (k, l) -> FilterChip(selected = type == k, onClick = { type = k }, label = { Text(l) }) }
+            listOf("song" to "Songs", "artist" to "Artists", "album" to "Albums", "playlist" to "Playlists").forEach { (k, l) -> FilterChip(selected = type == k, onClick = { type = k }, label = { Text(l) }) }
         }
         if (msg.isNotEmpty()) Text(msg, color = dim, fontSize = 13.sp)
         LazyColumn(Modifier.weight(1f)) {
-            items(results, key = { it.optString("kind") + it.optString("id") }) { r ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(r.optString("thumb"), null, Modifier.size(46.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
+            if (ar != null) {
+                val name = ar.optString("name"); val albums = jsonList(ar.optJSONArray("albums")); val top = jsonList(ar.optJSONArray("top"))
+                item {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconBtn(Ic.Back) { artist = null }
+                            AsyncImage(ar.optString("thumb"), null, Modifier.size(64.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                            Column(Modifier.padding(start = 12.dp)) {
+                                Text(name, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${albums.size} albums & singles · ${top.size} top songs", fontSize = 12.sp, color = dim)
+                            }
+                        }
+                        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(enabled = top.isNotEmpty(), onClick = {
+                                Downloader.enqueue(top.map { Track(it.getString("id"), it.optString("title"), name, it.optString("album"), it.optString("thumb")) }); msg = "Added ${top.size} top songs"
+                            }) { Icon(Ic.Download, size = 18.dp); Spacer(Modifier.width(6.dp)); Text("Top songs") }
+                            Button(enabled = albums.isNotEmpty(), onClick = {
+                                scope.launch {
+                                    var n = 0
+                                    for (r in albums) {
+                                        n++; msg = "Reading ${r.optString("title")} ($n of ${albums.size})…"
+                                        try { val (_, tr) = Engine.tracks(JSONObject().put("kind", "album").put("id", r.getString("id")).put("artist", name)); Downloader.enqueue(tr) } catch (_: Exception) { }
+                                    }
+                                    msg = "Added everything by $name"
+                                }
+                            }) { Icon(Ic.Download, size = 18.dp, tint = MaterialTheme.colorScheme.onPrimary); Spacer(Modifier.width(6.dp)); Text("All releases") }
+                        }
+                    }
+                }
+                items(albums, key = { "al-" + it.optString("id") }) { r ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AsyncImage(r.optString("thumb"), null, Modifier.size(52.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
+                        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                            Text(r.optString("title"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(listOf(if (r.optBoolean("single")) "Single / EP" else "Album", r.optString("year")).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 12.sp, color = dim)
+                        }
+                        IconBtn(Ic.Download, MaterialTheme.colorScheme.primary) { addAlbum(r.getString("id"), name, r.optString("title")) }
+                    }
+                }
+            } else items(results, key = { it.optString("kind") + it.optString("id") }) { r ->
+                val kind = r.optString("kind")
+                Row(Modifier.fillMaxWidth().clickable(enabled = kind == "artist") { openArtist(r.getString("id")) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AsyncImage(r.optString("thumb"), null, Modifier.size(46.dp).clip(if (kind == "artist") CircleShape else RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                         Text(r.optString("title"), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(r.optString("sub"), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp, color = dim)
                     }
-                    IconBtn(Ic.Download, MaterialTheme.colorScheme.primary) {
+                    if (kind == "artist") Icon(Ic.Person, tint = dim, modifier = Modifier.padding(end = 12.dp))
+                    else IconBtn(Ic.Download, MaterialTheme.colorScheme.primary) {
                         scope.launch {
                             try {
-                                val kind = r.optString("kind")
                                 if (kind == "song") Downloader.enqueue(listOf(Track(r.getString("id"), r.optString("title"), r.optString("artist"), r.optString("album"), r.optString("thumb"))))
-                                else { val (_, tr) = Engine.tracks(JSONObject().put("kind", kind).put("id", r.getString("id"))); Downloader.enqueue(tr) }
-                            } catch (e: Exception) { msg = e.message ?: "Something went wrong" }
+                                else { val (_, tr) = Engine.tracks(JSONObject().put("kind", kind).put("id", r.getString("id")).put("artist", r.optString("artist"))); Downloader.enqueue(tr) }
+                            } catch (e: Exception) { fail(e) }
                         }
                     }
                 }
@@ -498,7 +624,16 @@ fun SettingsScreen(count: Int) {
 
 @Composable
 fun MiniPlayer(s: Song, st: NativePlayer.St, onOpen: () -> Unit) {
-    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).clickable { onOpen() }) {
+    val trig = with(LocalDensity.current) { 60.dp.toPx() }
+    var hx by remember { mutableStateOf(0f) }
+    var vy by remember { mutableStateOf(0f) }
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).clickable { onOpen() }
+        .pointerInput(Unit) {
+            detectHorizontalDragGestures(onDragStart = { hx = 0f }, onDragEnd = { if (hx < -trig) NativePlayer.next() else if (hx > trig) NativePlayer.prev(); hx = 0f }, onDragCancel = { hx = 0f }) { c, a -> c.consume(); hx += a }
+        }
+        .pointerInput(Unit) {
+            detectVerticalDragGestures(onDragStart = { vy = 0f }, onDragEnd = { if (vy < -trig) onOpen(); vy = 0f }, onDragCancel = { vy = 0f }) { c, a -> c.consume(); vy += a }
+        }) {
         if (st.dur > 0) LinearProgressIndicator(progress = { (st.pos.toFloat() / st.dur).coerceIn(0f, 1f) }, Modifier.fillMaxWidth().height(2.dp))
         Row(Modifier.padding(start = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Cover(s, 40.dp)
@@ -525,15 +660,22 @@ fun FullPlayer(s: Song, st: NativePlayer.St, onClose: () -> Unit, onQueue: () ->
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(sleepAt) { while (sleepAt > 0) { nowMs = System.currentTimeMillis(); delay(15000) } }
     val primary = MaterialTheme.colorScheme.primary
+    val trig = with(LocalDensity.current) { 70.dp.toPx() }
+    var hx by remember { mutableStateOf(0f) }
+    var vy by remember { mutableStateOf(0f) }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(Modifier.fillMaxSize().pointerInput(Unit) {
+            detectVerticalDragGestures(onDragStart = { vy = 0f }, onDragEnd = { if (vy > trig * 2) onClose(); vy = 0f }, onDragCancel = { vy = 0f }) { c, a -> c.consume(); vy += a }
+        }.padding(horizontal = 24.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconBtn(Ic.Down, onClick = onClose)
                 Text("Now playing", Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = dim)
                 IconBtn(Ic.Queue, onClick = onQueue)
             }
             Spacer(Modifier.height(8.dp))
-            Cover(s, 320.dp, Modifier.fillMaxWidth().aspectRatio(1f))
+            Cover(s, 320.dp, Modifier.fillMaxWidth().aspectRatio(1f).pointerInput(s.id) {
+                detectHorizontalDragGestures(onDragStart = { hx = 0f }, onDragEnd = { if (hx < -trig) NativePlayer.next() else if (hx > trig) NativePlayer.prev(); hx = 0f }, onDragCancel = { hx = 0f }) { c, a -> c.consume(); hx += a }
+            })
             Spacer(Modifier.height(20.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
