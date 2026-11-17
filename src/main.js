@@ -3283,7 +3283,9 @@ function prepareNp() {
   }
   npOpen = true;
   progCache.np = progCache.nps = -1;
-  npTrack(0);
+  // the full player already shows this song (every song change updates it, even while it's closed): rebuilding its
+  // cover and backdrop again at the very moment the drag starts only cost a hitch. Just refresh the "playing from" line.
+  if (!$("#np").classList.contains("lyrics") && npSig() === np.sig) npCtx(); else npTrack(0);     // (lyrics view: as before)
   updateProgress();
   const el = $("#np");
   el.classList.toggle("fogged", fx());         // the storm-in-fog background (motion off: the still, blurred cover)
@@ -3860,12 +3862,28 @@ function coverEl(s) {
   return el;
 }
 
+/** everything about the playing song that the full player draws (when it's the same as last time, nothing needs redrawing) */
+function npSig() {
+  const s = player.current;
+  if (!s) return "";
+  const c = s.cover && lib.cover(s.cover);
+  return [s.id, s.title, s.artist, s.album, s.cover, c ? c.cv : "", lib.covers.has(s.cover) ? 1 : 0, !!lib.meta.settings.npLyrics].join("|");
+}
+/** just the "PLAYING FROM / NOW PLAYING" line (the one thing that can change without the song changing) */
+function npCtx() {
+  const s = player.current;
+  if (!s || !np.ctx) return;
+  const lead = ctxLabel ? "PLAYING FROM" : "NOW PLAYING", name = ctxLabel || s.album || "";
+  if (np.ctx.firstChild?.textContent === lead && np.ctx.querySelector("b")?.textContent === name) return;
+  np.ctx.replaceChildren(document.createTextNode(lead), h("b", {}, name));
+}
 // a new song: slide the cover out one side and the new one in from the other
 function npTrack(dir) {
   const s = player.current;
   if (!s || !np.cover) return;
   const already = dir && np.shownId === s.id;        // the swipe already showed this song; the audio just caught up
   np.shownId = s.id;
+  np.sig = npSig();
   const cov = lib.cover(s.cover);
   const color = cov?.color || "hsl(345 90% 72%)";
   np.title.textContent = s.title;
