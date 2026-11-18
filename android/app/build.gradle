@@ -12,7 +12,14 @@ android {
     flavorDimensions "ui"
     productFlavors {
         legacy { dimension "ui" }
-        next { dimension "ui"; applicationIdSuffix ".next"; versionNameSuffix "-native" }
+        // the native app's version comes from its release notes file (newest entry): MAJOR.MINOR.PATCH -> code MAJOR*10000 + MINOR*100 + PATCH
+        next {
+            dimension "ui"; applicationIdSuffix ".next"
+            def rel = new groovy.json.JsonSlurper().parse(file("src/next/assets/release.json")).releases[0]
+            def v = rel.version.tokenize(".").collect { it as int }
+            versionName rel.version
+            versionCode v[0] * 10000 + v[1] * 100 + v[2]
+        }
     }
     buildFeatures { compose true }
     composeOptions { kotlinCompilerExtensionVersion "1.5.8" }

@@ -74,6 +74,7 @@ class NextActivity : ComponentActivity() {
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); handle(intent) }
     private fun handle(i: Intent?) {
+        i?.getStringExtra("open")?.let { o -> Tour.open(this, o); return }
         if (i?.action == Intent.ACTION_SEND) { val t = i.getStringExtra(Intent.EXTRA_TEXT) ?: return; Nav.stack.clear(); Nav.open(Page.Search); Yt.link(t) }
     }
     override fun onStop() { super.onStop(); Ctl.save(); Store.save(true) }
@@ -116,6 +117,7 @@ fun App() {
     LaunchedEffect(Unit) {
         if (!Migrate.done() && Store.songs.value.isEmpty()) { val r = Migrate.run(); if (r.isNotBlank() && !r.startsWith("There was nothing")) Toasts.show(r) }
         Tasks.poke()
+        Updater.autoCheck(ctx)
     }
     LaunchedEffect(Unit) { while (true) { Prefs.saving.value = Prefs.autoSaver.value && Tasks.saver(ctx); delay(60000) } }
     LaunchedEffect(Nav.tab.value) { if (pager.currentPage != Nav.tab.value) pager.animateScrollToPage(Nav.tab.value) }

@@ -413,10 +413,7 @@ fun SearchPage() {
         LazyColumn(contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
             item {
                 SearchBox(if (yt) Yt.q.value else q, { if (yt) Yt.q.value = it else q = it }, if (yt) "Search YouTube Music, or paste a link" else "Songs, albums, artists, genres", { if (yt) Yt.run() }, Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp))
-                Row(Modifier.padding(start = 18.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Chip("Your Library", !yt, ic = Ic.Note) { Yt.mode.value = false }
-                    Chip("YouTube Music", yt, ic = Ic.Globe) { Yt.mode.value = true; if (Yt.q.value.isEmpty()) Yt.q.value = q }
-                }
+
             }
             if (yt) { ytResults(this); return@LazyColumn }
             if (t.isEmpty() && recent.isNotEmpty()) item {
@@ -454,6 +451,16 @@ fun SearchPage() {
             if (hitAlbums.isNotEmpty()) item { AlbumShelf("Albums", hitAlbums) }
             if (hitPls.isNotEmpty()) item { Shelf("Playlists") { hitPls.forEach { p -> PlRow({ Art("", 56.dp, shape = RoundedCornerShape(10.dp), ph = Ic.List, phName = p) }, p, null) { Nav.open(Page.PlaylistP(p)) } } } }
         }
-        Head("Search", false, back = true)
+        Head(if (yt) "YouTube Music" else "Search", false, back = true) {
+            IB(Ic.Gear, modifier = Modifier.padding(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.08f))) {
+                Dialogs.sheet {
+                    SheetScroll {
+                        T("Search In", 22.sp, W700, modifier = Modifier.padding(start = 24.dp, bottom = 8.dp))
+                        Act(Ic.Note, "Your Library", if (!yt) "Searching here now" else "") { Yt.mode.value = false }
+                        Act(Ic.Globe, "YouTube Music", if (yt) "Searching here now" else "Find songs, albums and artists to add") { Yt.mode.value = true; if (Yt.q.value.isEmpty()) Yt.q.value = q }
+                    }
+                }
+            }
+        }
     }
 }

@@ -40,12 +40,28 @@ jobs:
           "$BT/apksigner" verify Strata-Music-Next.apk
       - uses: actions/upload-artifact@v4
         with: { name: Strata-Music-Next-apk, path: Strata-Music-Next.apk, retention-days: 14 }
-      - name: Publish (pre-release "next", not the "latest" download)
+      - name: Name the release (version + update name from release.json)
+        id: rel
+        run: |
+          node -e '
+            const r = require("./android/app/src/next/assets/release.json").releases[0];
+            const slug = r.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
+            const fs = require("fs");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${r.version}\nname=${r.name}\nfile=Strata-Music-${r.version}-${slug}.apk\n`);
+            fs.writeFileSync("notes.md", `## ${r.version} — ${r.name}\n\n` + r.notes.map(n => "- " + n).join("\n") + "\n\nInstall it, or update from inside the app: Settings › Updates.\n");
+          '
+          cp Strata-Music-Next.apk "${{ steps.rel.outputs.file || 'x' }}" 2>/dev/null || true
+      - name: Publish the update
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          notes="Native test build ${{ github.run_number }} ($(git log -1 --format=%h)). Installs beside the real app."
-          if gh release view next >/dev/null 2>&1; then gh release upload next Strata-Music-Next.apk --clobber; gh release edit next --notes "$notes" --prerelease --latest=false
-          else gh release create next Strata-Music-Next.apk --title "Strata Music Next (native test)" --notes "$notes" --prerelease --latest=false; fi
+          F="${{ steps.rel.outputs.file }}"; V="${{ steps.rel.outputs.version }}"; N="${{ steps.rel.outputs.name }}"
+          cp Strata-Music-Next.apk "$F"
+          T="next-v$V"
+          if gh release view "$T" >/dev/null 2>&1; then gh release upload "$T" "$F" --clobber; gh release edit "$T" --title "Strata Music $V — $N" --notes-file notes.md
+          else gh release create "$T" "$F" --title "Strata Music $V — $N" --notes-file notes.md --prerelease --latest=false; fi
+          # the old link keeps working too
+          if gh release view next >/dev/null 2>&1; then gh release upload next "$F" --clobber; gh release edit next --notes-file notes.md --title "Strata Music Next · newest: $V — $N"; fi
+
 
   # Opens the app in an emulator and saves what Android logged (crashes included) + a screenshot.
   smoke:

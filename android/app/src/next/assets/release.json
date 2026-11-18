@@ -1,0 +1,35 @@
+{
+  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
+  "releases": [
+    {
+      "version": "2.1.0",
+      "name": "The Mirror Update",
+      "date": "2026-11-18",
+      "notes": [
+        "Looks and works like the original Strata Music: same menus, settings, search and queue",
+        "Liquid Glass: the bottom bar bends and splits the light behind it (switch it off for the classic frosted blur)",
+        "The media bar grows into the full player, and shrinks back when you drag it down",
+        "Swipe the album cover to slide to the next or previous song",
+        "Double-tap a song, album or artist to like it",
+        "Pop-up menus swipe down to close",
+        "Queue: hold and drag to reorder, swipe left to remove",
+        "Updates right inside the app: Settings › Updates",
+        "If the app ever crashes, the next launch shows what happened with a Copy button",
+        "Fixed: tapping a tab two away stopped on the tab in between",
+        "Fixed: the app crashed on opening"
+      ]
+    },
+    {
+      "version": "2.0.0",
+      "name": "The Native Update",
+      "date": "2026-11-17",
+      "notes": [
+        "Strata Music rebuilt as a fully native Android app",
+        "Your library, playlists, favorites, lyrics and settings carry over from the old app",
+        "YouTube Music search and downloads with a browser that only runs while downloading",
+        "Synced lyrics, equalizer, crossfade with beat matching, silence cutting",
+        "Music Packs, folders, radio and mixes"
+      ]
+    }
+  ]
+}

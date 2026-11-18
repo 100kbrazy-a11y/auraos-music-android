@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -118,19 +119,29 @@ fun SettingsPage() {
                         }
                     }
                     Item(Ic.Eq, "Equalizer", value = eqName, chevron = true, onClick = { Dialogs.sheet { EqSheet() } })
-                    SwitchItem(Ic.Cut, "Cut Silence", if (trim) "Songs start at their first sound and end at their last (also for crossfades and lyrics)" else "Off · songs play from their very first second", trim) { Prefs.setTrim(it) }
-                    SwitchItem(Ic.Sun, "Keep the Screen On", "While the full player is open", awake) { Prefs.setAwake(it) }
                 }
                 Group("Look & Feel") {
                     val liquid by Prefs.liquid.collectAsState()
-                    SwitchItem(Ic.Spark, "Liquid Glass", if (liquid) "Clear glass with a lit rim and stretchy, bouncy motion" else "Off · classic frosted blur", liquid) { Prefs.setLiquid(it) }
+                    val tuck by Prefs.tuck.collectAsState(); val timer by Prefs.scrollTimer.collectAsState()
+                    var openTimer by remember { mutableStateOf(false) }
+                    SwitchItem(Ic.Spark, "Liquid Glass", if (liquid) "Clear glass that bends and splits the light behind it" else "Off · classic frosted blur", liquid) { Prefs.setLiquid(it) }
                     SwitchItem(Ic.Spark, "Motion Effects", "Sliding pages, glow, living background", motion) { Prefs.setMotion(it) }
-                    SwitchItem(Ic.Spark, "Save Battery Automatically", if (saving) "Saving now · the moving background is paused" else "Pause the moving background in Battery Saver or below 20%", saver) { Prefs.setAutoSaver(it) }
+                    SwitchItem(Ic.Spark, "Save Battery Automatically", "Pause the moving background in Battery Saver or below 20%", saver) { Prefs.setAutoSaver(it) }
+                    SwitchItem(Ic.Folder, "Keep Media Bar Tucked", "Sideways: just the album cover, tucked under the tabs", tuck) { Prefs.setTuck(it) }
+                    Item(Ic.Lyrics, "Scroll Timers", value = "%.1f s".format(timer), chevron = true, open = openTimer, onClick = { openTimer = !openTimer })
+                    AnimatedVisibility(openTimer) {
+                        Column(Modifier.padding(start = 58.dp, end = 18.dp, bottom = 6.dp)) {
+                            T("How long after you stop scrolling the media bar comes back (sideways)", 13.sp, color = C.sub, lines = 2)
+                            Slide(timer, 0.5f..5f, 0.5f) { Prefs.setScrollTimer(it) }
+                        }
+                    }
                 }
                 Group("Accounts & Sharing") {
-                    Item(Ic.Share, "Share Music", "Any song (as its file), album or playlist (as a music pack) from its ⋮ menu")
-                    Item(Ic.Globe, "From YouTube", "YouTube › Share › Strata Music adds a link straight away")
+                    Item(Ic.Person, "YouTube Account", "Sign in if YouTube asks you to (for Add from Link)", onClick = {
+                        Dialogs.show { DTitle("YouTube Account"); DText("Signing in isn't built into the native app yet. Downloads work without it."); DButtons("OK" to { Dialogs.close() }) }
+                    })
                 }
+                UpdatesGroup()
                 T("Strata Music · music packs work on iPhone, Android and the desktop app", 12.sp, color = C.sub, align = TextAlign.Center, lines = 2, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp))
             }
         }
@@ -148,6 +159,8 @@ private fun LibrarySheet() {
         T("Library", 22.sp, W700, modifier = Modifier.padding(start = 24.dp, bottom = 8.dp))
         Act(Ic.Image, "Find Missing Covers", if (noCover > 0) plural(noCover, "album") + " without a cover" else "Every album already has a cover") { Tasks.findCovers() }
         Item(Ic.Tag, "Fill In Info Automatically", "Genre and year for songs missing them", onClick = { Prefs.setAutofill(!fill) }) { Switch(fill) { Prefs.setAutofill(it) } }
+        val trim by Prefs.trimSilence.collectAsState()
+        Item(Ic.Cut, "Cut Silence", if (trim) "Songs start at their first sound and end at their last" else "Off · songs play from their very first second", onClick = { Prefs.setTrim(!trim) }) { Switch(trim) { Prefs.setTrim(it) } }
         Item(Ic.Compress, "Compress Music", if (comp) "Everything becomes Opus (near-lossless, a fraction of the size) · only while charging" + (if (saved > 0) " · ${fmtSize(saved)} saved" else "") else "Off · songs are kept as they are", onClick = { Prefs.setCompress(!comp) }) { Switch(comp) { Prefs.setCompress(it) } }
         Act(Ic.Spark, "Bring Over from Strata Music", if (Migrate.done()) "Done · run again to pick up anything new" else "Your music, playlists and settings from the older app") { Store.scope.launch { Toasts.show(Migrate.run(force = true)) } }
         Act(Ic.Trash, "Remove All Music…", danger = true) { Dialogs.show { Confirm("Remove all music?", "Every song, cover and playlist is deleted from this phone. This can't be undone.", "Remove All") { Store.removeAll() } } }
@@ -164,5 +177,53 @@ private fun DiagSheet(ctx: Context) {
     LazyColumn(Modifier.heightIn(max = 520.dp).padding(horizontal = 20.dp)) {
         if (lines.isEmpty()) item { T("Nothing yet", 15.sp, color = C.sub) }
         items(lines.reversed()) { androidx.compose.material3.Text(it, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = C.sub) }
+    }
+}
+
+/** Settings › Updates: this version and its name, Check for Updates, the new one's notes + Update, and What's New */
+@Composable
+fun UpdatesGroup() {
+    val ctx = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val st by Updater.state.collectAsState()
+    val cur = remember { Updater.current(ctx) }
+    val history = remember { Updater.history(ctx) }
+    var showNotes by remember { mutableStateOf(false) }
+    Group("Updates") {
+        Item(Ic.Spark, "Strata Music ${cur.version}", cur.name.ifBlank { "Native" } + if (cur.date.isNotBlank()) " · ${cur.date}" else "")
+        when (val s = st) {
+            is Updater.St.Available, is Updater.St.Downloading, is Updater.St.Ready -> {
+                val rel = when (s) { is Updater.St.Available -> s.rel; is Updater.St.Downloading -> s.rel; is Updater.St.Ready -> s.rel; else -> null }!!
+                Column(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(mix(accent, 0.16f, C.surface2)).padding(16.dp)) {
+                    T("NEW · ${rel.version}", 12.sp, W750, accent, spacing = 0.5.sp)
+                    T(rel.name.ifBlank { "Update" }, 20.sp, W800, lines = 2, modifier = Modifier.padding(top = 2.dp, bottom = 8.dp))
+                    for (n in rel.notes) Row(Modifier.padding(vertical = 3.dp)) { T("•", 14.sp, W700, accent, modifier = Modifier.width(16.dp)); T(n, 14.sp, color = C.text.copy(alpha = 0.85f), lines = 4) }
+                    Spacer(Modifier.height(12.dp))
+                    when (s) {
+                        is Updater.St.Downloading -> {
+                            T("Downloading… ${(s.frac * 100).toInt()}%", 13.sp, color = C.sub)
+                            Box(Modifier.padding(top = 6.dp).fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(C.surface3)) { Box(Modifier.fillMaxHeight().fillMaxWidth(s.frac).background(accent)) }
+                        }
+                        is Updater.St.Ready -> Btn("Install", Ic.Download, modifier = Modifier.fillMaxWidth()) { Updater.install(ctx, s.file) }
+                        else -> Btn("Update", Ic.Download, modifier = Modifier.fillMaxWidth()) { scope.launch { Updater.download(ctx, rel) } }
+                    }
+                }
+            }
+            else -> {}
+        }
+        Item(Ic.Download, "Check for Updates", when (val s = st) {
+            Updater.St.Checking -> "Checking…"; Updater.St.UpToDate -> "You're up to date"; is Updater.St.Failed -> s.msg
+            is Updater.St.Available -> "${s.rel.version} is ready to download"; else -> "Looks for a newer version on GitHub"
+        }, onClick = { scope.launch { Updater.check(ctx) } })
+        Item(Ic.Lyrics, "What's New", "What each update added", chevron = true, open = showNotes, onClick = { showNotes = !showNotes })
+        AnimatedVisibility(showNotes) {
+            Column(Modifier.padding(start = 18.dp, end = 18.dp, bottom = 14.dp)) {
+                for (r in history) {
+                    T("${r.version} · ${r.name}", 15.sp, W750, if (r.version == cur.version) accent else C.text, lines = 2, modifier = Modifier.padding(top = 10.dp))
+                    if (r.date.isNotBlank()) T(r.date, 12.sp, color = C.faint)
+                    for (n in r.notes) Row(Modifier.padding(top = 4.dp)) { T("•", 14.sp, W700, C.sub, modifier = Modifier.width(16.dp)); T(n, 14.sp, color = C.sub, lines = 4) }
+                }
+            }
+        }
     }
 }
