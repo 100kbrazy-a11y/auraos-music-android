@@ -5,8 +5,10 @@ P=com.auraos.music.next
 adb install -r Strata-Music-Next.apk
 adb shell pm grant $P android.permission.POST_NOTIFICATIONS || true
 adb logcat -c
+(adb logcat -v brief '*:W' > live.txt 2>/dev/null &)
 adb shell am start -n $P/com.auraos.music.next.NextActivity --ez seedDemo true
 sleep 25
+adb shell dumpsys meminfo com.auraos.music.next | head -20
 center() {  # center of the first node whose text is $1
   adb shell uiautomator dump /sdcard/u.xml >/dev/null 2>&1; adb pull /sdcard/u.xml u.xml >/dev/null 2>&1
   python3 - "$1" <<'PY'
@@ -36,8 +38,7 @@ back; back
 adb shell input tap 1000 150; sleep 3; shot 10-settings
 back
 adb shell input tap 795 150; sleep 3; shot 11-search
-adb logcat -d > logcat.txt
-grep -A40 "FATAL EXCEPTION" logcat.txt | head -60 || true
+echo '==LOG=='; grep -E 'FATAL|AndroidRuntime|Strata|lowmemorykiller|ANR|OutOfMemory' live.txt | head -60; echo '==ENDLOG=='
 for f in [0-9]*.png; do
   python3 -c "from PIL import Image; import sys; i=Image.open(sys.argv[1]).convert('RGB'); i=i.resize((360, int(i.height*360/i.width))); i.save(sys.argv[2], quality=70)" "$f" "${f%.png}.jpg"
   echo "==IMG ${f%.png}=="; base64 -w 0 "${f%.png}.jpg"; echo; echo "==END=="
