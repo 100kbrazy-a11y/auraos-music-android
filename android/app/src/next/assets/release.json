@@ -2,6 +2,15 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.8.0",
+   "name": "The Demo Update",
+   "date": "2026-11-18",
+   "notes": [
+    "New: Music Packs can carry synced lyrics. A song's entry in musicpack.json can have a \"lyrics\" field with LRC text, and it shows up in the lyrics view without needing LRCLIB",
+    "Made for the Strata Demo pack: 45 invented songs with invented lyrics for \"Open Fields\""
+   ]
+  },
+  {
    "version": "2.7.0",
    "name": "The Synced Update",
    "date": "2026-11-18",

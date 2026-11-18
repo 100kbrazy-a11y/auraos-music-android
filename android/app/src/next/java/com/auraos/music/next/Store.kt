@@ -405,8 +405,14 @@ object Store {
                         albumartist = m?.optString("albumartist")?.ifBlank { null }, track = m?.optInt("track")?.takeIf { it > 0 }, disc = m?.optInt("disc")?.takeIf { it > 0 },
                         year = m?.optString("year")?.ifBlank { null }, genre = m?.optString("genre")?.ifBlank { null }, cover = if (cov != null && hasNoPicture(tmp)) cov else null,
                     )
+                    val before = order.size
                     val s = register(tmp, tmp.extension, hint)
                     if (s != null) { added++; order.add(s.id) } else { skipped++; findSame(hint.title ?: "", hint.artist ?: "", hint.album ?: "")?.let { order.add(it.id) } }
+                    // a pack can carry synced lyrics (LRC text) for a song, so songs that LRCLIB doesn't know still get lyrics
+                    val lrcText = m?.optString("lyrics").orEmpty()
+                    if (lrcText.isNotBlank() && order.size > before) {
+                        meta.getJSONObject("lyrics").put(order.last(), JSONObject().put("synced", lrcText).put("plain", "").put("instrumental", false).put("source", "Music Pack")); metaChanged()
+                    }
                 } catch (e: Exception) { Diag.log("pack: ${e.message}") }
             }
             val pl = manifest.optString("playlist")
