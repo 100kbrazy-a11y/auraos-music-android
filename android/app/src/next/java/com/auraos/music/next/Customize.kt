@@ -226,7 +226,7 @@ fun CustomizePage() {
     val ls = rememberLazyListState()
     val a = accent
     Box(Modifier.fillMaxSize().background(C.bg)) {
-        Aurora(motion && !saving)
+        Aurora(motion && !saving && !ls.isScrollInProgress)
         LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
             item {
                 T("Make it yours. Everything here changes live and is kept with your library.", 14.sp, color = C.sub, lines = 3, modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp))

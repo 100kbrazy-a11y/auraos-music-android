@@ -110,8 +110,15 @@ fun Bars(levels: FloatArray, color: Color, modifier: Modifier) {
 @Composable
 fun Aurora(moving: Boolean) {
     val a = accent
-    val t = if (moving) rememberInfiniteTransition(label = "au").animateFloat(0f, 1f, infiniteRepeatable(tween(22000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "a").value else 0f
+    // the drift pauses where it is (never snaps back) while the page scrolls, and is read only when drawing, not every recomposition
+    val tA = remember { Animatable(0f) }
+    var up by remember { mutableStateOf(true) }
+    LaunchedEffect(moving) {
+        if (!moving) return@LaunchedEffect
+        while (true) { val to = if (up) 1f else 0f; tA.animateTo(to, tween((22000 * kotlin.math.abs(to - tA.value)).toInt().coerceAtLeast(300), easing = LinearEasing)); up = !up }
+    }
     Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = 0.55f }) {
+        val t = tA.value
         val v = size.maxDimension
         fun blob(cx: Float, cy: Float, op: Float, k: Float) { val r = v * 0.35f * (1f + 0.15f * t * k); val c = Offset(cx + v * 0.08f * t * k, cy + v * 0.06f * t * k); drawCircle(Brush.radialGradient(listOf(a.copy(alpha = op), Color.Transparent), c, r), r, c) }
         blob(-v * 0.30f + v * 0.35f, -v * 0.35f + v * 0.35f, 0.22f, 1f)
