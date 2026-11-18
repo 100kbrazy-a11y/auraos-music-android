@@ -253,7 +253,7 @@ fun AlbumPage(key: String) {
             item { a.songs.firstNotNullOfOrNull { it.j.optString("copyright").ifBlank { null } }?.let { T(it, 12.sp, color = C.faint, lines = 3, modifier = Modifier.padding(18.dp)) } }
         }
         Head(if (ls.scrolled) a.title else "", ls.scrolled, back = true) {
-            IB(Ic.More) {
+            IB(Ic.More, modifier = Modifier.padding(4.dp).clip(CircleShape).background(mix(accent, 0.28f, Color(0x661E1E24)))) {
                 Dialogs.sheet {
                     SheetScroll {
                         SheetHead(a.cover?.cover ?: "", a.title, "${a.artist} · ${plural(a.songs.size, "song")}")

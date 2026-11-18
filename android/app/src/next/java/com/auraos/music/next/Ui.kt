@@ -194,7 +194,7 @@ fun Modifier.graphicsScale(s: Float): Modifier = this.graphicsLayer { scaleX = s
 /** the glass pill of tool buttons at the top right: search, filter, settings */
 @Composable
 fun Tools(filter: (() -> Unit)? = null) {
-    Row(Modifier.clip(RoundedCornerShape(22.dp)).background(Color.White.copy(alpha = 0.07f)).glass(RoundedCornerShape(22.dp), Color.Transparent, corner = 22.dp).padding(horizontal = 2.dp)) {
+    Row(Modifier.clip(RoundedCornerShape(22.dp)).background(Color(0xFF2A272E).copy(alpha = 0.85f)).border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(22.dp)).padding(horizontal = 2.dp)) {
         IB(Ic.Search, box = 42.dp) { Nav.open(Page.Search) }
         IB(Ic.Filter, box = 42.dp, on = Filt.active()) { if (filter != null) filter() else Dialogs.sheet { FilterSheet() } }
         IB(Ic.Gear, box = 42.dp) { Nav.open(Page.Settings) }

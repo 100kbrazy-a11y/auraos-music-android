@@ -20,7 +20,7 @@ for m in re.finditer(r'<node [^>]*>', t):
         a,b,c,d=map(int,re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',n).groups()); print((a+c)//2,(b+d)//2); break
 PY
 }
-tapt() { xy=$(center "$1"); [ -n "$xy" ] && adb shell input tap $xy; sleep ${2:-2}; }
+tapt() { xy=$(center "$1"); [ -n "$xy" ] && adb shell input tap $xy; sleep ${2:-3}; }
 shot() { adb exec-out screencap -p > "$1.png"; }
 back() { adb shell input keyevent 4; sleep 2; }
 ycen() { center "$1" | cut -d' ' -f2; }

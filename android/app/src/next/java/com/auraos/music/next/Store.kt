@@ -59,8 +59,27 @@ class Meta(
     val albumartist: String? = null, val year: String? = null, val genre: String? = null, val disc: Int? = null, val yt: String? = null,
 )
 
-fun splitArtists(a: String): List<String> =
-    a.split(Regex("\\s*(?:,|;|/| feat\\.? | ft\\.? | featuring )\\s*", RegexOption.IGNORE_CASE)).map { it.trim() }.filter { it.isNotEmpty() }
+private val ONE_ARTIST = listOf("Tyler, The Creator", "Earth, Wind & Fire", "Earth, Wind and Fire", "AC/DC", "Simon & Garfunkel", "Hall & Oates",
+    "Brooks & Dunn", "Crosby, Stills, Nash & Young", "Crosby, Stills & Nash", "Blood, Sweat & Tears", "Emerson, Lake & Palmer",
+    "Florence + The Machine", "Florence & The Machine", "Mumford & Sons", "Of Monsters and Men", "Bell Biv DeVoe", "Sly & The Family Stone",
+    "Kool & The Gang", "Huey Lewis & The News", "Prince & The Revolution", "Smokey Robinson & The Miracles", "Ike & Tina Turner")
+private val SPLIT = Regex("\\s*[,;]\\s*|\\s+(?:&|\\+|×|/|x)\\s+|\\s+(?:[Ff]eat\\.?|[Ff]t\\.?|[Ff]eaturing|FEAT\\.?|FT\\.?)\\s+")
+/** splitArtists() from tags.js, 1:1: "A, B" / "A & B" / "A x B" / "A feat. B" / "A; B" → [A, B]; known one-artist names stay whole */
+fun splitArtists(credit: String): List<String> {
+    var s = credit.replace(Regex("[()\\[\\]]"), " ").replace(Regex("\\s+"), " ").trim()
+    if (s.isEmpty()) return emptyList()
+    val keep = ArrayList<String>()
+    for (name in ONE_ARTIST) {
+        val i = s.lowercase().indexOf(name.lowercase())
+        if (i >= 0) { keep.add(s.substring(i, i + name.length)); s = s.substring(0, i) + "\u0000${keep.size - 1}\u0000" + s.substring(i + name.length) }
+    }
+    val out = ArrayList<String>(); val seen = HashSet<String>()
+    for (raw in s.split(SPLIT)) {
+        val part = raw.replace(Regex("\u0000(\\d+)\u0000")) { keep[it.groupValues[1].toInt()] }.trim()
+        if (part.isNotEmpty() && seen.add(part.lowercase())) out.add(part)
+    }
+    return out
+}
 fun primaryArtist(a: String): String = splitArtists(a).firstOrNull() ?: ""
 
 /** The WebView app's hash (FNV-1a, base 36): album cover ids and artist-photo ids match it. */

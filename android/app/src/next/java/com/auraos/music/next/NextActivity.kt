@@ -119,7 +119,7 @@ fun App() {
     }
     LaunchedEffect(Unit) { while (true) { Prefs.saving.value = Prefs.autoSaver.value && Tasks.saver(ctx); delay(60000) } }
     LaunchedEffect(Nav.tab.value) { if (pager.currentPage != Nav.tab.value) pager.animateScrollToPage(Nav.tab.value) }
-    LaunchedEffect(pager.currentPage) { Nav.tab.value = pager.currentPage }
+    LaunchedEffect(pager.settledPage) { Nav.tab.value = pager.settledPage }   // only where it lands, not the pages it passes
     LaunchedEffect(awake, full) {
         val w = (ctx as? Activity)?.window ?: return@LaunchedEffect
         if (awake && full) w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) else w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -177,7 +177,8 @@ fun App() {
                         }
                     }
                 }
-                Dock(cur, pager.currentPage, { i -> Nav.stack.clear(); Nav.tab.value = i; scope.launch { pager.animateScrollToPage(i) } }) { full = true }
+                AnimatedVisibility(Nav.stack.lastOrNull() != Page.Settings, enter = slideInVertically { it }, exit = slideOutVertically { it }) {   // the bottom bar steps away in Settings
+                Dock(cur, Nav.tab.value, { i -> Nav.stack.clear(); Nav.tab.value = i; scope.launch { pager.animateScrollToPage(i) } }) { full = true } }
             }
             // the media bar grows into the player (and shrinks back): the bubble's outline widens to the screen, the cover flies
             // from the bar to its place, and the player's own background and controls fade in on the way
