@@ -78,6 +78,8 @@ class NextActivity : ComponentActivity() {
         val mp = android.view.ViewGroup.LayoutParams.MATCH_PARENT
         root.addView(bg, mp, mp); root.addView(glass, mp, mp); root.addView(fg, mp, mp)
         Liquid.attach(glass, bg)
+        // the glass is moved right before each frame is drawn, after everything is laid out: it can't trail a frame behind
+        root.viewTreeObserver.addOnPreDrawListener { Liquid.frame(this); true }
         setContentView(root)
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); handle(intent) }
@@ -120,6 +122,7 @@ fun BgApp() {
     LaunchedEffect(pager.settledPage, pager.isScrollInProgress) { if (!pager.isScrollInProgress && Nav.tab.value != pager.settledPage) { Nav.tab.value = pager.settledPage; Hap.tick() } }   // only where a swipe lands
     Box(Modifier.fillMaxSize().background(C.bg)) {
         Aurora(motion && !saving)
+        CompositionLocalProvider(LocalBgLayer provides true) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
             when (page) { 0 -> AlbumsScreen(); 1 -> ArtistsScreen(); 2 -> SongsScreen(); else -> PlaylistsScreen() }
         }
@@ -128,14 +131,15 @@ fun BgApp() {
                 var shown by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) { shown = true }
                 AnimatedVisibility(shown, enter = slideInHorizontally(tween(320, easing = Ease)) { it / 3 } + fadeIn(tween(200)), exit = fadeOut()) {
-                    Box(Modifier.fillMaxSize().background(C.bg)) {
+                    Box(Modifier.fillMaxSize().background(C.bg)) { CompositionLocalProvider(LocalPageIndex provides i) {
                         when (p) {
                             is Page.AlbumP -> AlbumPage(p.key); is Page.ArtistP -> ArtistPage(p.name); is Page.PlaylistP -> PlaylistPage(p.name)
                             Page.Favorites -> FavoritesPage(); Page.Search -> SearchPage(); Page.Settings -> SettingsPage()
                         }
-                    }
+                    } }
                 }
             }
+        }
         }
     }
 }
@@ -157,7 +161,6 @@ fun FgApp() {
     val cur = q.getOrNull(st.index)?.let { s -> songs.firstOrNull { it.id == s.id } ?: s }
     val acc = accent
     val liquid by Prefs.liquid.collectAsState()
-    LaunchedEffect(Unit) { while (true) { withFrameNanos { }; Liquid.frame(ctx) } }
     val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) { if (Build.VERSION.SDK_INT >= 33) askNotif.launch(Manifest.permission.POST_NOTIFICATIONS) }
     LaunchedEffect(Unit) { Toasts.flow.collect { Snack.text.value = it; Hap.forMessage(it) } }
@@ -204,6 +207,10 @@ fun FgApp() {
         if (Nav.stack.isEmpty()) {
             val t = Nav.tab.value
             Head(listOf("Albums", "Artists", "Songs", "Playlists")[t], TabScroll.v[t]) { Tools() }
+        } else {
+            // a page's header is drawn up here too, so its bar can be real glass over the page
+            val top = Nav.stack.lastIndex
+            PageHeads.specs[top]?.let { h -> key(top, Nav.stack.last()) { HeadBar(h.title, h.scrolled, true, h.actions) } }
         }
         AnimatedVisibility(Sel.ids.isNotEmpty(), enter = slideInVertically { -it }, exit = slideOutVertically { -it }) { SelectionBar() }
         Column(Modifier.align(Alignment.BottomCenter)) {

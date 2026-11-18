@@ -27,6 +27,8 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -345,6 +347,41 @@ fun PlayerPanel(cur: Song, onClose: () -> Unit) {
     val tint = mix(accent, 0.14f, Color(0xFF1A1A1F))
     // one set of UI at a time: the bar's row while it's (nearly) the bar again, otherwise the player
     val asBar = Morph.carrying || m < 0.6f
+    // pulling the open player down: it holds on for a moment (a few growing buzzes, like the media bar's tug), then lets go with a
+    // thud and follows your finger. The gesture lives on a layer that never moves or goes away, so a slow drag can't get lost.
+    val resistMax = with(d) { 16.dp.toPx() }; val resistK = with(d) { 40.dp.toPx() }; val breakAt = with(d) { 64.dp.toPx() }
+    val closeAt = with(d) { 140.dp.toPx() }
+    val onCloseS by rememberUpdatedState(onClose)
+    Box(Modifier.fillMaxSize().pointerInput(Unit) {
+        val vt = androidx.compose.ui.input.pointer.util.VelocityTracker()
+        var raw = 0f; var broke = false; var lastBuzz = 0f; var active = false; var base = 0f
+        detectVerticalDragGestures(
+            onDragStart = { raw = 0f; broke = false; lastBuzz = 0f; vt.resetTracking(); active = NpState.open.value && !Morph.carrying && Morph.f.value > 0.9f },
+            onDragEnd = {
+                if (active) {
+                    val v = vt.calculateVelocity().y
+                    val pulled = (1f - Morph.f.value) * Morph.screen.height
+                    if (broke && (v > 900f || pulled > closeAt)) { Hap.soft(); Morph.closing = true; onCloseS() }
+                    else { if (broke) Hap.soft(); Morph.closing = false; Morph.to(1f) }
+                }
+                active = false
+            },
+            onDragCancel = { if (active) { Morph.closing = false; Morph.to(1f) }; active = false },
+        ) { c, dy ->
+            if (!active) return@detectVerticalDragGestures
+            c.consume(); vt.addPosition(c.uptimeMillis, c.position)
+            raw = (raw + dy).coerceAtLeast(0f)
+            val hh = Morph.screen.height.coerceAtLeast(1f)
+            val eff = if (!broke) {
+                val k = (raw / breakAt).coerceIn(0f, 1f)
+                if (raw - lastBuzz > (14f - 10f * k) * Liquid.density) { lastBuzz = raw; Hap.tug(k) }
+                if (raw > breakAt) { broke = true; Hap.thud(); base = resistMax * (1f - kotlin.math.exp(-breakAt / resistK)) - breakAt }
+                resistMax * (1f - kotlin.math.exp(-raw / resistK))
+            } else raw + base
+            Morph.closing = broke
+            Morph.snap(1f - eff.coerceAtLeast(0f) / hh)
+        }
+    }) {
     Box(Modifier.fillMaxSize().liquid("np-dim", 0.dp, Color.Black, z = 5, alpha = 0.45f * smooth(fd, 0.6f, fv) * m, scrim = true))
     Box(Modifier.offset { IntOffset(left.roundToInt(), top.roundToInt()) }.size(with(d) { (right - left).toDp() }, with(d) { (bottom - top).toDp() })
         .liquid("np-panel", radius, tint.copy(alpha = 0.40f), z = 6, alpha = 1f - smooth(0.9f, 1f, fv), corners = listOf(radius, radius, 0.dp, 0.dp))
@@ -358,26 +395,51 @@ fun PlayerPanel(cur: Song, onClose: () -> Unit) {
             }
         } else if (!Morph.carrying) Box(Modifier.fillMaxWidth().height(with(d) { mini.height.toDp() })) { MiniRow(cur, st, swipe = false) }
     }
+    }
 }
 
-/** the tab pill: Albums · Artists · Songs · Playlists, with a highlight that slides (and can be dragged) between them */
+/**
+ * The tab pill: Albums · Artists · Songs · Playlists, with an iOS-style bubble that slides (and can be dragged) between them.
+ * Drag it and it swells into a lens: the icons under it are magnified (sharp in the middle) and split into red, green and blue
+ * towards its edge, like looking through a drop of glass.
+ */
 @Composable
 private fun Tabs(tab: Int, onTab: (Int) -> Unit) {
     val a = accent
-    val tabs = listOf("Albums" to Ic.Disc, "Artists" to Ic.Person, "Songs" to Ic.Note, "Playlists" to Ic.List)
+    val d = LocalDensity.current
     var w by remember { mutableStateOf(0f) }
     var drag by remember { mutableStateOf<Float?>(null) }
     val cell = if (w > 0) w / 4 else 0f
     val liquid by Prefs.liquid.collectAsState()
-    val x by animateFloatAsState(drag ?: (tab * cell), if (drag != null) snap() else if (liquid) spring(0.55f, 300f) else spring(0.72f, 420f), label = "ind")
+    val x by animateFloatAsState(drag ?: (tab * cell), if (drag != null) spring(1f, 2200f) else if (liquid) spring(0.55f, 300f) else spring(0.72f, 420f), label = "ind")
     // liquid: the bubble stretches in the direction it moves (and squashes a little), then wobbles back into shape
     var vel by remember { mutableStateOf(0f) }
     var lastX by remember { mutableStateOf(0f) }
     LaunchedEffect(x) { vel = x - lastX; lastX = x }
-    val stretchT = if (liquid && cell > 0) (kotlin.math.abs(vel) / cell * 2.2f).coerceAtMost(0.45f) else 0f
+    val stretchT = if (liquid && cell > 0) (kotlin.math.abs(vel) / cell * 2.2f).coerceAtMost(0.35f) else 0f
     val stretch by animateFloatAsState(stretchT, spring(0.4f, 600f), label = "st")
+    val grow by animateFloatAsState(if (drag != null) 1f else 0f, spring(0.55f, 420f), label = "grow")
     val hover = drag?.let { ((it + cell / 2) / cell).toInt().coerceIn(0, 3) }
     val cellS by rememberUpdatedState(cell); val onTabS by rememberUpdatedState(onTab); val tabS by rememberUpdatedState(tab)
+    // the bubble: a pill, wider than tall, that swells while held
+    val padPx = with(d) { 4.dp.toPx() }
+    val bw = cell * (1f + stretch) * (1f + 0.16f * grow)
+    val bh = with(d) { 52.dp.toPx() } * (1f - stretch * 0.3f) * (1f + 0.1f * grow)
+    val cx = x + cell / 2; val cy = with(d) { 31.dp.toPx() }
+    val bubble = androidx.compose.ui.geometry.Rect(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2)
+    val lens = liquid && grow > 0.02f && cell > 0
+    val items: @Composable (Int?) -> Unit = { hv ->
+        Row(Modifier.fillMaxSize()) {
+            listOf("Albums" to Ic.Disc, "Artists" to Ic.Person, "Songs" to Ic.Note, "Playlists" to Ic.List).forEachIndexed { i, (label, ic) ->
+                val on = (hv ?: tab) == i
+                val sc by animateFloatAsState(if (on) 1.08f else 1f, tween(350, easing = Spring), label = "t$i")
+                Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
+                    Box(Modifier.height(28.dp).scale(sc), contentAlignment = Alignment.Center) { Icon(ic, tint = if (on) a else C.sub) }
+                    T(label, 10.5.sp, W650, if (on) C.text else C.sub)
+                }
+            }
+        }
+    }
     Box(Modifier.fillMaxWidth().height(62.dp).padding(horizontal = 4.dp).onSizeChanged { w = it.width.toFloat() }
         .pointerInput(Unit) {
             awaitEachGesture {
@@ -389,27 +451,49 @@ private fun Tabs(tab: Int, onTab: (Int) -> Unit) {
                     val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
                     if (!ch.pressed) break
                     if (!dragging && kotlin.math.abs(ch.position.x - down.position.x) > viewConfiguration.touchSlop) dragging = true
-                    if (dragging) { ch.consume(); val before = drag?.let { ((it + cellS / 2) / cellS).toInt() }; drag = (ch.position.x - cellS / 2).coerceIn(0f, cellS * 3); val now = ((drag!! + cellS / 2) / cellS).toInt(); if (before != null && before != now) Hap.tick() else if (before == null) Hap.press() }
+                    if (dragging) { ch.consume(); val before = drag?.let { ((it + cellS / 2) / cellS).toInt() }; drag = (ch.position.x - cellS / 2).coerceIn(-cellS * 0.15f, cellS * 3.15f); val now = ((drag!! + cellS / 2) / cellS).toInt().coerceIn(0, 3); if (before != null && before.coerceIn(0, 3) != now) Hap.tick() else if (before == null) Hap.press() }
                 }
                 if (dragging) { val i = (((drag ?: tabS * cellS) + cellS / 2) / cellS).toInt().coerceIn(0, 3); drag = null; onTabS(i) }
             }
         }) {
-        if (cell > 0) Box(Modifier.offset { IntOffset(x.roundToInt(), 0) }.padding(top = 5.dp).width(with(LocalDensity.current) { cell.toDp() }).height(52.dp)
-            .graphicsLayer { val k = if (drag != null) 1.06f else 1f; scaleX = k * (1f + stretch); scaleY = k * (1f - stretch * 0.35f) }
-            .liquid("tab-bubble", 20.dp, mix(a, if (drag != null) 0.40f else 0.30f, Color(0xFF2A2830)).copy(alpha = 0.45f), z = 2))
-        Row(Modifier.fillMaxSize()) {
-            tabs.forEachIndexed { i, (label, ic) ->
-                val on = (hover ?: tab) == i
-                val sc by animateFloatAsState(if (on) 1.08f else 1f, tween(350, easing = Spring), label = "t$i")
-                Column(Modifier.weight(1f).fillMaxHeight().clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { onTab(i) },
-                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
-                    Box(Modifier.height(28.dp).scale(sc), contentAlignment = Alignment.Center) { Icon(ic, tint = if (on) a else C.sub) }
-                    T(label, 10.5.sp, W650, if (on) C.text else C.sub)
+        if (cell > 0) Box(Modifier.offset { IntOffset(bubble.left.roundToInt(), bubble.top.roundToInt()) }.size(with(d) { bubble.width.toDp() }, with(d) { bubble.height.toDp() })
+            .liquid("tab-bubble", with(d) { (bubble.height / 2).toDp() }, mix(a, if (drag != null) 0.22f else 0.30f, Color(0xFF2A2830)).copy(alpha = if (drag != null) 0.22f else 0.45f), z = 2))
+        // the icons; while the lens is up, the ones under it are drawn by the lens instead
+        val pill = RoundedCornerShape(50)
+        Box(Modifier.fillMaxSize().then(if (lens) Modifier.drawWithContent {
+            val path = androidx.compose.ui.graphics.Path().apply { addRoundRect(androidx.compose.ui.geometry.RoundRect(bubble, androidx.compose.ui.geometry.CornerRadius(bubble.height / 2))) }
+            clipPath(path, androidx.compose.ui.graphics.ClipOp.Difference) { this@drawWithContent.drawContent() }
+        } else Modifier)) {
+            Row(Modifier.fillMaxSize()) { repeat(4) { i -> Box(Modifier.weight(1f).fillMaxHeight().clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { onTab(i) }) } }
+            Box(Modifier.fillMaxSize()) { items(hover) }
+        }
+        if (lens) {
+            // three passes (red, green, blue), each magnified a little differently: sharp in the centre, split at the rim
+            Box(Modifier.offset { IntOffset(bubble.left.roundToInt(), bubble.top.roundToInt()) }.size(with(d) { bubble.width.toDp() }, with(d) { bubble.height.toDp() })
+                .graphicsLayer { alpha = smooth(0.02f, 0.4f, grow); compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }.clip(pill)) {
+                val mag = 1f + 0.22f * grow
+                val split = Prefs.glassSplit.collectAsState().value.coerceIn(0f, 2f)
+                listOf(0 to 1f + 0.045f * split * grow, 1 to 1f, 2 to 1f - 0.045f * split * grow).forEach { (ch, k) ->
+                    Box(Modifier.wrapContentSize(Alignment.TopStart, unbounded = true)
+                        .offset { IntOffset(-bubble.left.roundToInt(), -bubble.top.roundToInt()) }
+                        .size(with(d) { w.toDp() }, 62.dp)
+                        .graphicsLayer {
+                            val s2 = mag * k; scaleX = s2; scaleY = s2
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin((cx / w).coerceIn(0f, 1f), cy / size.height.coerceAtLeast(1f))
+                        }
+                        .drawWithContent {
+                            drawIntoCanvas { c ->
+                                c.saveLayer(androidx.compose.ui.geometry.Rect(Offset.Zero, size), androidx.compose.ui.graphics.Paint().apply { colorFilter = ColorFilter.colorMatrix(chan(ch)); blendMode = androidx.compose.ui.graphics.BlendMode.Plus })
+                                drawContent(); c.restore()
+                            }
+                        }) { items(hover) }
                 }
             }
         }
     }
 }
+/** keep one colour channel (0 r, 1 g, 2 b) */
+private fun chan(i: Int) = ColorMatrix(FloatArray(20).also { m -> m[i * 5 + i] = 1f; m[18] = 1f })
 
 // ------------------------------------------------------------------ now playing (#np)
 @Composable
@@ -442,11 +526,7 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
             Canvas(Modifier.fillMaxSize()) { val r = size.width * 0.45f * (1f + bass * 0.25f); val c = Offset(size.width / 2, size.height * 0.32f); drawCircle(Brush.radialGradient(listOf(a.copy(alpha = 0.25f + bass * 0.25f), Color.Transparent), c, r), r, c) }
         }
       }
-        Column(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.statusBarsPadding().navigationBarsPadding().pointerInput(Unit) {
-            detectVerticalDragGestures(onDragStart = { vy = 0f }, onDragEnd = { if (vy > trig * 1.5f) { Hap.soft(); Morph.closing = true; onClose() } else { Morph.closing = false; Morph.to(1f) }; vy = 0f }, onDragCancel = { Morph.to(1f); vy = 0f }) { c, d ->
-                c.consume(); vy += d; Morph.closing = true; Morph.snap(1f - vy.coerceAtLeast(0f) / Morph.screen.height.coerceAtLeast(1f))
-            }
-        }.padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 18.dp)) {
+        Column(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 18.dp)) {
             Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 IB(Ic.Down, onClick = onClose)
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {

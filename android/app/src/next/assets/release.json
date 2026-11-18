@@ -1,61 +1,75 @@
 {
-  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
-  "releases": [
-    {
-      "version": "2.3.0",
-      "name": "The Gloss Update",
-      "date": "2026-11-18",
-      "notes": [
-        "Every floating panel is the glass itself now, and it follows its control exactly on every frame (no more glass left behind or in the wrong place)",
-        "Glass settings: thickness, bend, colour split, frost, opacity and tilt shine (Settings › Look & Feel › Glass), live while you drag",
-        "Tug to open: the whole bar gives a little with a buzz that grows as you pull, then lets go; the media bar jumps to your finger and a glass panel slides up fast from the bottom to meet it",
-        "The player stays glass until it's fully open, and its corners ease into shape",
-        "Closing (or letting go low) shrinks the player back into the media bar's spot and the tab bar rejoins it — no more sliding away and popping back",
-        "Only one set of covers at a time while you open or close the player",
-        "Fixed: tapping a tab could stop halfway on the wrong page",
-        "Fixed: a stray pane of glass over the equalizer"
-      ]
-    },
-    {
-      "version": "2.2.0",
-      "name": "The Glamor Update",
-      "date": "2026-11-18",
-      "notes": [
-        "Liquid Glass everywhere: the bottom bar, the tab bubble, the tool buttons, menus, messages and the selection bar are real glass (QWEA0's Liquid Glass) that bends the music behind it, splits light at the edges and catches the light as you tilt",
-        "New way to open the player: pull the media bar up and it peels off, sticks for a moment, then breaks loose and the player follows your finger up from the bottom",
-        "Haptics everywhere, just like before: taps, ticks on sliders and the seek bar, a thud when the bar breaks loose, buzzes for likes, saves and errors",
-        "Liquid Glass off gives the classic frosted blur on the same controls"
-      ]
-    },
-    {
-      "version": "2.1.0",
-      "name": "The Mirror Update",
-      "date": "2026-11-18",
-      "notes": [
-        "Looks and works like the original Strata Music: same menus, settings, search and queue",
-        "Liquid Glass: the bottom bar bends and splits the light behind it (switch it off for the classic frosted blur)",
-        "The media bar grows into the full player, and shrinks back when you drag it down",
-        "Swipe the album cover to slide to the next or previous song",
-        "Double-tap a song, album or artist to like it",
-        "Pop-up menus swipe down to close",
-        "Queue: hold and drag to reorder, swipe left to remove",
-        "Updates right inside the app: Settings › Updates",
-        "If the app ever crashes, the next launch shows what happened with a Copy button",
-        "Fixed: tapping a tab two away stopped on the tab in between",
-        "Fixed: the app crashed on opening"
-      ]
-    },
-    {
-      "version": "2.0.0",
-      "name": "The Native Update",
-      "date": "2026-11-17",
-      "notes": [
-        "Strata Music rebuilt as a fully native Android app",
-        "Your library, playlists, favorites, lyrics and settings carry over from the old app",
-        "YouTube Music search and downloads with a browser that only runs while downloading",
-        "Synced lyrics, equalizer, crossfade with beat matching, silence cutting",
-        "Music Packs, folders, radio and mixes"
-      ]
-    }
-  ]
+ "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
+ "releases": [
+  {
+   "version": "2.4.0",
+   "name": "The Lens Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Tab bubble: a rounded iOS-style pill that swells while you drag it, magnifying the icons under it (sharp in the middle, split into red, green and blue at the rim)",
+    "Switches: drag the handle across; while you hold it, it swells into a liquid glass lens and the track colour follows it",
+    "Buttons give a little under your finger, like iOS, and spring back when you let go",
+    "Pulling the player down holds on for a moment, with growing buzzes, then lets go with a thud",
+    "Page headers are glass: the bar fades in smoothly as you scroll, with rounded bottom corners",
+    "Glass tracks the UI in the same frame now: no more jitter while things move",
+    "Fixed: slowly swiping the player down could leave it stuck halfway"
+   ]
+  },
+  {
+   "version": "2.3.0",
+   "name": "The Gloss Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Every floating panel is the glass itself now, and it follows its control exactly on every frame (no more glass left behind or in the wrong place)",
+    "Glass settings: thickness, bend, colour split, frost, opacity and tilt shine (Settings › Look & Feel › Glass), live while you drag",
+    "Tug to open: the whole bar gives a little with a buzz that grows as you pull, then lets go; the media bar jumps to your finger and a glass panel slides up fast from the bottom to meet it",
+    "The player stays glass until it's fully open, and its corners ease into shape",
+    "Closing (or letting go low) shrinks the player back into the media bar's spot and the tab bar rejoins it — no more sliding away and popping back",
+    "Only one set of covers at a time while you open or close the player",
+    "Fixed: tapping a tab could stop halfway on the wrong page",
+    "Fixed: a stray pane of glass over the equalizer"
+   ]
+  },
+  {
+   "version": "2.2.0",
+   "name": "The Glamor Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Liquid Glass everywhere: the bottom bar, the tab bubble, the tool buttons, menus, messages and the selection bar are real glass (QWEA0's Liquid Glass) that bends the music behind it, splits light at the edges and catches the light as you tilt",
+    "New way to open the player: pull the media bar up and it peels off, sticks for a moment, then breaks loose and the player follows your finger up from the bottom",
+    "Haptics everywhere, just like before: taps, ticks on sliders and the seek bar, a thud when the bar breaks loose, buzzes for likes, saves and errors",
+    "Liquid Glass off gives the classic frosted blur on the same controls"
+   ]
+  },
+  {
+   "version": "2.1.0",
+   "name": "The Mirror Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Looks and works like the original Strata Music: same menus, settings, search and queue",
+    "Liquid Glass: the bottom bar bends and splits the light behind it (switch it off for the classic frosted blur)",
+    "The media bar grows into the full player, and shrinks back when you drag it down",
+    "Swipe the album cover to slide to the next or previous song",
+    "Double-tap a song, album or artist to like it",
+    "Pop-up menus swipe down to close",
+    "Queue: hold and drag to reorder, swipe left to remove",
+    "Updates right inside the app: Settings › Updates",
+    "If the app ever crashes, the next launch shows what happened with a Copy button",
+    "Fixed: tapping a tab two away stopped on the tab in between",
+    "Fixed: the app crashed on opening"
+   ]
+  },
+  {
+   "version": "2.0.0",
+   "name": "The Native Update",
+   "date": "2026-11-17",
+   "notes": [
+    "Strata Music rebuilt as a fully native Android app",
+    "Your library, playlists, favorites, lyrics and settings carry over from the old app",
+    "YouTube Music search and downloads with a browser that only runs while downloading",
+    "Synced lyrics, equalizer, crossfade with beat matching, silence cutting",
+    "Music Packs, folders, radio and mixes"
+   ]
+  }
+ ]
 }

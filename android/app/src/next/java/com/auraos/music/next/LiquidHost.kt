@@ -11,6 +11,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -38,6 +39,8 @@ object Liquid {
     val styles = mutableStateMapOf<String, GlassStyle>()
     /** where each pane is (changes every frame while things move; not snapshot state, so it costs no recomposition) */
     val rects = ConcurrentHashMap<String, Rect>()
+    /** the controls themselves: read again right before every draw, so the glass is where the control is in this very frame */
+    val coords = ConcurrentHashMap<String, LayoutCoordinates>()
     private var host: FrameLayout? = null
     private var source: View? = null
     private val views = HashMap<String, View>()
@@ -47,7 +50,7 @@ object Liquid {
 
     fun attach(h: FrameLayout, src: View) { host = h; source = src; density = h.resources.displayMetrics.density }
 
-    /** called once per frame by the controls layer */
+    /** called right before every frame is drawn (a pre-draw listener), after the controls have been laid out */
     fun frame(ctx: Context) {
         val h = host ?: return
         val all = styles.toMap()
@@ -56,7 +59,7 @@ object Liquid {
         val thick = Prefs.glassThick.value; val bend = Prefs.glassBend.value; val split = Prefs.glassSplit.value
         val frost = Prefs.glassFrost.value; val opacity = Prefs.glassOpacity.value; val shine = Prefs.glassShine.value
         for ((id, s) in all) {
-            val r = rects[id] ?: continue
+            val r = coords[id]?.takeIf { it.isAttached }?.let { c -> runCatching { c.boundsInRoot() }.getOrNull() } ?: rects[id] ?: continue
             val v = views.getOrPut(id) {
                 (if (s.scrim) View(ctx).also { it.setBackgroundColor(android.graphics.Color.BLACK) } else LiquidGlassView(ctx).also { g ->
                     g.backdropSource = source; g.enableDynamicBackground = true
@@ -67,7 +70,12 @@ object Liquid {
             }
             val w = r.width.roundToInt().coerceAtLeast(1); val ht = r.height.roundToInt().coerceAtLeast(1)
             val lp = v.layoutParams as FrameLayout.LayoutParams
-            if (lp.width != w || lp.height != ht) { lp.width = w; lp.height = ht; v.layoutParams = lp }
+            if (lp.width != w || lp.height != ht || v.width != w || v.height != ht) {
+                lp.width = w; lp.height = ht; v.layoutParams = lp
+                // resize now, in this frame (waiting for the next layout pass is what made the glass trail behind)
+                v.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(ht, View.MeasureSpec.EXACTLY))
+                v.layout(0, 0, w, ht)
+            }
             if (v.translationX != r.left) v.translationX = r.left
             if (v.translationY != r.top) v.translationY = r.top
             val vis = if (s.alpha <= 0.01f || r.isEmpty) View.INVISIBLE else View.VISIBLE
@@ -103,7 +111,7 @@ fun Modifier.liquid(id: String, corner: Dp, tint: Color = Color(0xFF1A1A20).copy
                     corners: List<Dp>? = null, scrim: Boolean = false): Modifier = composed {
     val d = LocalDensity.current
     val radii = with(d) { (corners ?: listOf(corner, corner, corner, corner)).map { it.toPx() }.toFloatArray() }
-    SideEffect { if (on) Liquid.styles[id] = GlassStyle(radii, tint, z, alpha, scrim) else { Liquid.styles.remove(id); Liquid.rects.remove(id) } }
-    DisposableEffect(id) { onDispose { Liquid.styles.remove(id); Liquid.rects.remove(id) } }
-    this.onGloballyPositioned { Liquid.rects[id] = it.boundsInRoot() }
+    SideEffect { if (on) Liquid.styles[id] = GlassStyle(radii, tint, z, alpha, scrim) else { Liquid.styles.remove(id); Liquid.rects.remove(id); Liquid.coords.remove(id) } }
+    DisposableEffect(id) { onDispose { Liquid.styles.remove(id); Liquid.rects.remove(id); Liquid.coords.remove(id) } }
+    this.onGloballyPositioned { Liquid.coords[id] = it; Liquid.rects[id] = it.boundsInRoot() }
 }

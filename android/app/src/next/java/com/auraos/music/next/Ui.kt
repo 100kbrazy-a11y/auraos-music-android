@@ -46,6 +46,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.composed
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -160,11 +164,11 @@ val Spring = CubicBezierEasing(0.34f, 1.4f, 0.64f, 1f)
 
 /** a pressable that shrinks a little, like the WebView's :active { transform: scale(.95) } */
 @Composable
-fun Modifier.press(scaleTo: Float = 0.95f, onLong: (() -> Unit)? = null, onDouble: (() -> Unit)? = null, onClick: () -> Unit): Modifier {
+fun Modifier.press(scaleTo: Float = 0.95f, onLong: (() -> Unit)? = null, onDouble: (() -> Unit)? = null, give: Boolean = scaleTo <= 0.95f, onClick: () -> Unit): Modifier {
     val src = remember { MutableInteractionSource() }
     val p by src.collectIsPressedAsState()
     val s by animateFloatAsState(if (p) scaleTo else 1f, tween(150, easing = Spring), label = "p")
-    return this.scale(s).combinedClickable(src, null, onLongClick = onLong?.let { f -> { Hap.press(); f() } }, onDoubleClick = onDouble) { Hap.tap(); onClick() }
+    return this.then(if (give) Modifier.rubber() else Modifier).scale(s).combinedClickable(src, null, onLongClick = onLong?.let { f -> { Hap.press(); f() } }, onDoubleClick = onDouble) { Hap.tap(); onClick() }
 }
 
 // ------------------------------------------------------------------ building blocks
@@ -173,24 +177,74 @@ fun IB(ic: Ic, tint: Color = C.text, size: Dp = 24.dp, box: Dp = 44.dp, on: Bool
     val src = remember { MutableInteractionSource() }
     val p by src.collectIsPressedAsState()
     val s by animateFloatAsState(if (p) 0.92f else 1f, tween(150), label = "ib")
-    Box(modifier.size(box).scale(s).clip(CircleShape).background(if (p) Color.White.copy(alpha = 0.1f) else Color.Transparent).clickable(src, null) { if (ic == Ic.Back) Hap.soft() else Hap.tap(); onClick() }, contentAlignment = Alignment.Center) {
+    Box(modifier.rubber(4.dp).size(box).scale(s).clip(CircleShape).background(if (p) Color.White.copy(alpha = 0.1f) else Color.Transparent).clickable(src, null) { if (ic == Ic.Back) Hap.soft() else Hap.tap(); onClick() }, contentAlignment = Alignment.Center) {
         Icon(ic, size = size, tint = if (on) accent else tint)
     }
 }
 
-/** .head: title (28 / 800) with the tool buttons; it gets a dark bar and the title shrinks once the page scrolls */
+/** true inside the bottom layer (the library and pages, what the glass looks through) */
+val LocalBgLayer = staticCompositionLocalOf { false }
+/** which page of the stack this is (-1 = not a page) */
+val LocalPageIndex = staticCompositionLocalOf { -1 }
+class HeadSpec(val title: String, val scrolled: Boolean, val actions: @Composable RowScope.() -> Unit)
+/** pages hand their header up to the controls layer, so its bar can be a pane of glass over the page */
+object PageHeads { val specs = mutableStateMapOf<Int, HeadSpec>() }
+
+/** .head: title (28 / 800) with the tool buttons; once the page scrolls a bar of glass with round bottom corners fades in under it */
 @Composable
 fun Head(title: String, scrolled: Boolean = false, back: Boolean = false, actions: @Composable RowScope.() -> Unit = {}) {
-    val sc by animateFloatAsState(if (scrolled && !back) 0.72f else 1f, tween(220, easing = Ease), label = "h")
-    Row(Modifier.fillMaxWidth().background(if (scrolled) Color(0xB80B0B0E) else Color.Transparent).drawBehind { if (scrolled) drawLine(C.line, Offset(0f, size.height), Offset(size.width, size.height)) }
-        .statusBarsPadding().heightIn(min = 60.dp).padding(start = if (back) 8.dp else 18.dp, end = 8.dp, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (back) IB(Ic.Back) { Nav.back() }
-        Box(Modifier.weight(1f)) {
-            T(title, if (back) 20.sp else 28.sp, W800, spacing = (-0.02).em(if (back) 20f else 28f), modifier = Modifier.graphicsScale(sc))
+    val page = LocalPageIndex.current
+    if (page >= 0) {
+        SideEffect { PageHeads.specs[page] = HeadSpec(title, scrolled, actions) }
+        DisposableEffect(page) { onDispose { PageHeads.specs.remove(page) } }
+        return
+    }
+    HeadBar(title, scrolled, back, actions)
+}
+
+@Composable
+fun HeadBar(title: String, scrolled: Boolean, back: Boolean, actions: @Composable RowScope.() -> Unit) {
+    val sc by animateFloatAsState(if (scrolled && !back) 0.72f else 1f, tween(260, easing = Ease), label = "h")
+    val barA by animateFloatAsState(if (scrolled) 1f else 0f, tween(300, easing = Ease), label = "hb")
+    val drop = with(LocalDensity.current) { 14.dp.toPx() }
+    Box(Modifier.fillMaxWidth()) {
+        Box(Modifier.matchParentSize().graphicsLayer { translationY = -(1f - barA) * drop }
+            .liquid("head", 24.dp, Color(0xFF0B0B0E).copy(alpha = 0.42f), z = 1, alpha = barA, corners = listOf(0.dp, 0.dp, 24.dp, 24.dp)))
+        Row(Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 60.dp).padding(start = if (back) 8.dp else 18.dp, end = 8.dp, top = 10.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (back) IB(Ic.Back) { Nav.back() }
+            Box(Modifier.weight(1f)) {
+                T(title, if (back) 20.sp else 28.sp, W800, spacing = (-0.02).em(if (back) 20f else 28f), modifier = Modifier.graphicsScale(sc))
+            }
+            actions()
         }
-        actions()
     }
 }
+
+/**
+ * iOS-style give: while a finger is on it, the control leans a few dp after the finger (with resistance, it never really moves)
+ * and springs back when you let go or the list starts scrolling.
+ */
+fun Modifier.rubber(max: Dp = 5.dp): Modifier = composed {
+    val mx = with(LocalDensity.current) { max.toPx() }
+    var t by remember { mutableStateOf(Offset.Zero) }
+    val a by animateOffsetAsState(t, if (t == Offset.Zero) spring(0.45f, 500f) else spring(1f, 2500f), label = "rb")
+    this.pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Final)
+            fun r(v: Float) = mx * kotlin.math.tanh(v / (mx * 7f))
+            while (true) {
+                val ev = awaitPointerEvent(PointerEventPass.Final)
+                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                if (!ch.pressed || ch.isConsumed) break            // let go, or a scroll took the finger
+                val d = ch.position - down.position
+                t = Offset(r(d.x), r(d.y))
+            }
+            t = Offset.Zero
+        }
+    }.graphicsLayer { translationX = a.x; translationY = a.y }
+}
+
 fun Double.em(px: Float): TextUnit = (this * px).sp
 fun Modifier.graphicsScale(s: Float): Modifier = this.graphicsLayer { scaleX = s; scaleY = s; transformOrigin = TransformOrigin(0f, 0.5f) }
 
@@ -220,7 +274,7 @@ fun Btn(text: String, ic: Ic? = null, tonal: Boolean = false, modifier: Modifier
 @Composable
 fun Chip(label: String, on: Boolean, n: Int? = null, ic: Ic? = null, onClick: () -> Unit) {
     val a = accent
-    Row(Modifier.height(34.dp).clip(RoundedCornerShape(10.dp)).background(if (on) mix(a, 0.30f, C.surface2) else Color.Transparent)
+    Row(Modifier.rubber(4.dp).height(34.dp).clip(RoundedCornerShape(10.dp)).background(if (on) mix(a, 0.30f, C.surface2) else Color.Transparent)
         .then(if (on) Modifier else Modifier.border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(10.dp))).clickable { Hap.tick(); onClick() }.padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         if (ic != null) Icon(ic, size = 16.dp)
@@ -229,15 +283,68 @@ fun Chip(label: String, on: Boolean, n: Int? = null, ic: Ic? = null, onClick: ()
     }
 }
 
-/** .switch */
+/**
+ * .switch, like iOS: tap it, or drag the handle across. While your finger is on it the handle swells into a lens of liquid glass
+ * (real glass over the page, a glassy bubble inside menus) and the track colour follows the handle.
+ */
 @Composable
 fun Switch(on: Boolean, onChange: (Boolean) -> Unit) {
     val a = accent
-    val x by animateDpAsState(if (on) 20.dp else 0.dp, tween(200), label = "sw")
-    Box(Modifier.size(52.dp, 32.dp).clip(RoundedCornerShape(16.dp)).background(if (on) a else C.surface3).then(if (on) Modifier else Modifier.border(2.dp, Color(0xFF55555C), RoundedCornerShape(16.dp))).clickable { Hap.tick(); onChange(!on) }) {
-        Box(Modifier.padding(4.dp).offset(x = x).size(24.dp).clip(CircleShape).background(if (on) C.onAccent else Color(0xFF9A9AA2)))
+    val d = LocalDensity.current
+    val bgLayer = LocalBgLayer.current
+    val liquid by Prefs.liquid.collectAsState()
+    val id = remember { "sw" + (++swN) }
+    val pos = remember { Animatable(if (on) 1f else 0f) }
+    var held by remember { mutableStateOf(false) }
+    val grow by animateFloatAsState(if (held) 1f else 0f, spring(0.55f, 520f), label = "swg")
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(on) { if (!held) pos.animateTo(if (on) 1f else 0f, spring(0.62f, 480f)) }
+    val onS by rememberUpdatedState(on); val change by rememberUpdatedState(onChange)
+    val kw = 24.dp + 14.dp * grow; val kh = 24.dp + 6.dp * grow
+    val travel = with(d) { (52.dp - 8.dp - kw).toPx() }
+    val p = pos.value.coerceIn(0f, 1f)
+    val track = androidx.compose.ui.graphics.lerp(C.surface3, a, p)
+    Box(Modifier.size(52.dp, 32.dp).pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            held = true; Hap.soft()
+            val start = pos.value; var moved = false; var gaveUp = false
+            val full = (52.dp - 8.dp - 38.dp).toPx()
+            var side = start > 0.5f
+            while (true) {
+                val ev = awaitPointerEvent()
+                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                if (!ch.pressed) { ch.consume(); break }
+                val dx = ch.position.x - down.position.x; val dy = ch.position.y - down.position.y
+                if (!moved && kotlin.math.abs(dy) > viewConfiguration.touchSlop && kotlin.math.abs(dy) > kotlin.math.abs(dx)) { gaveUp = true; break }   // it's a scroll
+                if (!moved && kotlin.math.abs(dx) > viewConfiguration.touchSlop / 2) moved = true
+                if (moved) {
+                    ch.consume()
+                    val v = (start + dx / full).coerceIn(-0.12f, 1.12f)
+                    scope.launch { pos.snapTo(v) }
+                    val now = v > 0.5f; if (now != side) { side = now; Hap.tick() }
+                }
+            }
+            held = false
+            if (gaveUp) { scope.launch { pos.animateTo(if (onS) 1f else 0f, spring(0.62f, 480f)) }; return@awaitEachGesture }
+            val next = if (moved) pos.value > 0.5f else !onS
+            scope.launch { pos.animateTo(if (next) 1f else 0f, spring(0.62f, 480f)) }
+            if (next != onS) { Hap.tick(); change(next) }
+        }
+    }) {
+        Box(Modifier.matchParentSize().clip(RoundedCornerShape(16.dp)).background(track)
+            .then(if (p < 0.5f) Modifier.border(2.dp, Color(0xFF55555C).copy(alpha = 1f - p * 2f), RoundedCornerShape(16.dp)) else Modifier))
+        val knob = Modifier.align(Alignment.CenterStart).offset { IntOffset((4.dp.toPx() + travel * pos.value).roundToInt(), 0) }.size(kw, kh)
+        // the glass handle (only while held): real glass when the switch is on the page; a glassy bubble when it's in a menu
+        if (grow > 0.01f) {
+            if (bgLayer && liquid) Box(knob.liquid(id, kh / 2, Color.White.copy(alpha = 0.06f), z = 3, alpha = grow))
+            else Box(knob.graphicsLayer { alpha = grow }.clip(RoundedCornerShape(50)).background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.34f), Color.White.copy(alpha = 0.12f))))
+                .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.7f), Color.White.copy(alpha = 0.15f))), RoundedCornerShape(50)))
+        }
+        Box(knob.graphicsLayer { alpha = 1f - grow }.clip(RoundedCornerShape(50)).background(androidx.compose.ui.graphics.lerp(Color(0xFF9A9AA2), C.onAccent, p)))
     }
 }
+private var swN = 0
 
 /** cover art, or the placeholder: a gradient of a colour from the name with a note / disc / person */
 @Composable
