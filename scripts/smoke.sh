@@ -6,7 +6,7 @@ adb install -r Strata-Music-Next.apk
 adb shell pm grant $P android.permission.POST_NOTIFICATIONS || true
 adb logcat -c
 (adb logcat -v brief '*:W' > live.txt 2>/dev/null &)
-adb shell am start -n $P/com.auraos.music.next.NextActivity --ez seedDemo true
+adb shell am start -n $P/com.auraos.music.next.NextActivity --ez seedDemo true --ez liquid false
 sleep 25
 adb shell dumpsys meminfo com.auraos.music.next | head -20
 center() {  # center of the first node whose text is $1
@@ -38,8 +38,13 @@ back; back
 adb shell input tap 1000 150; sleep 3; shot 10-settings
 back
 adb shell input tap 795 150; sleep 3; shot 11-search
+adb shell am force-stop $P; sleep 2
+adb shell am start -n $P/com.auraos.music.next.NextActivity --ez liquid true; sleep 20
+shot 12-liquid; adb shell input tap 540 1300; sleep 5; shot 13-liquid2
+adb get-state || echo "EMULATOR GONE after liquid glass"
 echo '==LOG=='; grep -E 'FATAL|AndroidRuntime|Strata|lowmemorykiller|ANR|OutOfMemory' live.txt | head -60; echo '==ENDLOG=='
 for f in [0-9]*.png; do
+  [ -s "$f" ] || continue
   python3 -c "from PIL import Image; import sys; i=Image.open(sys.argv[1]).convert('RGB'); i=i.resize((360, int(i.height*360/i.width))); i.save(sys.argv[2], quality=70)" "$f" "${f%.png}.jpg"
   echo "==IMG ${f%.png}=="; base64 -w 0 "${f%.png}.jpg"; echo; echo "==END=="
 done

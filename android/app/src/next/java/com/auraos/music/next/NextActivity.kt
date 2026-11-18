@@ -64,6 +64,7 @@ class NextActivity : ComponentActivity() {
         Store.init(this)
         Prefs.init(this)
         if (intent?.getBooleanExtra("seedDemo", false) == true) Demo.seed()
+        if (intent?.hasExtra("liquid") == true) Prefs.setLiquid(intent.getBooleanExtra("liquid", true))
         NativePlayer.start(this)
         if (savedInstanceState == null) Ctl.restore(this)
         handle(intent)
