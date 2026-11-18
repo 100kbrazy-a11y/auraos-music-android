@@ -63,6 +63,7 @@ class NextActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Store.init(this)
         Prefs.init(this)
+        if (intent?.getBooleanExtra("seedDemo", false) == true) Demo.seed()
         NativePlayer.start(this)
         if (savedInstanceState == null) Ctl.restore(this)
         handle(intent)
