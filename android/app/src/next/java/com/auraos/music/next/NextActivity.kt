@@ -26,6 +26,8 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.runtime.*
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.animation.core.spring
@@ -113,7 +115,7 @@ fun Themed(content: @Composable () -> Unit) {
         val target = remember(cur?.cover) { cur?.cover?.takeIf { it.isNotEmpty() }?.let { Accents.of(Store.coverFile(it)) } } ?: C.defAccent
         val acc by animateColorAsState(target, tween(600), label = "acc")
         val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-        CompositionLocalProvider(LocalAccent provides acc, LocalBottom provides (if (cur != null) 163.dp else 100.dp) + nav) { content() }
+        CompositionLocalProvider(LocalAccent provides acc, LocalBottom provides (if (isLand()) (if (cur != null) 96.dp else 24.dp) else if (cur != null) 163.dp else 100.dp) + nav) { content() }
     }
 }
 
@@ -133,7 +135,10 @@ fun BgApp() {
     LaunchedEffect(pager.settledPage, pager.isScrollInProgress) { if (!pager.isScrollInProgress && Nav.tab.value != pager.settledPage) { Nav.tab.value = pager.settledPage; Hap.tick() } }   // only where a swipe lands
     Box(Modifier.fillMaxSize().background(C.bg)) {
         Aurora(motion && !saving)
+        val land = isLand()
+        val railPad by animateDpAsState(if (land) Rail + 22.dp else 0.dp, tween(380), label = "rail")
         CompositionLocalProvider(LocalBgLayer provides true) {
+        Box(Modifier.fillMaxSize().nestedScroll(Tuck.watch).padding(end = railPad)) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
             when (page) { 0 -> AlbumsScreen(); 1 -> ArtistsScreen(); 2 -> SongsScreen(); else -> PlaylistsScreen() }
         }
@@ -150,6 +155,7 @@ fun BgApp() {
                     } }
                 }
             }
+        }
         }
         }
     }
@@ -215,6 +221,8 @@ fun FgApp() {
     }
     Box(Modifier.fillMaxSize().onGloballyPositioned { Morph.screen = it.boundsInRoot() }) {
         // the four tabs' header: title + the glass pill of tools (pages draw their own header)
+        val land = isLand()
+        Box(Modifier.padding(end = if (land) Rail + 22.dp else 0.dp)) {
         if (Nav.stack.isEmpty()) {
             val t = Nav.tab.value
             Head(listOf("Albums", "Artists", "Songs", "Playlists")[t], TabScroll.v[t]) { Tools() }
@@ -223,8 +231,9 @@ fun FgApp() {
             val top = Nav.stack.lastIndex
             PageHeads.specs[top]?.let { h -> key(top, Nav.stack.last()) { HeadBar(h.title, h.scrolled, true, h.actions) } }
         }
+        }
         AnimatedVisibility(Sel.ids.isNotEmpty(), enter = slideInVertically { -it }, exit = slideOutVertically { -it }) { SelectionBar() }
-        Column(Modifier.align(Alignment.BottomCenter)) {
+        Column(Modifier.align(Alignment.BottomCenter).padding(end = if (land) Rail + 24.dp else 0.dp, bottom = if (land) 86.dp else 0.dp)) {
             if (busy.isNotEmpty()) Box(Modifier.padding(horizontal = 24.dp, vertical = 4.dp).align(Alignment.CenterHorizontally).liquid("busy", 14.dp, C.surface2.copy(alpha = 0.4f), z = 4).clip(RoundedCornerShape(14.dp)).padding(horizontal = 14.dp, vertical = 8.dp)) { T(busy, 13.sp, W650) }
             AnimatedVisibility(Snack.text.value != null, enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut()) {
                 Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
@@ -233,10 +242,11 @@ fun FgApp() {
                     }
                 }
             }
-            AnimatedVisibility(Nav.stack.lastOrNull() != Page.Settings, enter = slideInVertically { it }, exit = slideOutVertically { it }) {   // the bottom bar steps away in Settings
+            if (!land) AnimatedVisibility(Nav.stack.lastOrNull() != Page.Settings, enter = slideInVertically { it }, exit = slideOutVertically { it }) {   // the bottom bar steps away in Settings
                 Dock(cur, Nav.tab.value, { i -> Hap.tick(); Nav.stack.clear(); Nav.tab.value = i }) { full = true }
             }
         }
+        if (land) LandDock(cur, Nav.tab.value, { i -> Hap.tick(); Nav.stack.clear(); Nav.tab.value = i }) { full = true }
         if (cur != null && Morph.f.value > 0.001f) PlayerPanel(cur) { full = false }
         if (cur != null && Morph.carrying) FloatingMini(cur)
         SheetHost()

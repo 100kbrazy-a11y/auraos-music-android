@@ -2,6 +2,18 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.6.0",
+   "name": "The Sideways Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Sideways: the tabs become a vertical glass pill on the right, with a round bubble you can drag up and down",
+    "Sideways: the media bar is its own glass bubble along the bottom",
+    "Sideways: scroll and the media bar tucks away. It wraps down to its album cover and slides in under the tab pill as the pill shrinks to make room, then comes back after the Scroll Timer",
+    "Settings and Keep Media Bar Tucked keep it tucked; tap the tucked cover to open the player",
+    "Everything slides and resizes smoothly between the shapes"
+   ]
+  },
+  {
    "version": "2.5.0",
    "name": "The Fog Update",
    "date": "2026-11-18",

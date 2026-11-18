@@ -274,7 +274,7 @@ fun MiniRow(s: Song, st: NativePlayer.St, swipe: Boolean = true) {
 }
 
 @Composable
-private fun MiniBar(s: Song, st: NativePlayer.St, onOpen: () -> Unit) {
+internal fun MiniBar(s: Song, st: NativePlayer.St, onOpen: () -> Unit) {
     val a = accent
     val d = LocalDensity.current
     val tugMax = with(d) { 20.dp.toPx() }; val tugK = with(d) { 55.dp.toPx() }; val breakAt = with(d) { 120.dp.toPx() }; val barH = with(d) { 62.dp.toPx() }
