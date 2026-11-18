@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.*
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,7 +95,12 @@ object Snack { val text = mutableStateOf<String?>(null) }
 /** each tab reports whether it's scrolled, so the header (on the controls layer) can darken */
 object TabScroll { val v = mutableStateListOf(false, false, false, false) }
 /** set by the controls layer: the bottom layer's pager follows it */
-object Pager { var animateTo: ((Int) -> Unit)? = null }
+object Pager {
+    var animateTo: ((Int) -> Unit)? = null
+    /** where the tab pages are right now (2.5 = halfway from Songs to Playlists), and whether a finger is moving them */
+    val pos = mutableFloatStateOf(0f)
+    val user = mutableStateOf(false)
+}
 
 @Composable
 fun Themed(content: @Composable () -> Unit) {
@@ -119,6 +125,11 @@ fun BgApp() {
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { Pager.animateTo = { i -> scope.launch { pager.animateScrollToPage(i) } } }
     LaunchedEffect(Nav.tab.value) { if (pager.currentPage != Nav.tab.value || pager.currentPageOffsetFraction != 0f) pager.animateScrollToPage(Nav.tab.value) }
+    // the tab bubble rides along with the pages while you swipe them (not only once they land)
+    val swiping by pager.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(swiping) { if (swiping) Pager.user.value = true }
+    LaunchedEffect(pager) { snapshotFlow { pager.currentPage + pager.currentPageOffsetFraction }.collect { Pager.pos.floatValue = it } }
+    LaunchedEffect(pager.settledPage, pager.isScrollInProgress) { if (!pager.isScrollInProgress) Pager.user.value = false }
     LaunchedEffect(pager.settledPage, pager.isScrollInProgress) { if (!pager.isScrollInProgress && Nav.tab.value != pager.settledPage) { Nav.tab.value = pager.settledPage; Hap.tick() } }   // only where a swipe lands
     Box(Modifier.fillMaxSize().background(C.bg)) {
         Aurora(motion && !saving)

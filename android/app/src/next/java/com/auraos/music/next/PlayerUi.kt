@@ -411,7 +411,14 @@ private fun Tabs(tab: Int, onTab: (Int) -> Unit) {
     var drag by remember { mutableStateOf<Float?>(null) }
     val cell = if (w > 0) w / 4 else 0f
     val liquid by Prefs.liquid.collectAsState()
-    val x by animateFloatAsState(drag ?: (tab * cell), if (drag != null) spring(1f, 2200f) else if (liquid) spring(0.55f, 300f) else spring(0.72f, 420f), label = "ind")
+    // under your finger exactly while you drag it; riding with the pages while you swipe them; otherwise it springs to the tab
+    val follow = drag == null && Pager.user.value
+    val pagePos = Pager.pos.floatValue
+    val direct = drag != null || follow
+    val target = drag ?: if (follow) pagePos * cell else tab * cell
+    val ax = remember { Animatable(0f) }
+    LaunchedEffect(target, direct, cell) { if (direct || cell == 0f) ax.snapTo(target) else ax.animateTo(target, if (liquid) spring(0.55f, 300f) else spring(0.72f, 420f)) }
+    val x = if (direct) target else ax.value          // no animation step in between while it's under your finger: zero lag
     // liquid: the bubble stretches in the direction it moves (and squashes a little), then wobbles back into shape
     var vel by remember { mutableStateOf(0f) }
     var lastX by remember { mutableStateOf(0f) }
@@ -419,7 +426,7 @@ private fun Tabs(tab: Int, onTab: (Int) -> Unit) {
     val stretchT = if (liquid && cell > 0) (kotlin.math.abs(vel) / cell * 2.2f).coerceAtMost(0.35f) else 0f
     val stretch by animateFloatAsState(stretchT, spring(0.4f, 600f), label = "st")
     val grow by animateFloatAsState(if (drag != null) 1f else 0f, spring(0.55f, 420f), label = "grow")
-    val hover = drag?.let { ((it + cell / 2) / cell).toInt().coerceIn(0, 3) }
+    val hover = drag?.let { ((it + cell / 2) / cell).toInt().coerceIn(0, 3) } ?: if (follow) kotlin.math.round(pagePos).toInt().coerceIn(0, 3) else null
     val cellS by rememberUpdatedState(cell); val onTabS by rememberUpdatedState(onTab); val tabS by rememberUpdatedState(tab)
     // the bubble: a pill, wider than tall, that swells while held
     val padPx = with(d) { 4.dp.toPx() }

@@ -2,6 +2,15 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.4.1",
+   "name": "The Lens Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Tab bubble follows the pages as you swipe between tabs, instead of catching up after",
+    "Dragging the tab bubble tracks your finger instantly"
+   ]
+  },
+  {
    "version": "2.4.0",
    "name": "The Lens Update",
    "date": "2026-11-18",
