@@ -1,6 +1,7 @@
 package com.auraos.music.next
 
 import android.content.res.Configuration
+import com.auraos.music.NativePlayer
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
