@@ -2,6 +2,20 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.9.0",
+   "name": "The Collector Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Finding covers is much smarter: it asks iTunes, Deezer and MusicBrainz, forgives accents, \"(Deluxe)\", \"- Single\", \"feat.\" and messy YouTube-style titles, and scores every answer on how well the title and artist match",
+    "If the album can't be found, it looks up the songs themselves; songs with no album get the cover of their own single",
+    "Three albums are looked up at once, with progress, and the result says how many were found and how many couldn't be matched",
+    "Songs without a cover are found automatically in the background, including the ones that failed before",
+    "Hold an album (in Albums, a shelf or search) for its menu: Play, Shuffle, Play Next, Add to Queue, Playlist, Favorite, Go to Artist, Look Up Info, Find Cover, Choose Cover, Share, Remove",
+    "Hold an artist for theirs: Play, Shuffle, Radio, Queue, Playlist, Favorite, Get More from YouTube Music, Find Missing Covers",
+    "Downloads are faster: three songs at once, each fetched in four pieces at the same time, the cover comes down alongside the audio, and the hidden browser warms up when you open YouTube search"
+   ]
+  },
+  {
    "version": "2.8.1",
    "name": "The Demo Update",
    "date": "2026-11-18",

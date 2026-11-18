@@ -385,6 +385,7 @@ fun SearchPage() {
     val pls by Store.playlists.collectAsState()
     var recent by remember { mutableStateOf(Store.recent()) }
     val yt by Yt.mode
+    LaunchedEffect(yt) { if (yt) Engine.warm() }
     val t = q.trim()
     LaunchedEffect(t) { kotlinx.coroutines.delay(1800); if (t.length > 1 && !yt) { Store.addRecent(t); recent = Store.recent() } }
     val hitSongs = remember(songs, t) { if (t.isEmpty()) emptyList() else songs.filter { it.title.contains(t, true) || it.artist.contains(t, true) || it.album.contains(t, true) || it.genre.contains(t, true) }.take(40) }
