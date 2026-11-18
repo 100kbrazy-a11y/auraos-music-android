@@ -346,17 +346,12 @@ fun SongSheet(s: Song, playlist: String? = null) {
         Act(Ic.AddQ, "Add to Queue") { Ctl.addToQueue(ctx, listOf(s)) }
         Act(Ic.Search, "Look Up Song Info…") { Dialogs.sheet { LookupSong(s) } }
         Act(Ic.Select, "Select Songs") { Sel.ids.clear(); Sel.ids.add(s.id) }
-        Act(if (Store.isFav(s.id)) Ic.HeartFill else Ic.Heart, if (Store.isFav(s.id)) "Remove from Favorites" else "Add to Favorites") { Toasts.show(if (Store.toggleFav(s.id)) "Added to Favorites" else "Removed from Favorites") }
+        Act(if (Store.isFav(s.id)) Ic.HeartFill else Ic.Heart, if (Store.isFav(s.id)) "Remove from Favorites" else "Add to Favorites") { likeToast(Store.toggleFav(s.id)) }
         Act(Ic.List, "Add to Playlist…") { Dialogs.sheet { PlaylistPicker(listOf(s.id)) } }
         if (playlist != null) Act(Ic.Close, "Remove from This Playlist") { Store.setPlaylist(playlist, (Store.playlists.value[playlist] ?: emptyList()).filter { it != s.id }) }
-        Act(Ic.Disc, "Go to Album") { Nav.open(Page.AlbumP(s.albumKey)) }
-        Act(Ic.Person, "Go to Artist") { Nav.open(Page.ArtistP(primaryArtist(s.artist).ifBlank { s.albumArtist })) }
-        Act(Ic.Spark, "Start Radio") { Radio.start(ctx, s) }
-        Act(Ic.Edit, "Edit Info…") { Dialogs.show { EditInfo(s) } }
-        Act(Ic.Lyrics, "Choose Lyrics…") { Dialogs.sheet { LyricsSearch(s) } }
-        Act(Ic.Info, "Song Info") { Dialogs.show { SongInfo(s) } }
-        Act(Ic.Share, "Share Song…") { try { Packs.shareSong(ctx, s) } catch (e: Exception) { Toasts.show("Couldn't share: ${e.message}") } }
-        Act(Ic.Pack, "Share as Music Pack…") { scope.launch { sharePack(ctx, s.title, listOf(s), null) } }
+        Act(Ic.Disc, "Go to Album") { NpState.open.value = false; Nav.open(Page.AlbumP(s.albumKey)) }
+        Act(Ic.Person, "Go to Artist") { NpState.open.value = false; Nav.open(Page.ArtistP(primaryArtist(s.artist).ifBlank { s.albumArtist })) }
+        Act(Ic.Share, "Share as Music Pack…") { scope.launch { sharePack(ctx, s.title, listOf(s), null) } }
         Act(Ic.Trash, "Remove Song…", danger = true) { Dialogs.show { Confirm("Remove “${s.title}”?", "It's deleted from this phone.", "Remove") { Store.remove(listOf(s.id)) } } }
     }
 }
@@ -479,6 +474,10 @@ fun LookupSong(s: Song) {
     Column(Modifier.padding(horizontal = 20.dp)) {
         T("Look Up Song Info", 22.sp, W700, modifier = Modifier.padding(bottom = 10.dp))
         SearchBox(q, { q = it }, "Song and artist", { go() })
+        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Edit by Hand", false, ic = Ic.Edit) { Dialogs.show { EditInfo(s) } }
+            Chip("Song Info", false, ic = Ic.Info) { Dialogs.show { SongInfo(s) } }
+        }
         T(if (hits == null) "Searching iTunes and Deezer…" else if (hits!!.isEmpty()) "Nothing found" else "Best match first · tap to use", 13.sp, color = C.sub, modifier = Modifier.padding(vertical = 10.dp))
     }
     LazyColumn(Modifier.heightIn(max = 440.dp)) {

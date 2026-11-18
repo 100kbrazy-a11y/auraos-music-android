@@ -7,6 +7,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -389,22 +391,19 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
 }
 
 @Composable
-private fun NpSheet(s: Song) {
+fun NpSheet(s: Song) {
     val ctx = LocalContext.current
-    val sleepAt by NativePlayer.sleepAt.collectAsState(); val sleepEnd by Sleep.endOfSong.collectAsState()
+    val scope = rememberCoroutineScope()
     SheetScroll {
         SheetHead(s.cover, s.title, listOf(s.artist, s.album).filter { it.isNotBlank() }.joinToString(" · "), s.album)
         Act(Ic.PlayNext, "Play Next") { Ctl.playNext(ctx, listOf(s)) }
         Act(Ic.AddQ, "Add to Queue") { Ctl.addToQueue(ctx, listOf(s)) }
         Act(Ic.Search, "Look Up Song Info…") { Dialogs.sheet { LookupSong(s) } }
-        Act(if (Store.isFav(s.id)) Ic.HeartFill else Ic.Heart, if (Store.isFav(s.id)) "Remove from Favorites" else "Add to Favorites") { Store.toggleFav(s.id) }
+        Act(if (Store.isFav(s.id)) Ic.HeartFill else Ic.Heart, if (Store.isFav(s.id)) "Remove from Favorites" else "Add to Favorites") { likeToast(Store.toggleFav(s.id)) }
         Act(Ic.List, "Add to Playlist…") { Dialogs.sheet { PlaylistPicker(listOf(s.id)) } }
-        Act(Ic.Disc, "Go to Album") { Nav.open(Page.AlbumP(s.albumKey)); NpState.open.value = false; Morph.to(0f) }
-        Act(Ic.Person, "Go to Artist") { Nav.open(Page.ArtistP(primaryArtist(s.artist).ifBlank { s.albumArtist })); NpState.open.value = false; Morph.to(0f) }
-        Act(Ic.Spark, "Start Radio") { Radio.start(ctx, s) }
-        Act(Ic.Timer, "Sleep Timer", if (sleepAt > 0) "Pausing in ${((sleepAt - System.currentTimeMillis()) / 60000 + 1).coerceAtLeast(1)} min" else if (sleepEnd) "At the end of this song" else "Off") { Dialogs.sheet { SleepSheet() } }
-        Act(Ic.Info, "Song Info") { Dialogs.show { SongInfo(s) } }
-        Act(Ic.Share, "Share Song…") { try { com.auraos.music.next.Packs.shareSong(ctx, s) } catch (e: Exception) { Toasts.show("Couldn't share: ${e.message}") } }
+        Act(Ic.Disc, "Go to Album") { NpState.open.value = false; Nav.open(Page.AlbumP(s.albumKey)) }
+        Act(Ic.Person, "Go to Artist") { NpState.open.value = false; Nav.open(Page.ArtistP(primaryArtist(s.artist).ifBlank { s.albumArtist })) }
+        Act(Ic.Share, "Share as Music Pack…") { scope.launch { sharePack(ctx, s.title, listOf(s), null) } }
         Act(Ic.Trash, "Remove Song…", danger = true) { Dialogs.show { Confirm("Remove “${s.title}”?", "It's deleted from this phone.", "Remove") { Store.remove(listOf(s.id)) } } }
     }
 }
@@ -476,23 +475,30 @@ fun QueueSheet() {
     val st by NativePlayer.state.collectAsState()
     val q by Ctl.queue.collectAsState()
     val a = accent
-    val ls = rememberLazyListState(initialFirstVisibleItemIndex = st.index.coerceAtLeast(0))
-    Row(Modifier.padding(start = 20.dp, end = 12.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { T("Up Next", 15.sp, W750); T("${plural(q.size, "song")} · ${fmtLong(q.drop(st.index + 1).sumOf { it.durMs })} left", 13.sp, color = C.sub) }
-        TextBtn("Clear") { Ctl.clearUpNext(ctx) }
-    }
+    val start = st.index.coerceAtLeast(0)
+    val rowH = with(LocalDensity.current) { 60.dp.toPx() }
+    var dragI by remember { mutableStateOf(-1) }; var dragY by remember { mutableStateOf(0f) }
+    Column(Modifier.padding(start = 20.dp, end = 12.dp, bottom = 10.dp)) { T("Up Next", 15.sp, W750); T(plural((q.size - start).coerceAtLeast(0), "song"), 13.sp, color = C.sub) }
     Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
-    LazyColumn(state = ls, modifier = Modifier.heightIn(max = 600.dp)) {
-        itemsIndexed(q, key = { i, s -> "$i-${s.id}" }) { i, s ->
-            val now = i == st.index
-            Row(Modifier.fillMaxWidth().height(60.dp).clickable { NativePlayer.jump(i) }.padding(start = 18.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(contentAlignment = Alignment.Center) { Art(s.cover, 44.dp, shape = RoundedCornerShape(9.dp), phName = s.album); if (now) { Box(Modifier.size(44.dp).clip(RoundedCornerShape(9.dp)).background(Color.Black.copy(alpha = 0.45f))); EqBars(st.playing) } }
-                Column(Modifier.weight(1f)) { T(s.title, 15.sp, W650, if (now) a else if (i < st.index) C.faint else C.text); T(s.artist, 13.sp, color = C.sub) }
-                if (!now) { IB(Ic.Up, C.faint, 18.dp, 36.dp) { Ctl.move(ctx, i, i - 1) }; IB(Ic.Down, C.faint, 18.dp, 36.dp) { Ctl.move(ctx, i, i + 1) }; IB(Ic.Close, C.faint, 18.dp, 36.dp) { Ctl.removeAt(ctx, i) } }
+    LazyColumn(Modifier.heightIn(max = 600.dp)) {
+        itemsIndexed(q.drop(start), key = { k, s -> "${k + start}-${s.id}" }) { k, s ->
+            val i = k + start; val now = i == st.index
+            var dx by remember { mutableStateOf(0f) }
+            Row(Modifier.fillMaxWidth().height(60.dp).zIndexCompat(if (dragI == i) 1f else 0f)
+                .graphicsLayer { translationY = if (dragI == i) dragY else 0f; translationX = dx; alpha = 1f - (kotlin.math.abs(dx) / 600f).coerceIn(0f, 0.7f) }
+                .background(if (dragI == i) C.surface2 else Color.Transparent)
+                .clickable { NativePlayer.jump(i) }
+                .then(if (now) Modifier else Modifier
+                    .pointerInput(i) { detectDragGesturesAfterLongPress(onDragStart = { dragI = i; dragY = 0f }, onDragEnd = { val to = (i + Math.round(dragY / rowH)).coerceIn(start + 1, q.size - 1); dragI = -1; dragY = 0f; if (to != i) Ctl.move(ctx, i, to) }, onDragCancel = { dragI = -1; dragY = 0f }) { c, d -> c.consume(); dragY += d.y } }
+                    .pointerInput(i) { detectHorizontalDragGestures(onDragEnd = { if (dx < -220f) Ctl.removeAt(ctx, i); dx = 0f }, onDragCancel = { dx = 0f }) { c, d -> c.consume(); dx = (dx + d).coerceAtMost(0f) } })
+                .padding(start = 18.dp, end = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(contentAlignment = Alignment.Center) { Art(s.cover, 40.dp, shape = RoundedCornerShape(8.dp), phName = s.album); if (now) { Box(Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.45f))); EqBars(st.playing) } }
+                Column(Modifier.weight(1f)) { T(s.title, 15.sp, W650, if (now) a else C.text); T(s.artist, 13.sp, color = C.sub) }
             }
         }
     }
 }
+fun Modifier.zIndexCompat(z: Float): Modifier = this.then(androidx.compose.ui.Modifier.zIndex(z))
 
 /** the equalizer: presets as chips, the curve as ten bars with draggable knobs (.eqviz) */
 @Composable
