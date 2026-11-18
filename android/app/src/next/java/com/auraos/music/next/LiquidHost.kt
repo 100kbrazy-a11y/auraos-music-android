@@ -48,7 +48,12 @@ object Liquid {
     private var order = ""
     var density = 2.625f
 
-    fun attach(h: FrameLayout, src: View) { host = h; source = src; density = h.resources.displayMetrics.density }
+    fun attach(h: FrameLayout, src: View) {
+        // A new activity (after leaving the app with Back and opening it again while the process lives on) brings a new host layer.
+        // The panes made for the old one are dead: drop them so they are made again in the new one.
+        if (host !== h) { for (v in views.values) (v.parent as? android.view.ViewGroup)?.removeView(v); views.clear(); applied.clear(); order = ""; coords.clear(); rects.clear() }
+        host = h; source = src; density = h.resources.displayMetrics.density
+    }
 
     /** called right before every frame is drawn (a pre-draw listener), after the controls have been laid out */
     fun frame(ctx: Context) {
@@ -68,6 +73,7 @@ object Liquid {
                     h.addView(g, FrameLayout.LayoutParams(1, 1))
                 }
             }
+            if (v.parent !== h) { (v.parent as? android.view.ViewGroup)?.removeView(v); h.addView(v, FrameLayout.LayoutParams(1, 1)); applied.remove(id) }   // self-heal
             val w = r.width.roundToInt().coerceAtLeast(1); val ht = r.height.roundToInt().coerceAtLeast(1)
             val lp = v.layoutParams as FrameLayout.LayoutParams
             if (lp.width != w || lp.height != ht || v.width != w || v.height != ht) {

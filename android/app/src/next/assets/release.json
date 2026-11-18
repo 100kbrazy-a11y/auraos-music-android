@@ -2,6 +2,14 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.8.1",
+   "name": "The Demo Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Fixed: the glass behind the tab bar, the media bar and the headers could vanish (leaving only the buttons) after you left the app with Back and opened it again. The glass is now rebuilt every time the screen is created, and fixes itself if it ever goes missing"
+   ]
+  },
+  {
    "version": "2.8.0",
    "name": "The Demo Update",
    "date": "2026-11-18",
