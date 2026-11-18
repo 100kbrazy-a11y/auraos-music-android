@@ -23,21 +23,31 @@ PY
 tapt() { xy=$(center "$1"); [ -n "$xy" ] && adb shell input tap $xy; sleep ${2:-2}; }
 shot() { adb exec-out screencap -p > "$1.png"; }
 back() { adb shell input keyevent 4; sleep 2; }
+ycen() { center "$1" | cut -d' ' -f2; }
 tapt "Albums"; shot 01-albums
 tapt "Artists"; shot 02-artists
 tapt "Songs"; shot 03-songs
 tapt "Playlists"; shot 04-playlists
-tapt "Albums"; tapt "Neon Tides" 3; shot 05-album
+tapt "Albums"; tapt "Afterglow" 3; shot 05-album
 back
 tapt "Artists"; tapt "Kairo" 3; shot 06-artist
 back
-tapt "Songs"; tapt "Golden Hour" 3; shot 07-mini
-tapt "Golden Hour" 3; shot 08-player
-adb shell input tap 960 220; sleep 2; shot 09-npmenu
-back; back
-adb shell input tap 1000 150; sleep 3; shot 10-settings
+tapt "Songs"; y=$(ycen "Blue"); adb shell input tap 990 $y; sleep 2; shot 12-songmenu
 back
-adb shell input tap 795 150; sleep 3; shot 11-search
+adb shell input tap 774 210; sleep 3; adb shell input text blue; sleep 3; shot 11-search
+back; sleep 1; back
+adb shell input tap 886 210; sleep 3; shot 14-filter
+back
+tapt "Blue 2" 3; shot 07-mini
+adb shell input tap 400 2129; sleep 3; shot 08-player
+adb shell input tap 960 160; sleep 2; shot 09-npmenu
+back
+adb shell input tap 160 2290; sleep 3; shot 16-lyrics
+adb shell input tap 160 2290; sleep 2
+adb shell input tap 920 2290; sleep 3; shot 17-queue
+back; back
+adb shell input tap 997 210; sleep 3; shot 10-settings
+adb shell input swipe 540 1900 540 600 400; sleep 2; shot 13-settings2
 adb shell am force-stop $P; sleep 2
 adb shell am start -n $P/com.auraos.music.next.NextActivity --ez liquid true; sleep 20
 shot 12-liquid; adb shell input tap 540 1300; sleep 5; shot 13-liquid2
