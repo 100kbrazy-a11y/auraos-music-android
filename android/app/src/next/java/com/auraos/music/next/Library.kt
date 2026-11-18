@@ -80,7 +80,7 @@ fun FilterSheet() {
         }
         group("Genre", counts { it.genre }, Filt.genre)
         group("Artist", counts { primaryArtist(it.artist).ifBlank { it.albumArtist } }, Filt.artist)
-        group("Decade", counts { Filt.dec(it) }, Filt.decade)
+        group("Decade", counts { Filt.dec(it) }.sortedByDescending { it.key }, Filt.decade)
         group("Length", counts { Filt.len(it) }, Filt.length)
         T("OTHER", 12.sp, W750, C.sub, spacing = 0.8.sp, modifier = Modifier.padding(start = 24.dp, top = 10.dp, bottom = 6.dp))
         Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -412,7 +412,9 @@ fun SearchPage() {
     Box(Modifier.fillMaxSize().background(C.bg)) {
         LazyColumn(contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
             item {
-                SearchBox(if (yt) Yt.q.value else q, { if (yt) Yt.q.value = it else q = it }, if (yt) "Search YouTube Music, or paste a link" else "Songs, albums, artists, genres", { if (yt) Yt.run() }, Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp))
+                val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+                LaunchedEffect(Unit) { kotlinx.coroutines.delay(250); try { focus.requestFocus() } catch (_: Exception) { } }
+                SearchBox(if (yt) Yt.q.value else q, { if (yt) Yt.q.value = it else q = it }, if (yt) "Search YouTube Music, or paste a link" else "Songs, albums, artists, genres", { if (yt) Yt.run() }, Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp), focus)
 
             }
             if (yt) { ytResults(this); return@LazyColumn }

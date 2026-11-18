@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -454,10 +455,10 @@ fun EditInfo(s: Song) {
 }
 
 @Composable
-fun SearchBox(q: String, onChange: (String) -> Unit, hint: String, onGo: () -> Unit = {}, modifier: Modifier = Modifier) {
+fun SearchBox(q: String, onChange: (String) -> Unit, hint: String, onGo: () -> Unit = {}, modifier: Modifier = Modifier, focus: androidx.compose.ui.focus.FocusRequester? = null) {
     Row(modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(24.dp)).background(C.surface2).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Icon(Ic.Search, tint = C.sub)
-        BasicTextField(q, onChange, Modifier.weight(1f), textStyle = TextStyle(color = C.text, fontSize = 16.sp), singleLine = true, cursorBrush = SolidColor(accent),
+        BasicTextField(q, onChange, Modifier.weight(1f).then(if (focus != null) Modifier.focusRequester(focus) else Modifier), textStyle = TextStyle(color = C.text, fontSize = 16.sp), singleLine = true, cursorBrush = SolidColor(accent),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { onGo() }),
             decorationBox = { inner -> Box { if (q.isEmpty()) T(hint, 16.sp, color = C.faint); inner() } })
         if (q.isNotEmpty()) Box(Modifier.clip(CircleShape).clickable { onChange("") }) { Icon(Ic.Close, size = 18.dp, tint = C.sub) }
