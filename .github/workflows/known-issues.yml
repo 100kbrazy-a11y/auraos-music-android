@@ -1,0 +1,43 @@
+# Mirrors GitHub issues into #known-issues in Discord.
+# Label an issue `known-issue`  -> it is posted as a known issue.
+# Close a labelled issue        -> a "fixed" note is posted.
+# Needs one repo secret: DISCORD_KNOWN_ISSUES_WEBHOOK  (the #known-issues webhook URL).
+name: Known issues to Discord
+
+on:
+  issues:
+    types: [labeled, closed]
+
+permissions:
+  issues: read
+
+jobs:
+  post:
+    if: >-
+      (github.event.action == 'labeled' && github.event.label.name == 'known-issue') ||
+      (github.event.action == 'closed' && contains(github.event.issue.labels.*.name, 'known-issue'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_KNOWN_ISSUES_WEBHOOK }}
+          ACTION: ${{ github.event.action }}
+          TITLE: ${{ github.event.issue.title }}
+          BODY: ${{ github.event.issue.body }}
+          URL: ${{ github.event.issue.html_url }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          [ -n "$WEBHOOK" ] || { echo "::notice::DISCORD_KNOWN_ISSUES_WEBHOOK is not set yet, so nothing was posted"; exit 0; }
+          if [ "$ACTION" = "closed" ]; then
+            heading="Fixed: $TITLE"; color=5763719
+            desc="This known issue is fixed. Update to the latest build to get the fix."
+          else
+            heading="Known issue: $TITLE"; color=15548997
+            desc="$(printf '%s' "$BODY" | head -c 700)"
+            desc="$(printf '%s\n\nWe are working on it. No need to report it again.' "$desc")"
+          fi
+          jq -n --arg h "$heading" --arg d "$desc" --arg url "$URL" --arg n "#$NUMBER" --argjson c "$color" '
+            {username: "Strata Known Issues",
+             embeds: [{title: ($h | .[0:250]), description: ($d | .[0:1800]), url: $url, color: $c,
+                       footer: {text: ("Issue " + $n)}}]}' > payload.json
+          curl -fsS -H "Content-Type: application/json" -d @payload.json "$WEBHOOK"

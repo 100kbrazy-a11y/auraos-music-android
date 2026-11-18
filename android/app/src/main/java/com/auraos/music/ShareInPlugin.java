@@ -8,7 +8,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
- * Links shared to AuraOS Music (YouTube / YouTube Music › Share › Add to AuraOS Music). The app picks the link up
+ * Links shared to Strata Music (YouTube / YouTube Music › Share › Add to Strata Music). The app picks the link up
  * with take() when it starts, and gets a "shared" event when it's already open.
  */
 @CapacitorPlugin(name = "ShareIn")

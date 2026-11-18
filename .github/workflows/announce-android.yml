@@ -1,0 +1,46 @@
+# Posts to #release-notes in Discord after each successful Android build.
+# Needs one repo secret: DISCORD_RELEASE_WEBHOOK  (the #release-notes webhook URL).
+# Add [skip-announce] to a commit message to keep that build quiet.
+name: Announce Android build
+
+on:
+  workflow_run:
+    workflows: ["Build Android app"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: "What's new (shown in Discord)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          REPO: ${{ github.repository }}
+          RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          COMMIT_MSG: ${{ github.event.workflow_run.head_commit.message }}
+          NOTES: ${{ github.event.inputs.notes }}
+        run: |
+          [ -n "$WEBHOOK" ] || { echo "::notice::DISCORD_RELEASE_WEBHOOK is not set yet, so nothing was posted"; exit 0; }
+          case "$COMMIT_MSG" in *"[skip-announce]"*) echo "Skipped by commit message"; exit 0;; esac
+          text="${NOTES:-$(printf '%s' "$COMMIT_MSG" | head -n1)}"
+          jq -n --arg text "$text" --arg run "${RUN_NUMBER:-manual}" \
+            --arg url "https://github.com/$REPO/releases/latest/download/Strata-Music.apk" '
+            {username: "Strata Releases",
+             embeds: [{
+               title: "New Android build",
+               description: ("**What changed:** " + ($text | .[0:1500]) + "\n\nUpdate by installing the new APK over your current app. Your data stays."),
+               url: $url,
+               color: 12525759,
+               fields: [{name: "Download", value: ("[Strata-Music.apk](" + $url + ")"), inline: true},
+                        {name: "Build", value: ("#" + $run), inline: true}]
+             }]}' > payload.json
+          curl -fsS -H "Content-Type: application/json" -d @payload.json "$WEBHOOK"

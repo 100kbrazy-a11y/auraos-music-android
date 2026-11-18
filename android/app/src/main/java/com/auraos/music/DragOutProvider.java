@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Hands what you dragged out of AuraOS Music to the app you dropped it on: content://<app>.dragout/<token>/<name>.
+ * Hands what you dragged out of Strata Music to the app you dropped it on: content://<app>.dragout/<token>/<name>.
  * The other app gets the file through a pipe straight away, so it never waits on us; the data flows as soon as it
  * exists (a song at once, a music pack once it's been named and made). Read-only, and only for that one drop.
  */

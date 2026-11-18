@@ -113,7 +113,7 @@ public class DragOutPlugin extends Plugin {
         }
     }
 
-    // ---------------------------------------------------------------- the apps you can drop onto inside AuraOS
+    // ---------------------------------------------------------------- the apps you can drop onto inside Strata Music
     private static final List<String> PREFERRED = Arrays.asList(
         "com.samsung.android.messaging", "com.google.android.apps.messaging", "com.samsung.android.app.sharelive",
         "com.google.android.gms", "com.whatsapp", "org.telegram.messenger", "com.discord", "com.google.android.apps.docs",
