@@ -217,7 +217,22 @@ public class AuraPlaybackService extends MediaSessionService {
         }
     }
 
-    byte[] levels() { return procs[cur].levels(); }
+    // Where the speaker is in the processed audio. The processor counts ms of audio since its last flush; the player's own
+    // position already includes the output latency (Bluetooth too). Since a flush starts at the position the player was sent
+    // to, "played" = position - where it started (plus the songs that ran on into each other without a flush).
+    final double[] vizStart = { 0, 0 }, vizAcc = { 0, 0 };
+    final boolean[] vizSeek = { false, false };
+    private final int[] vizFlush = { -1, -1 };
+    byte[] levels() {
+        int i = cur;
+        AuraAudioProcessor pr = procs[i];
+        long pos = active().getCurrentPosition();
+        int fl = pr.flushes;
+        if (fl != vizFlush[i]) { vizFlush[i] = fl; if (!vizSeek[i]) { vizStart[i] = pos; vizAcc[i] = 0; } vizSeek[i] = false; }
+        double played = pos + vizAcc[i] - vizStart[i];
+        if (played > pr.processedMs() + 50 || played < -2000) { vizStart[i] = pos - Math.max(0, pr.processedMs() - pr.leadMs()); vizAcc[i] = 0; played = pos - vizStart[i]; }   // lost track: line up again
+        return pr.levelsAt(played);
+    }
 
     // ------------------------------------------------------------------ crossfade
     private void tick() {
@@ -446,6 +461,9 @@ public class AuraPlaybackService extends MediaSessionService {
             emitTrack(reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK ? "seek" : reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT ? "repeat" : "auto");
         }
         @Override public void onPositionDiscontinuity(@NonNull Player.PositionInfo oldPosition, @NonNull Player.PositionInfo newPosition, int reason) {
+            // keep the visualizer's clock lined up with the audio
+            if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) { vizStart[i] = newPosition.positionMs; vizAcc[i] = 0; vizSeek[i] = true; }
+            else if (reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION) vizAcc[i] += oldPosition.positionMs - newPosition.positionMs;
             if (mine()) emitState();
         }
         @Override public void onPlayerError(@NonNull PlaybackException error) {

@@ -58,9 +58,14 @@ public final class AuraAudioProcessor extends BaseAudioProcessor {
     private int ringPos = 0, sinceSnap = 0;
     private final double[] re = new double[N], im = new double[N], smooth = new double[N / 2];
     static final int OUT = 512;                      // bins sent to the app (it only looks at the lower ones)
-    private static final int SNAPS = 24;
+    private static final int SNAPS = 64;
     private final byte[][] snaps = new byte[SNAPS][OUT];
     private final long[] snapAt = new long[SNAPS];
+    /** where in the audio (ms since the last flush) each snapshot was taken, and how much audio has gone through so far */
+    private final double[] snapMs = new double[SNAPS];
+    private volatile long procFrames = 0;
+    /** goes up every time the audio is flushed (a seek, a new song): the processed-ms clock starts again from 0 */
+    volatile int flushes = 0;
     private int snapHead = 0, snapCount = 0;
     private long leadNs = 300_000_000L;
 
@@ -156,10 +161,11 @@ public final class AuraAudioProcessor extends BaseAudioProcessor {
                 double v = frame[c] * gain * 32767.0;
                 out.putShort((short) (v > 32767 ? 32767 : v < -32768 ? -32768 : v));
             }
+            procFrames++;
             if (doViz) {
                 ring[ringPos] = (float) (mono / ch * gain);
                 ringPos = (ringPos + 1) & (N - 1);
-                if (++sinceSnap >= sr / 30) { sinceSnap = 0; snapshot(); }
+                if (++sinceSnap >= sr / 60) { sinceSnap = 0; snapshot(); }
             }
         }
         input.position(lim);
@@ -193,17 +199,40 @@ public final class AuraAudioProcessor extends BaseAudioProcessor {
         synchronized (snaps) {
             snaps[snapHead] = out;
             snapAt[snapHead] = System.nanoTime();
+            snapMs[snapHead] = procFrames * 1000.0 / Math.max(1, sr);
             snapHead = (snapHead + 1) % SNAPS;
             if (snapCount < SNAPS) snapCount++;
         }
     }
 
-    /** The spectrum of what's coming out of the speaker right now (512 bytes, like the web analyser's lower bins). */
+    /** how much audio (ms since the last flush) has been processed: the speaker is somewhere behind this */
+    double processedMs() { return procFrames * 1000.0 / Math.max(1, sr); }
+    /** a guess at how far the speaker is behind (only used to line things up again after a jump) */
+    double leadMs() { return leadNs / 1e6; }
+
+    /**
+     * The spectrum of the audio at [playedMs] (in the same clock as processedMs(): ms since the last flush), i.e. what the
+     * speaker is playing right now. The player works out playedMs from its own position, which already includes the output
+     * latency (Bluetooth included), so the visuals land on the beat instead of trailing (or running ahead of) it.
+     */
+    byte[] levelsAt(double playedMs) {
+        synchronized (snaps) {
+            byte[] best = null;
+            for (int i = 1; i <= snapCount; i++) {         // newest first
+                int idx = (snapHead - i + SNAPS) % SNAPS;
+                best = snaps[idx];
+                if (snapMs[idx] <= playedMs) break;
+            }
+            return best != null ? best : new byte[OUT];
+        }
+    }
+
+    /** The spectrum of what's coming out of the speaker right now (by the wall-clock guess). */
     byte[] levels() {
         long want = System.nanoTime() - leadNs;
         synchronized (snaps) {
             byte[] best = null;
-            for (int i = 1; i <= snapCount; i++) {         // newest first
+            for (int i = 1; i <= snapCount; i++) {
                 int idx = (snapHead - i + SNAPS) % SNAPS;
                 best = snaps[idx];
                 if (snapAt[idx] <= want) break;
@@ -216,6 +245,9 @@ public final class AuraAudioProcessor extends BaseAudioProcessor {
     protected void onFlush() {
         if (st != null) java.util.Arrays.fill(st, 0);
         env = 0;
+        procFrames = 0;
+        synchronized (snaps) { snapCount = 0; }
+        flushes++;
     }
 
     @Override
@@ -224,6 +256,8 @@ public final class AuraAudioProcessor extends BaseAudioProcessor {
         seen = -1;
         env = 0;
         synchronized (snaps) { snapCount = 0; }
+        procFrames = 0;
+        flushes++;
         java.util.Arrays.fill(smooth, 0);
     }
 }

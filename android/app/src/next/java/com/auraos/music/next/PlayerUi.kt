@@ -87,11 +87,11 @@ fun rememberLevels(on: Boolean, bars: Int = 48): State<FloatArray> {
                     for (i in 0 until bars) {
                         val a = Math.pow(n.toDouble(), i / bars.toDouble()).toInt().coerceIn(0, n - 1); val z = Math.pow(n.toDouble(), (i + 1) / bars.toDouble()).toInt().coerceIn(a + 1, n)
                         var m = 0; for (k in a until z) m = max(m, b[k].toInt() and 255)
-                        out[i] = max(m / 255f, prev[i] * 0.84f); prev[i] = out[i]
+                        out[i] = max(m / 255f, prev[i] * 0.91f); prev[i] = out[i]
                     }
                     st.value = out
                 }
-                delay(33)
+                withFrameNanos { }
             }
         } finally { NativePlayer.viz(false) }
     }
