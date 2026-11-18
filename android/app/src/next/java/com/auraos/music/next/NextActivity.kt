@@ -193,7 +193,7 @@ fun FgApp() {
         NativePlayer.artwork(c.id, bytes)
         Ctl.save()
     }
-    LaunchedEffect(full) { if (full) Morph.f.animateTo(1f, spring(0.82f, 320f)) else Morph.f.animateTo(0f, tween(380, easing = Ease)) }
+    LaunchedEffect(full) { if (full) { Morph.closing = false; Morph.f.animateTo(1f, spring(0.82f, 320f)) } else if (Morph.f.value > 0f) Morph.toDock() }
     LaunchedEffect(Unit) { NativePlayer.errors.collect { Toasts.show("Couldn't play: $it"); Diag.log("playback: $it") } }
     LaunchedEffect(Unit) { while (true) { delay(5000); if (NativePlayer.state.value.playing) Ctl.save() } }
     BackHandler(enabled = full || Nav.stack.isNotEmpty() || Sel.ids.isNotEmpty()) {
@@ -220,7 +220,7 @@ fun FgApp() {
             }
         }
         if (cur != null && Morph.f.value > 0.001f) PlayerPanel(cur) { full = false }
-        if (cur != null && (Morph.carrying || (Morph.f.value > 0.001f && Morph.f.value < 0.5f))) FloatingMini(cur)
+        if (cur != null && Morph.carrying) FloatingMini(cur)
         SheetHost()
     }
 }

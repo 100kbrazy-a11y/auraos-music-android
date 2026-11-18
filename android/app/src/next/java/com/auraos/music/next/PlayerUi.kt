@@ -129,15 +129,17 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
     val fv = Morph.f.value
     // the media bar is off the dock while you carry it, or while the player panel is up: its slot empties and the tabs stand alone
     val away = Morph.carrying || fv > 0.001f
+    val landing = Morph.closing && fv < Morph.fDock + 0.12f          // the panel is nearly the bar again: the dock rejoins it
     val tint = mix(a, 0.10f, Color(0xFF1A1A20)).copy(alpha = 0.40f)
     val r = 26.dp
     // the corners ease (never snap) between "one bubble" and "tabs on their own"
-    val join by animateDpAsState(if (cur != null && !away) 0.dp else r, tween(260, easing = FastOutSlowInEasing), label = "join")
+    val join by animateDpAsState(if (cur != null && (!away || landing)) 0.dp else r, tween(260, easing = FastOutSlowInEasing), label = "join")
+    val dockA = if (Morph.closing) 1f - smooth(Morph.fDock, Morph.fDock + 0.3f, fv) else 1f - smooth(0.05f, 0.45f, fv)
     val sheetUp = Dialogs.cur.value != null && Dialogs.isSheet.value
     val fade by animateFloatAsState(if (sheetUp) 0f else 1f, tween(200), label = "dockfade")
     Column(Modifier.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp).fillMaxWidth()
         .offset { IntOffset(0, -Morph.tug.value.roundToInt()) }                      // the whole dock gives a little as you tug
-        .graphicsLayer { alpha = fade * (1f - smooth(0.05f, 0.45f, fv)) }) {
+        .graphicsLayer { alpha = fade * dockA }) {
         if (cur != null) {
             val miniA = if (away) 0f else 1f
             Box(Modifier.fillMaxWidth().height(62.dp)
@@ -149,7 +151,7 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
             }
         }
         Box(Modifier.fillMaxWidth()
-            .liquid("dock-tabs", r, tint, z = 1, alpha = fade * (1f - smooth(0.05f, 0.45f, fv)), corners = listOf(join, join, r, r))
+            .liquid("dock-tabs", r, tint, z = 1, alpha = fade * dockA, corners = listOf(join, join, r, r))
             .clip(RoundedCornerShape(topStart = join, topEnd = join, bottomStart = r, bottomEnd = r))) {
             Tabs(tab, onTab)
         }
@@ -168,7 +170,19 @@ object Morph {
     val f = Animatable(0f)
     val miniY = Animatable(0f)
     var carrying by mutableStateOf(false)
+    /** on the way back down: the panel shrinks into the media bar's own slot and the dock comes back around it */
+    var closing by mutableStateOf(false)
     var mini = Rect.Zero; var screen = Rect.Zero
+    /** f at which the panel's top sits exactly on the media bar's slot */
+    val fDock: Float get() = (1f - mini.top / screen.height.coerceAtLeast(1f)).coerceIn(0.02f, 0.5f)
+    /** back into the dock: the panel glides down to the slot, becomes the bar, and the bar is in the dock again */
+    fun toDock() {
+        closing = true
+        scope?.launch {
+            f.animateTo(fDock, tween(420, easing = Ease))
+            f.snapTo(0f); closing = false
+        }
+    }
     /** set by the app's screen: animations need its frame clock (a plain MainScope crashes) */
     var scope: kotlinx.coroutines.CoroutineScope? = null
     fun snap(v: Float) { scope?.launch { f.snapTo(v.coerceIn(0f, 1f)) } }
@@ -267,7 +281,7 @@ private fun MiniBar(s: Song, st: NativePlayer.St, onOpen: () -> Unit) {
                     val v = vt.calculateVelocity().y
                     if (broke) {
                         Morph.carrying = false
-                        if (v < -700f || Morph.f.value > 0.42f) { Hap.soft(); onOpen() } else { Hap.soft(); Morph.to(0f) }
+                        if (v < -700f || Morph.f.value > 0.42f) { Hap.soft(); Morph.closing = false; onOpen() } else { Hap.soft(); Morph.toDock() }
                     } else Morph.scope?.launch { Morph.tug.animateTo(0f, spring(0.4f, 600f)) }
                 },
                 onDragCancel = { Morph.carrying = false; Morph.scope?.launch { Morph.tug.animateTo(0f, spring(0.4f, 600f)); Morph.f.animateTo(0f) } },
@@ -296,21 +310,15 @@ private fun MiniBar(s: Song, st: NativePlayer.St, onOpen: () -> Unit) {
     }
 }
 
-/** the media bar, off the dock: in your hand while you carry it, then riding the top of the panel (fading as the player arrives) */
+/** the media bar, off the dock, in your hand (only while you carry it: let go and it's gone, so there are never two covers) */
 @Composable
 fun FloatingMini(s: Song) {
     val st by NativePlayer.state.collectAsState()
     val d = LocalDensity.current
     val m = Morph.mini
-    if (m == Rect.Zero) return
-    val fv = Morph.f.value
-    val panelTop = Morph.screen.height * (1f - fv) + 8f * Liquid.density
-    val y = if (Morph.carrying) Morph.miniY.value else panelTop
-    val alpha = if (Morph.carrying) 1f else 1f - smooth(0.2f, 0.5f, fv)
-    val r by animateDpAsState(if (Morph.carrying) 22.dp else 26.dp, tween(240), label = "fr")
-    Box(Modifier.offset { IntOffset(m.left.roundToInt(), y.roundToInt()) }.size(with(d) { m.width.toDp() }, with(d) { m.height.toDp() })
-        .graphicsLayer { this.alpha = alpha }
-        .liquid("mini-float", r, mix(accent, 0.10f, Color(0xFF1A1A20)).copy(alpha = 0.40f), z = 10, alpha = alpha).clip(RoundedCornerShape(r))) {
+    if (m == Rect.Zero || !Morph.carrying) return
+    Box(Modifier.offset { IntOffset(m.left.roundToInt(), Morph.miniY.value.roundToInt()) }.size(with(d) { m.width.toDp() }, with(d) { m.height.toDp() })
+        .liquid("mini-float", 22.dp, mix(accent, 0.10f, Color(0xFF1A1A20)).copy(alpha = 0.40f), z = 10).clip(RoundedCornerShape(22.dp))) {
         MiniRow(s, st, swipe = false)
     }
 }
@@ -321,20 +329,34 @@ fun FloatingMini(s: Song) {
  */
 @Composable
 fun PlayerPanel(cur: Song, onClose: () -> Unit) {
+    val st by NativePlayer.state.collectAsState()
     val d = LocalDensity.current
     val fv = Morph.f.value
-    val h = Morph.screen.height.coerceAtLeast(1f)
+    val scr = Morph.screen; val mini = Morph.mini
+    val h = scr.height.coerceAtLeast(1f)
     val top = h * (1f - fv)
-    val radius = 30.dp * (1f - smooth(0.82f, 1f, fv))
-    val solid = smooth(0.62f, 0.98f, fv)              // 0 = all glass, 1 = the player's own background
-    Box(Modifier.fillMaxSize().liquid("np-dim", 0.dp, Color.Black, z = 5, alpha = 0.45f * smooth(0f, 0.6f, fv), scrim = true))
-    Box(Modifier.offset { IntOffset(0, top.roundToInt()) }.fillMaxWidth().height(with(d) { h.toDp() })
-        .liquid("np-panel", radius, mix(accent, 0.14f, Color(0xFF1A1A1F)).copy(alpha = 0.40f), z = 6, alpha = 1f - smooth(0.9f, 1f, fv), corners = listOf(radius, radius, 0.dp, 0.dp))
-        .clip(RoundedCornerShape(topStart = radius, topEnd = radius)).background(mix(accent, 0.14f, Color(0xFF1A1A1F)).copy(alpha = solid))) {
-        FullPlayer(cur, smooth(0.35f, 0.9f, fv), false, onClose)
-        Box(Modifier.fillMaxWidth().padding(top = 8.dp).graphicsLayer { alpha = 1f - smooth(0.6f, 0.9f, fv) }, contentAlignment = Alignment.Center) {
-            Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.35f)))
-        }
+    // m: 1 = a full-width panel, 0 = exactly the media bar's slot (only on the way back down, so it lands in the dock)
+    val fd = Morph.fDock
+    val m = if (Morph.closing && mini != Rect.Zero) smooth(fd, fd + 0.16f, fv) else 1f
+    val left = mini.left * (1f - m); val right = mini.right + (scr.width - mini.right) * m
+    val bottom = (mini.bottom + (h - mini.bottom) * m).coerceAtLeast(top + mini.height)
+    val radius = (26.dp + 4.dp * m) * (1f - smooth(0.82f, 1f, fv))
+    val solid = if (m < 1f) 0f else smooth(0.62f, 0.98f, fv)
+    val tint = mix(accent, 0.14f, Color(0xFF1A1A1F))
+    // one set of UI at a time: the bar's row while it's (nearly) the bar again, otherwise the player
+    val asBar = Morph.carrying || m < 0.6f
+    Box(Modifier.fillMaxSize().liquid("np-dim", 0.dp, Color.Black, z = 5, alpha = 0.45f * smooth(fd, 0.6f, fv) * m, scrim = true))
+    Box(Modifier.offset { IntOffset(left.roundToInt(), top.roundToInt()) }.size(with(d) { (right - left).toDp() }, with(d) { (bottom - top).toDp() })
+        .liquid("np-panel", radius, tint.copy(alpha = 0.40f), z = 6, alpha = 1f - smooth(0.9f, 1f, fv), corners = listOf(radius, radius, 0.dp, 0.dp))
+        .clip(RoundedCornerShape(topStart = radius, topEnd = radius)).background(tint.copy(alpha = solid))) {
+        if (!asBar) {
+            Box(Modifier.requiredSize(with(d) { scr.width.toDp() }, with(d) { h.toDp() }).align(Alignment.TopCenter)) {
+                FullPlayer(cur, if (Morph.carrying) 0f else smooth(0.3f, 0.75f, fv), false) { Morph.closing = true; onClose() }
+            }
+            Box(Modifier.fillMaxWidth().padding(top = 8.dp).graphicsLayer { alpha = 1f - smooth(0.6f, 0.9f, fv) }, contentAlignment = Alignment.TopCenter) {
+                Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.35f)))
+            }
+        } else if (!Morph.carrying) Box(Modifier.fillMaxWidth().height(with(d) { mini.height.toDp() })) { MiniRow(cur, st, swipe = false) }
     }
 }
 
@@ -421,8 +443,8 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
         }
       }
         Column(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.statusBarsPadding().navigationBarsPadding().pointerInput(Unit) {
-            detectVerticalDragGestures(onDragStart = { vy = 0f }, onDragEnd = { if (vy > trig * 1.5f) { Hap.soft(); onClose() } else Morph.to(1f); vy = 0f }, onDragCancel = { Morph.to(1f); vy = 0f }) { c, d ->
-                c.consume(); vy += d; Morph.snap(1f - vy.coerceAtLeast(0f) / Morph.screen.height.coerceAtLeast(1f))
+            detectVerticalDragGestures(onDragStart = { vy = 0f }, onDragEnd = { if (vy > trig * 1.5f) { Hap.soft(); Morph.closing = true; onClose() } else { Morph.closing = false; Morph.to(1f) }; vy = 0f }, onDragCancel = { Morph.to(1f); vy = 0f }) { c, d ->
+                c.consume(); vy += d; Morph.closing = true; Morph.snap(1f - vy.coerceAtLeast(0f) / Morph.screen.height.coerceAtLeast(1f))
             }
         }.padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 18.dp)) {
             Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
