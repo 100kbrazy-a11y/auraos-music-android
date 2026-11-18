@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -127,7 +128,6 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
     val a = accent
     val st by NativePlayer.state.collectAsState()
     val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
-    val levels by rememberLevels(cur != null && st.playing && motion && !saving, 40)
     val fv = Morph.f.value
     // the media bar is off the dock while you carry it, or while the player panel is up: its slot empties and the tabs stand alone
     val away = Morph.carrying || fv > 0.001f
@@ -147,7 +147,6 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
             Box(Modifier.fillMaxWidth().height(62.dp)
                 .liquid("dock-mini", r, tint, z = 1, alpha = miniA * fade, corners = listOf(r, r, 0.dp, 0.dp))
                 .graphicsLayer { alpha = miniA }.clip(RoundedCornerShape(topStart = r, topEnd = r))) {
-                if (motion && !saving) Bars(levels, a.copy(alpha = 0.32f), Modifier.matchParentSize())
                 MiniBar(cur, st, onOpen)
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.07f)))
             }
@@ -203,7 +202,7 @@ object Morph {
  * width finishes the move and skips; otherwise it springs back. [content] draws one song.
  */
 @Composable
-fun SongSwiper(modifier: Modifier, gap: Dp = 16.dp, onDouble: (() -> Unit)? = null, content: @Composable (Song) -> Unit) {
+fun SongSwiper(modifier: Modifier, gap: Dp = 16.dp, onDouble: (() -> Unit)? = null, onTap: (() -> Unit)? = null, curve: Boolean = false, content: @Composable (Song) -> Unit) {
     val st by NativePlayer.state.collectAsState(); val q by Ctl.queue.collectAsState()
     val rep by Prefs.repeat.collectAsState()
     val i = st.index
@@ -223,8 +222,11 @@ fun SongSwiper(modifier: Modifier, gap: Dp = 16.dp, onDouble: (() -> Unit)? = nu
                 onDragEnd = {
                     scope.launch {
                         val t = w * 0.25f
-                        if (dx.value < -t && hasNext) { dx.animateTo(-(w + g), tween(220, easing = FastOutSlowInEasing)); NativePlayer.jump(if (idx + 1 < size) idx + 1 else 0) }
-                        else if (dx.value > t && hasPrev) { dx.animateTo(w + g, tween(220, easing = FastOutSlowInEasing)); NativePlayer.jump(if (idx > 0) idx - 1 else size - 1) }
+                        // the full player's cover swings off on a curve (it tilts and shrinks as it goes, the next one swings in)
+                        val sp = if (curve) w * 1.15f else w + g
+                        val spec = if (curve) tween<Float>(520, easing = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)) else tween(220, easing = FastOutSlowInEasing)
+                        if (dx.value < -t && hasNext) { Hap.tap(); dx.animateTo(-sp, spec); NativePlayer.jump(if (idx + 1 < size) idx + 1 else 0) }
+                        else if (dx.value > t && hasPrev) { Hap.tap(); dx.animateTo(sp, spec); NativePlayer.jump(if (idx > 0) idx - 1 else size - 1) }
                         else { dx.animateTo(0f, spring(0.75f, 400f)); return@launch }
                         delay(900); if (dx.value != 0f) dx.snapTo(0f)          // in case the player didn't move
                     }
@@ -238,10 +240,20 @@ fun SongSwiper(modifier: Modifier, gap: Dp = 16.dp, onDouble: (() -> Unit)? = nu
                 scope.launch { dx.snapTo(if (edge) dx.value + d * 0.3f else v) }
             }
         }
-        .then(if (onDouble != null) Modifier.pointerInput(Unit) { detectTapGestures(onDoubleTap = { onDouble() }) } else Modifier)) {
-        if (prev != null && dx.value > 0f) Box(Modifier.matchParentSize().offset { IntOffset((dx.value - w - g).roundToInt(), 0) }) { content(prev) }
-        Box(Modifier.matchParentSize().offset { IntOffset(dx.value.roundToInt(), 0) }) { content(cur) }
-        if (next != null && dx.value < 0f) Box(Modifier.matchParentSize().offset { IntOffset((dx.value + w + g).roundToInt(), 0) }) { content(next) }
+        .then(if (onDouble != null || onTap != null) Modifier.pointerInput(onTap != null) {
+            detectTapGestures(onDoubleTap = onDouble?.let { f -> { _: Offset -> f() } }, onTap = onTap?.let { f -> { _: Offset -> f() } })
+        } else Modifier)) {
+        val sp = if (curve) w * 1.15f else w + g
+        fun Modifier.slot(k: Int): Modifier = if (!curve) this.offset { IntOffset((dx.value + k * sp).roundToInt(), 0) } else this.graphicsLayer {
+            val r = (dx.value + k * sp) / sp
+            val ar = kotlin.math.abs(r).coerceAtMost(1f)
+            translationX = r * sp; rotationZ = r * 7f
+            val sc = 1f - 0.12f * ar; scaleX = sc; scaleY = sc
+            alpha = 1f - ar * ar
+        }
+        if (prev != null && dx.value > 0f) Box(Modifier.matchParentSize().slot(-1)) { content(prev) }
+        Box(Modifier.matchParentSize().slot(0)) { content(cur) }
+        if (next != null && dx.value < 0f) Box(Modifier.matchParentSize().slot(1)) { content(next) }
     }
 }
 
@@ -513,7 +525,7 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
     val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
     val lyr by Prefs.npLyrics.collectAsState(); val ctxLabel by Ctl.context.collectAsState()
     val live = motion && !saving
-    val levels by rememberLevels(live && st.playing)
+    val levels by rememberLevels(live && st.playing, 40)
     val trig = with(LocalDensity.current) { 70.dp.toPx() }
     var vy by remember { mutableStateOf(0f) }
     var heart by remember { mutableStateOf(false) }
@@ -523,14 +535,15 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
       Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.background(Color(0xFF08080A)).clipToBounds()) {
         // .bg: the cover itself, hugely blurred and darkened; .bg2: vignette; .glowpulse: the accent breathing with the bass
         val f = if (s.cover.isNotEmpty()) Store.coverFile(s.cover) else null
-        if (f != null && Build.VERSION.SDK_INT >= 31) AsyncImage(f, null, Modifier.fillMaxSize().scale(1.4f).blur(60.dp), contentScale = ContentScale.Crop,
+        if (live) Unit else if (f != null && Build.VERSION.SDK_INT >= 31) AsyncImage(f, null, Modifier.fillMaxSize().scale(1.4f).blur(60.dp), contentScale = ContentScale.Crop,
             colorFilter = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(1.6f) }.also { it.timesAssign(ColorMatrix(floatArrayOf(0.55f, 0f, 0f, 0f, 0f, 0f, 0.55f, 0f, 0f, 0f, 0f, 0f, 0.55f, 0f, 0f, 0f, 0f, 0f, 1f, 0f))) }))
         else Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(mix(a, 0.45f, Color.Black), mix(a, 0.18f, Color.Black), Color(0xFF08080A)))))
         Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)))))
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.55f))))
         if (live) {
-            val bass = levels.take(6).average().toFloat()
-            Canvas(Modifier.fillMaxSize()) { val r = size.width * 0.45f * (1f + bass * 0.25f); val c = Offset(size.width / 2, size.height * 0.32f); drawCircle(Brush.radialGradient(listOf(a.copy(alpha = 0.25f + bass * 0.25f), Color.Transparent), c, r), r, c) }
+            Fog(s, levels, st.playing)
+            Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.35f)))))
+            VizBg(levels, a, Modifier.fillMaxWidth().fillMaxHeight(0.58f).align(Alignment.BottomCenter))
         }
       }
         Column(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 18.dp)) {
@@ -544,8 +557,10 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
             }
             if (lyr) {
                 Row(Modifier.padding(top = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(Modifier.shadow(20.dp, RoundedCornerShape(10.dp))) { Art(s.cover, 56.dp, shape = RoundedCornerShape(10.dp), phName = s.album) }
-                    Column(Modifier.weight(1f)) { T(s.title, 15.sp, W800); T(s.artist, 13.sp, color = Color.White.copy(alpha = 0.7f)) }
+                    // tap the cover or the title: back to the big album cover
+                    val toAlbum = { Hap.soft(); Prefs.setNpLyrics(false) }
+                    Box(Modifier.rubber(4.dp).shadow(20.dp, RoundedCornerShape(10.dp)).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { toAlbum() }) { Art(s.cover, 56.dp, shape = RoundedCornerShape(10.dp), phName = s.album) }
+                    Column(Modifier.weight(1f).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { toAlbum() }) { T(s.title, 15.sp, W800); T(s.artist, 13.sp, color = Color.White.copy(alpha = 0.7f)) }
                     IB(if (s.id in favs) Ic.HeartFill else Ic.Heart, if (s.id in favs) a else C.text) { if (Store.toggleFav(s.id)) Hap.success() else Hap.soft() }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) { LyricsPane(s) }
@@ -553,10 +568,16 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         val side = minOf(maxWidth, maxHeight, 420.dp)
-                        Box(Modifier.size(side).graphicsLayer { alpha = if (hideCover) 0f else 1f; val k = if (st.playing) 1f else 0.92f; scaleX = k; scaleY = k }, contentAlignment = Alignment.Center) {
-                            SongSwiper(Modifier.fillMaxSize(), 28.dp, onDouble = { if (!Store.isFav(s.id)) Store.toggleFav(s.id); Hap.success(); heart = true }) { x ->
+                        // tap the cover: it turns over to show the song's info (tap again, or skip, to turn it back)
+                        var flipped by remember(s.id) { mutableStateOf(false) }
+                        val rot by animateFloatAsState(if (flipped) 180f else 0f, spring(0.72f, 160f), label = "flip")
+                        val dens = LocalDensity.current.density
+                        Box(Modifier.size(side).graphicsLayer { alpha = if (hideCover) 0f else 1f; val k = if (st.playing) 1f else 0.92f; scaleX = k; scaleY = k; rotationY = rot; cameraDistance = 14f * dens }, contentAlignment = Alignment.Center) {
+                            if (rot <= 90f) SongSwiper(Modifier.fillMaxSize(), 28.dp, onDouble = { if (!Store.isFav(s.id)) Store.toggleFav(s.id); Hap.success(); heart = true },
+                                onTap = { Hap.soft(); flipped = true }, curve = true) { x ->
                                 Box(Modifier.fillMaxSize().shadow(50.dp, RoundedCornerShape(22.dp))) { Art(x.cover, null, Modifier.fillMaxSize(), RoundedCornerShape(22.dp), phName = x.album) }
-                            }
+                            } else Box(Modifier.fillMaxSize().graphicsLayer { rotationY = 180f }.shadow(50.dp, RoundedCornerShape(22.dp)).clip(RoundedCornerShape(22.dp)).background(Color(0xFF111111))
+                                .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.soft(); flipped = false }) { CoverBack(s) }
                             if (heartA > 0.01f) Icon(Ic.HeartFill, Modifier.scale(0.6f + heartA * 0.6f).graphicsLayer { alpha = heartA }, 110.dp, Color.White)
                         }
                     }
@@ -588,7 +609,6 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
             }
             // .ctrls with the visualizer behind
             Box(Modifier.fillMaxWidth().padding(top = 12.dp).height(84.dp).offset(x = 0.dp)) {
-                if (live) Bars(levels, a.copy(alpha = 0.55f), Modifier.fillMaxWidth().height(70.dp).align(Alignment.BottomCenter).offset(y = 4.dp))
                 Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     IB(Ic.Shuffle, if (shuf) a else Color.White.copy(alpha = 0.55f), 22.dp) { Ctl.toggleShuffle(ctx) }
                     IB(Ic.Prev, size = 28.dp) { NativePlayer.prev() }
@@ -671,13 +691,7 @@ fun LyricsPane(s: Song) {
                 l.synced.isNotEmpty() -> {
                     val offMs = (off * 1000).toLong()
                     val cur = l.synced.indexOfLast { it.ms + offMs <= pos }.coerceAtLeast(0)
-                    LaunchedEffect(cur) { ls.animateScrollToItem((cur - 2).coerceAtLeast(0)) }
-                    LazyColumn(state = ls, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 60.dp)) {
-                        itemsIndexed(l.synced) { i, line ->
-                            val c by animateColorAsState(if (i == cur) Color.White else Color.White.copy(alpha = if (i < cur) 0.32f else 0.5f), tween(300), label = "l")
-                            T(line.text.ifBlank { "♪" }, 26.sp, W800, c, lines = 6, lh = 32.sp, modifier = Modifier.fillMaxWidth().clickable { NativePlayer.seek((line.ms + offMs - shift).coerceAtLeast(0)) }.padding(vertical = 9.dp))
-                        }
-                    }
+                    SyncedLyrics(l.synced, cur) { i -> NativePlayer.seek((l.synced[i].ms + offMs - shift).coerceAtLeast(0)) }
                 }
                 l.plain.isNotBlank() -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 24.dp)) { T(l.plain, 22.sp, W800, Color.White.copy(alpha = 0.85f), lines = 1000, lh = 32.sp) }
                 else -> T("No lyrics for this song", 20.sp, W800, Color.White.copy(alpha = 0.7f))
@@ -750,6 +764,157 @@ fun EqSheet() {
         }
         FlowRow(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             (Prefs.EQ_PRESETS.keys + "Custom").forEach { n -> Chip(n, name == n) { Prefs.setEq(n) } }
+        }
+    }
+}
+
+
+/**
+ * The player's live background (the web app's "storm in the fog"): two colours from the cover drift as big soft clouds with
+ * wisps passing through; they swell with the bass, and a hard hit flashes a light patch somewhere. Motion off: the blurred cover.
+ */
+@Composable
+fun Fog(s: Song, levels: FloatArray, playing: Boolean) {
+    val pal = remember(s.cover) { (if (s.cover.isNotEmpty()) Accents.pal(Store.coverFile(s.cover)) else null) ?: (Color(150, 110, 140) to Color(70, 70, 95)) }
+    val ca by animateColorAsState(pal.first, tween(1500), label = "fa"); val cb by animateColorAsState(pal.second, tween(1500), label = "fb")
+    var t by remember { mutableStateOf(0f) }
+    val st = remember { FloatArray(5) }       // bassS, avg, flash, fx, fy
+    LaunchedEffect(Unit) { val t0 = System.nanoTime(); while (true) { withFrameNanos { n -> t = (n - t0) / 1e9f } } }
+    Canvas(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }) {
+        val bass = if (playing && levels.isNotEmpty()) levels.take(4).average().toFloat() else 0f
+        st[0] += (bass - st[0]) * 0.25f
+        val spike = bass - st[1]; st[1] += (bass - st[1]) * 0.06f
+        if (playing && spike > 0.13f && bass > 0.42f && st[2] < 0.25f) { st[2] = minOf(1f, 0.55f + spike * 2.2f); st[3] = 0.15f + Math.random().toFloat() * 0.7f; st[4] = 0.08f + Math.random().toFloat() * 0.55f }
+        st[2] *= 0.9f
+        val e = if (playing) st[0] else 0f
+        val W = size.width; val H = size.height
+        drawRect(Color(ca.red * 0.1f + cb.red * 0.06f, ca.green * 0.1f + cb.green * 0.06f, ca.blue * 0.1f + cb.blue * 0.06f))
+        fun blob(x: Float, y: Float, r: Float, c: Color, al: Float) {
+            drawCircle(Brush.radialGradient(0f to c.copy(alpha = al.coerceIn(0f, 1f)), 0.55f to c.copy(alpha = (al * 0.45f).coerceIn(0f, 1f)), 1f to c.copy(alpha = 0f), center = Offset(x, y), radius = r), r, Offset(x, y), blendMode = androidx.compose.ui.graphics.BlendMode.Plus)
+        }
+        blob(W * (0.5f + 0.34f * kotlin.math.sin(t * 0.13f)), H * (0.28f + 0.12f * kotlin.math.sin(t * 0.17f + 1f)), W * (0.95f + 0.3f * e), ca, 0.34f + 0.46f * e)
+        blob(W * (0.5f + 0.36f * kotlin.math.cos(t * 0.11f + 2f)), H * (0.64f + 0.14f * kotlin.math.cos(t * 0.09f)), W * (1.0f + 0.25f * e), cb, 0.3f + 0.42f * e)
+        for (i in 0 until 3) {
+            val c = if (i % 2 == 1) ca else cb
+            blob(W * (0.5f + 0.5f * kotlin.math.sin(t * (0.21f + i * 0.07f) + i * 2.1f)), H * (0.5f + 0.42f * kotlin.math.sin(t * (0.15f + i * 0.05f) + i)), W * 0.45f, c, 0.07f + 0.08f * e)
+        }
+        if (st[2] > 0.02f) blob(W * st[3], H * st[4], W * (0.55f + 0.4f * st[2]), Color(minOf(1f, ca.red * 0.6f + 0.43f), minOf(1f, ca.green * 0.6f + 0.43f), minOf(1f, ca.blue * 0.6f + 0.43f)), st[2] * 0.5f)
+    }
+}
+
+/** the full-screen visualizer: soft accent bars over the bottom 58% of the player, fading out towards the top (#np .vizbg) */
+@Composable
+fun VizBg(levels: FloatArray, color: Color, modifier: Modifier) {
+    Canvas(modifier.graphicsLayer { alpha = 0.42f; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }) {
+        val n = levels.size.coerceAtLeast(1); val bw = size.width / n
+        for (i in 0 until n) {
+            val bh = maxOf(3f, levels[i] * size.height * 0.95f)
+            drawRoundRect(Brush.verticalGradient(listOf(color.copy(alpha = 0.75f), Color.White.copy(alpha = 0f)), startY = size.height - bh, endY = size.height),
+                Offset(i * bw + bw * 0.18f, size.height - bh), Size(bw * 0.64f, bh), CornerRadius(2.dp.toPx()))
+        }
+        // the mask: transparent at the top, solid from 45% down
+        drawRect(Brush.verticalGradient(0f to Color.Transparent, 0.45f to Color.Black), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+    }
+}
+
+
+/** the back of the cover: the song's details over its blurred, mirrored artwork (#np .face.back) */
+@Composable
+fun CoverBack(s: Song) {
+    val f = if (s.cover.isNotEmpty()) Store.coverFile(s.cover) else null
+    if (f != null && Build.VERSION.SDK_INT >= 31) AsyncImage(f, null, Modifier.fillMaxSize().scale(1.2f).graphicsLayer { scaleX = -1.2f }.blur(28.dp), contentScale = ContentScale.Crop,
+        colorFilter = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(1.5f) }.also { it.timesAssign(ColorMatrix(floatArrayOf(0.4f, 0f, 0f, 0f, 0f, 0f, 0.4f, 0f, 0f, 0f, 0f, 0f, 0.4f, 0f, 0f, 0f, 0f, 0f, 1f, 0f))) }))
+    val j = s.j
+    val al = Store.songs.value.count { it.album == s.album && s.album.isNotBlank() }
+    fun o(k: String) = j.optString(k).takeIf { it.isNotBlank() && it != "0" && it != "null" } ?: ""
+    val rows = listOf(
+        "Album" to s.album, "Album artist" to (if (s.albumartist.isNotBlank() && s.albumartist != s.artist) s.albumartist else ""),
+        "Track" to (if (s.track > 0) "${s.track}${if (al > 0) " of $al" else ""}" else ""), "Disc" to (if (s.disc > 0) "${s.disc}" else ""),
+        "Released" to s.year, "Genre" to s.genre, "Composer" to o("composer"), "Label" to o("label"), "Copyright" to o("copyright"), "ISRC" to o("isrc"), "BPM" to o("bpm"),
+        "Length" to (if (s.durMs > 0) fmt(s.durMs) else ""), "Format" to o("codec"), "File size" to (j.optLong("size").takeIf { it > 0 }?.let { fmtSize(it) } ?: ""),
+        "Added" to (j.optLong("added").takeIf { it > 0 }?.let { java.text.DateFormat.getDateInstance().format(java.util.Date(it)) } ?: ""),
+    ).filter { it.second.isNotBlank() }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp)) {
+        T(s.title, 19.sp, W800, lines = 3); T(s.artist, 13.5.sp, color = Color.White.copy(alpha = 0.75f), modifier = Modifier.padding(top = 2.dp, bottom = 14.dp))
+        rows.forEach { (k, v) ->
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+            Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                T(k, 13.5.sp, color = Color.White.copy(alpha = 0.6f)); T(v, 13.5.sp, align = TextAlign.End, lines = 4, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+
+/**
+ * Time-synced lyrics like the web app: the current line sits in the middle, and the list glides there on a quick, smooth
+ * spring (never jumps). Lines you've passed dim and blur away above it; the next ones wait below. Drag to look around (every
+ * line sharp, a tick per line); a moment after you let go it glides back to the song. Tap a line to jump there.
+ */
+@Composable
+private fun SyncedLyrics(lines: List<Online.Line>, cur: Int, onSeek: (Int) -> Unit) {
+    val a = accent
+    val n = lines.size
+    val scroll = remember { Animatable(cur.toFloat()) }
+    var browsing by remember { mutableStateOf(false) }
+    var lastDrag by remember { mutableStateOf(0L) }
+    val bf by animateFloatAsState(if (browsing) 1f else 0f, tween(260), label = "bf")
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(cur, browsing, lastDrag) {
+        if (browsing) { delay(2500); browsing = false; return@LaunchedEffect }
+        val far = kotlin.math.abs(cur - scroll.value) > 3
+        scroll.animateTo(cur.toFloat(), spring(1f, if (far) 55f else 150f))
+    }
+    var avgH by remember { mutableStateOf(100f) }
+    val blurOk = Build.VERSION.SDK_INT >= 31
+    val dens = LocalDensity.current.density
+    androidx.compose.ui.layout.Layout(content = {
+        lines.forEachIndexed { i, ln ->
+            Box(Modifier.fillMaxWidth()
+                .graphicsLayer {
+                    val dd = i - scroll.value
+                    val focus = (1f - kotlin.math.abs(dd)).coerceIn(0f, 1f)
+                    val dim = if (dd < 0) 0.3f else 0.42f
+                    val win = if (dd < 0) (1f - (-dd - 1.2f) / 2.4f).coerceIn(0f, 1f) else (1f - (dd - 3.5f) / 2.5f).coerceIn(0f, 1f)
+                    val aSong = (dim + (1f - dim) * focus) * win
+                    val aBrowse = if (i == cur) 1f else 0.55f
+                    alpha = aSong + (aBrowse - aSong) * bf
+                    val sc = 0.94f + 0.06f * focus; scaleX = sc; scaleY = sc; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                    val br = (if (dd < -0.15f) ((-dd - 0.15f) * 3.2f).coerceAtMost(7f) else if (dd > 1.5f) ((dd - 1.5f) * 1.2f).coerceAtMost(3f) else 0f) * (1f - bf)
+                    renderEffect = if (blurOk && br > 0.3f) androidx.compose.ui.graphics.BlurEffect(br * dens, br * dens, androidx.compose.ui.graphics.TileMode.Decal) else null
+                }
+                .drawBehind {
+                    if (i == cur) {
+                        val c = Offset(size.width * 0.4f, size.height / 2); val rx = size.width * 0.55f
+                        scale(1f, (size.height / 2 + 40f) / rx, c) { drawCircle(Brush.radialGradient(0f to a.copy(alpha = 0.4f), 0.55f to a.copy(alpha = 0.16f), 1f to Color.Transparent, center = c, radius = rx), rx, c) }
+                    }
+                }
+                .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.tick(); onSeek(i) }
+                .padding(horizontal = 4.dp, vertical = 9.dp)) {
+                T(ln.text.ifBlank { "♪" }, 27.sp, W800, Color.White, lines = 6, lh = 33.sp)
+            }
+        }
+    }, modifier = Modifier.fillMaxSize().clipToBounds().pointerInput(n) {
+        var lastLine = 0
+        detectVerticalDragGestures(onDragStart = { browsing = true; lastLine = scroll.value.roundToInt(); Hap.soft() }, onDragEnd = { lastDrag = System.currentTimeMillis() }, onDragCancel = { lastDrag = System.currentTimeMillis() }) { c, dy ->
+            c.consume(); browsing = true
+            val v = (scroll.value - dy / avgH).coerceIn(0f, (n - 1).toFloat())
+            scope.launch { scroll.snapTo(v) }
+            val ln = v.roundToInt(); if (ln != lastLine) { lastLine = ln; Hap.tick() }
+        }
+    }) { ms, c ->
+        val ps = ms.map { it.measure(c.copy(minHeight = 0, maxHeight = androidx.compose.ui.unit.Constraints.Infinity)) }
+        val H = c.maxHeight.toFloat()
+        val tops = FloatArray(ps.size); var acc = 0f
+        ps.forEachIndexed { i, p -> tops[i] = acc; acc += p.height }
+        if (ps.isNotEmpty()) avgH = (acc / ps.size).coerceAtLeast(1f)
+        layout(c.maxWidth, c.maxHeight) {
+            if (ps.isEmpty()) return@layout
+            val sv = scroll.value.coerceIn(0f, (ps.size - 1).toFloat())
+            val lo = sv.toInt(); val hi = minOf(ps.size - 1, lo + 1); val fr = sv - lo
+            fun anchor(k: Int) = H * 0.42f - ps[k].height / 2f - tops[k]
+            val shift = anchor(lo) + (anchor(hi) - anchor(lo)) * fr        // continuous: never jumps mid-move
+            ps.forEachIndexed { i, p -> val y = shift + tops[i]; if (y < H && y + p.height > 0) p.placeRelative(0, y.roundToInt()) }
         }
     }
 }

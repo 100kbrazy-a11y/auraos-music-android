@@ -2,6 +2,23 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.5.0",
+   "name": "The Fog Update",
+   "date": "2026-11-18",
+   "notes": [
+    "The player's live background is back: two colours from the cover drift as clouds that swell with the bass and flash on big hits",
+    "The full-screen visualizer is back behind the player, fading out towards the top",
+    "Skipping swings the cover off on a curve: it tilts and shrinks away while the next one swings in",
+    "Tap the album cover to turn it over and see the song's info",
+    "Lyrics: the current line sits in the middle, the list glides there smoothly, and passed lines dim and blur away above it. Drag to look around; it glides back after a moment",
+    "In lyrics, tap the small cover or the title to go back to the album cover",
+    "Held buttons keep a circle of liquid glass behind them, even while you drag them about",
+    "Switches glide after your finger and snap to a side like iOS",
+    "More haptics: opening pages, closing menus, skipping, scrolling through lyrics, switches",
+    "The media bar no longer has a visualizer"
+   ]
+  },
+  {
    "version": "2.4.1",
    "name": "The Lens Update",
    "date": "2026-11-18",

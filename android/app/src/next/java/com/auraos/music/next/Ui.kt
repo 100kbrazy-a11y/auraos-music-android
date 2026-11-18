@@ -6,6 +6,7 @@ import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -47,6 +48,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.composed
@@ -96,7 +98,7 @@ sealed class Page {
 object Nav {
     val stack = mutableStateListOf<Page>()
     val tab = mutableStateOf(0)
-    fun open(p: Page) { stack.add(p) }
+    fun open(p: Page) { Hap.tap(); stack.add(p) }
     fun back(): Boolean { if (stack.isEmpty()) return false; stack.removeAt(stack.size - 1); return true }
 }
 object Sel { val ids = mutableStateListOf<String>(); fun toggle(id: String) { if (id in ids) ids.remove(id) else ids.add(id) } }
@@ -107,7 +109,7 @@ object Dialogs {
     val isSheet = mutableStateOf(true)
     fun show(d: @Composable () -> Unit) { Hap.soft(); isSheet.value = false; cur.value = d }
     fun sheet(d: @Composable () -> Unit) { Hap.tap(); isSheet.value = true; cur.value = d }
-    fun close() { cur.value = null }
+    fun close() { if (cur.value != null) Hap.soft(); cur.value = null }
 }
 
 @Composable
@@ -172,15 +174,35 @@ fun Modifier.press(scaleTo: Float = 0.95f, onLong: (() -> Unit)? = null, onDoubl
 }
 
 // ------------------------------------------------------------------ building blocks
+/**
+ * a round icon button. While your finger is on it a circle stays behind it (even as you drag it about) — a little pane of
+ * liquid glass — and the button leans after your finger.
+ */
 @Composable
 fun IB(ic: Ic, tint: Color = C.text, size: Dp = 24.dp, box: Dp = 44.dp, on: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
-    val p by src.collectIsPressedAsState()
-    val s by animateFloatAsState(if (p) 0.92f else 1f, tween(150), label = "ib")
-    Box(modifier.rubber(4.dp).size(box).scale(s).clip(CircleShape).background(if (p) Color.White.copy(alpha = 0.1f) else Color.Transparent).clickable(src, null) { if (ic == Ic.Back) Hap.soft() else Hap.tap(); onClick() }, contentAlignment = Alignment.Center) {
-        Icon(ic, size = size, tint = if (on) accent else tint)
+    var held by remember { mutableStateOf(false) }
+    val s by animateFloatAsState(if (held) 0.92f else 1f, spring(0.5f, 600f), label = "ib")
+    val ring by animateFloatAsState(if (held) 1f else 0f, tween(if (held) 90 else 260), label = "ibr")
+    val id = remember { "ib" + (++ibN) }
+    val glass = Prefs.liquid.collectAsState().value && !NpState.open.value
+    Box(modifier.pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Final); held = true
+            while (true) { val ev = awaitPointerEvent(PointerEventPass.Final); val ch = ev.changes.firstOrNull { it.id == down.id } ?: break; if (!ch.pressed || (ch.isConsumed && ch.positionChanged())) break }
+            held = false
+        }
+    }.rubber(5.dp).size(box).scale(s), contentAlignment = Alignment.Center) {
+        if (ring > 0.01f) {
+            if (glass) Box(Modifier.matchParentSize().liquid(id, box / 2, Color.White.copy(alpha = 0.10f), z = 11, alpha = ring))
+            else Box(Modifier.matchParentSize().graphicsLayer { alpha = ring }.clip(CircleShape).background(Color.White.copy(alpha = 0.14f)))
+        }
+        Box(Modifier.matchParentSize().clip(CircleShape).clickable(src, null) { if (ic == Ic.Back) Hap.soft() else Hap.tap(); onClick() }, contentAlignment = Alignment.Center) {
+            Icon(ic, size = size, tint = if (on) accent else tint)
+        }
     }
 }
+private var ibN = 0
 
 /** true inside the bottom layer (the library and pages, what the glass looks through) */
 val LocalBgLayer = staticCompositionLocalOf { false }
@@ -303,11 +325,11 @@ fun Switch(on: Boolean, onChange: (Boolean) -> Unit) {
     val kw = 24.dp + 14.dp * grow; val kh = 24.dp + 6.dp * grow
     val travel = with(d) { (52.dp - 8.dp - kw).toPx() }
     val p = pos.value.coerceIn(0f, 1f)
-    val track = androidx.compose.ui.graphics.lerp(C.surface3, a, p)
+    val track by animateColorAsState(if (p > 0.5f) a else C.surface3, tween(180), label = "swt")
     Box(Modifier.size(52.dp, 32.dp).pointerInput(Unit) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
-            held = true; Hap.soft()
+            held = true; Hap.tick()
             val start = pos.value; var moved = false; var gaveUp = false
             val full = (52.dp - 8.dp - 38.dp).toPx()
             var side = start > 0.5f
@@ -320,16 +342,19 @@ fun Switch(on: Boolean, onChange: (Boolean) -> Unit) {
                 if (!moved && kotlin.math.abs(dx) > viewConfiguration.touchSlop / 2) moved = true
                 if (moved) {
                     ch.consume()
-                    val v = (start + dx / full).coerceIn(-0.12f, 1.12f)
-                    scope.launch { pos.snapTo(v) }
-                    val now = v > 0.5f; if (now != side) { side = now; Hap.tick() }
+                    var v = start + dx / full
+                    v = when { v < 0f -> v * 0.25f; v > 1f -> 1f + (v - 1f) * 0.25f; else -> v }      // resists past the ends
+                    // the handle glides after your finger, and is pulled towards whichever side it's nearer (the iOS snap)
+                    val pull = if (v > 0.5f) (1f - v) * 0.18f else -v * 0.18f
+                    scope.launch { pos.animateTo(v + pull, spring(0.85f, 1400f)) }
+                    val now = v > 0.5f; if (now != side) { side = now; Hap.press() }
                 }
             }
             held = false
             if (gaveUp) { scope.launch { pos.animateTo(if (onS) 1f else 0f, spring(0.62f, 480f)) }; return@awaitEachGesture }
             val next = if (moved) pos.value > 0.5f else !onS
-            scope.launch { pos.animateTo(if (next) 1f else 0f, spring(0.62f, 480f)) }
-            if (next != onS) { Hap.tick(); change(next) }
+            scope.launch { pos.animateTo(if (next) 1f else 0f, spring(0.55f, 700f)) }
+            if (next != onS) { Hap.thud(); change(next) } else Hap.tick()
         }
     }) {
         Box(Modifier.matchParentSize().clip(RoundedCornerShape(16.dp)).background(track)

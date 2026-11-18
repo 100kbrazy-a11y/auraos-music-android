@@ -39,7 +39,24 @@ object Accents {
         val c = try { compute(f) } catch (_: Throwable) { null } ?: return null
         cache[f.path] = c; return c
     }
-    fun forget() { cache.clear() }
+    fun forget() { cache.clear(); pals.clear() }
+    private val pals = ConcurrentHashMap<String, Pair<Color, Color>>()
+    /** the fog's two colours: the average colour of the cover's top half and of its bottom half */
+    fun pal(f: File?): Pair<Color, Color>? {
+        if (f == null || !f.exists()) return null
+        pals[f.path]?.let { return it }
+        val p = try {
+            val b0 = BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = 8 }) ?: return null
+            val n = 24; val b = android.graphics.Bitmap.createScaledBitmap(b0, n, n, true)
+            fun avg(y0: Int, y1: Int): Color { var r = 0.0; var g = 0.0; var bl = 0.0; var t = 0.0
+                for (y in y0 until y1) for (x in 0 until n) { val px = b.getPixel(x, y); val rr = ((px shr 16) and 255) / 255.0; val gg = ((px shr 8) and 255) / 255.0; val bb = (px and 255) / 255.0
+                    val mx = max(rr, max(gg, bb)); val mn = min(rr, min(gg, bb)); val wt = 0.15 + (if (mx > 0) (mx - mn) / mx else 0.0) * mx
+                    r += rr * wt; g += gg * wt; bl += bb * wt; t += wt }
+                return Color((r / t).toFloat(), (g / t).toFloat(), (bl / t).toFloat()) }
+            val res = avg(0, n / 2) to avg(n / 2, n); b.recycle(); b0.recycle(); res
+        } catch (_: Throwable) { null } ?: return null
+        pals[f.path] = p; return p
+    }
     private fun compute(f: File): Color? {
         val b0 = BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = 8 }) ?: return null
         val n = 40; val b = android.graphics.Bitmap.createScaledBitmap(b0, n, n, true)
