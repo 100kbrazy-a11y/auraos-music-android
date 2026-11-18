@@ -68,7 +68,7 @@ object Covers {
             return if (t.startsWith("[")) JSONArray(t) else JSONObject(t)
         } catch (e: Exception) {
             val m = e.message ?: ""
-            if (i == 0 && (m.contains("429") || m.contains("403") || m.contains("5") && m.startsWith("HTTP 5"))) delay(900) else if (i == 1) throw e else if (!m.startsWith("HTTP")) throw e else return null
+            if (i == 0 && (m.contains("429") || m.contains("403") || m.contains("5") && m.startsWith("HTTP 5"))) Thread.sleep(900) else if (i == 1) throw e else if (!m.startsWith("HTTP")) throw e else return null
         }
         return null
     }
