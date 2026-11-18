@@ -135,23 +135,29 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
     val tint = mix(a, 0.10f, Color(0xFF1A1A20)).copy(alpha = 0.40f)
     val r = 26.dp
     // the corners ease (never snap) between "one bubble" and "tabs on their own"
-    val join by animateDpAsState(if (cur != null && (!away || landing)) 0.dp else r, tween(260, easing = FastOutSlowInEasing), label = "join")
+    val joinBase by animateDpAsState(if (cur != null && (!away || landing)) 0.dp else r, tween(260, easing = FastOutSlowInEasing), label = "join")
+    // the tug: only the media bar lifts (resisting), the tabs stay put, so a gap opens between them and their corners round off
+    val tugPx = Morph.tug.value
+    val sep = smooth(0.12f, 0.7f, (tugPx / with(LocalDensity.current) { 20.dp.toPx() }).coerceIn(0f, 1f))
+    val join = maxOf(joinBase, r * sep)
+    val miniBottom = r * sep
     val dockA = if (Morph.closing) 1f - smooth(Morph.fDock, Morph.fDock + 0.3f, fv) else 1f - smooth(0.05f, 0.45f, fv)
     val sheetUp = Dialogs.cur.value != null && Dialogs.isSheet.value
     val fade by animateFloatAsState(if (sheetUp) 0f else 1f, tween(200), label = "dockfade")
     Column(Modifier.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp).fillMaxWidth()
-        .offset { IntOffset(0, -Morph.tug.value.roundToInt()) }                      // the whole dock gives a little as you tug
         .graphicsLayer { alpha = fade * dockA }) {
         if (cur != null) {
             val miniA = if (away) 0f else 1f
             Box(Modifier.fillMaxWidth().height(62.dp)
-                .liquid("dock-mini", r, tint, z = 1, alpha = miniA * fade, corners = listOf(r, r, 0.dp, 0.dp))
-                .graphicsLayer { alpha = miniA }.clip(RoundedCornerShape(topStart = r, topEnd = r))) {
+                .offset { IntOffset(0, -Morph.tug.value.roundToInt()) }                  // the bar resists upward, away from the tabs
+                .liquid("dock-mini", r, tint, z = 1, alpha = miniA * fade, corners = listOf(r, r, miniBottom, miniBottom))
+                .graphicsLayer { alpha = miniA }.clip(RoundedCornerShape(topStart = r, topEnd = r, bottomStart = miniBottom, bottomEnd = miniBottom))) {
                 MiniBar(cur, st, onOpen)
-                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.07f)))
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.07f * (1f - sep))))
             }
         }
         Box(Modifier.fillMaxWidth()
+            .offset { IntOffset(0, (Morph.tug.value * 0.12f).roundToInt()) }              // the tabs give just a touch
             .liquid("dock-tabs", r, tint, z = 1, alpha = fade * dockA, corners = listOf(join, join, r, r))
             .clip(RoundedCornerShape(topStart = join, topEnd = join, bottomStart = r, bottomEnd = r))) {
             Tabs(tab, onTab)
@@ -483,9 +489,9 @@ private fun Tabs(tab: Int, onTab: (Int) -> Unit) {
                     val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
                     if (!ch.pressed) break
                     if (!dragging && kotlin.math.abs(ch.position.x - down.position.x) > viewConfiguration.touchSlop) dragging = true
-                    if (dragging) { ch.consume(); val before = drag?.let { ((it + cellS / 2) / cellS).toInt() }; drag = (ch.position.x - cellS / 2).coerceIn(-cellS * 0.15f, cellS * (n - 1 + 0.15f)); val now = ((drag!! + cellS / 2) / cellS).toInt().coerceIn(0, n - 1); if (before != null && before.coerceIn(0, n - 1) != now) Hap.tick() else if (before == null) Hap.press() }
+                    if (dragging) { ch.consume(); val before = drag?.let { ((it + cellS / 2) / cellS).toInt() }; drag = (ch.position.x - cellS / 2).coerceIn(-cellS * 0.15f, cellS * (n - 1 + 0.15f)); val now = ((drag!! + cellS / 2) / cellS).toInt().coerceIn(0, n - 1); if (before != null && before.coerceIn(0, n - 1) != now) Hap.tap() else if (before == null) Hap.press() }
                 }
-                if (dragging) { val i = (((drag ?: tabS * cellS) + cellS / 2) / cellS).toInt().coerceIn(0, n - 1); drag = null; onTabS(i) }
+                if (dragging) { val i = (((drag ?: tabS * cellS) + cellS / 2) / cellS).toInt().coerceIn(0, n - 1); drag = null; Hap.thud(); onTabS(i) }
             }
         }) {
         if (cell > 0) Box(Modifier.offset { IntOffset(bubble.left.roundToInt(), bubble.top.roundToInt()) }.size(with(d) { bubble.width.toDp() }, with(d) { bubble.height.toDp() })

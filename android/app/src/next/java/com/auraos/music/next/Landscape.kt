@@ -153,10 +153,10 @@ private fun VTabs(tab: Int, onTab: (Int) -> Unit, itemH: Dp, n: Int) {
                     ch.consume()
                     val before = drag?.let { ((it + cellS / 2) / cellS).toInt().coerceIn(0, n - 1) }
                     drag = (ch.position.y - top0 - cellS / 2).coerceIn(-cellS * 0.15f, cellS * (n - 1 + 0.15f))
-                    val now = ((drag!! + cellS / 2) / cellS).toInt().coerceIn(0, n - 1); if (before != null && before != now) Hap.tick()
+                    val now = ((drag!! + cellS / 2) / cellS).toInt().coerceIn(0, n - 1); if (before != null && before != now) Hap.tap()
                 }
             }
-            if (dragging) { val i = (((drag ?: tabS * cellS) + cellS / 2) / cellS).toInt().coerceIn(0, n - 1); drag = null; onTabS(i) }
+            if (dragging) { val i = (((drag ?: tabS * cellS) + cellS / 2) / cellS).toInt().coerceIn(0, n - 1); drag = null; Hap.thud(); onTabS(i) }
         }
     }) {
         val bw = with(d) { 60.dp.toPx() } * (1f + 0.1f * grow); val bh = with(d) { itemH.toPx() } * (1f + 0.14f * grow)
