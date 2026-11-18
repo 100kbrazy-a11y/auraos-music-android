@@ -110,7 +110,8 @@ object Dialogs {
 fun SheetHost() {
     val d = Dialogs.cur.value
     AnimatedVisibility(d != null, enter = fadeIn(tween(200)), exit = fadeOut(tween(200))) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)).clickable(remember { MutableInteractionSource() }, null) { Dialogs.close() })
+        // the dimming sits under the glass (so the menu's glass isn't dimmed); over the open player it's drawn here instead
+        Box(Modifier.fillMaxSize().then(if (NpState.open.value) Modifier.background(Color.Black.copy(alpha = 0.5f)) else Modifier.liquid("scrim", 0.dp, Color.Black, z = 7, alpha = 0.5f, scrim = true)).clickable(remember { MutableInteractionSource() }, null) { Dialogs.close() })
     }
     if (d != null) BackHandler { Dialogs.close() }
     val sheet = Dialogs.isSheet.value
@@ -134,8 +135,8 @@ fun SheetHost() {
         }
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
             Column(Modifier.fillMaxWidth().fillMaxHeight(0.86f).wrapContentHeight(Alignment.Bottom).offset { IntOffset(0, off.value.roundToInt()) }
-                .liquid("sheet", 28.dp, C.surface.copy(alpha = 0.55f), z = 6, on = !NpState.open.value, corners = listOf(28.dp, 28.dp, 0.dp, 0.dp))
-                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(if (NpState.open.value) C.surface else C.surface.copy(alpha = 0.84f)).clickable(remember { MutableInteractionSource() }, null) { }
+                .liquid("sheet", 28.dp, C.surface.copy(alpha = 0.42f), z = 8, on = !NpState.open.value, corners = listOf(28.dp, 28.dp, 0.dp, 0.dp))
+                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).then(if (NpState.open.value) Modifier.background(C.surface) else Modifier).clickable(remember { MutableInteractionSource() }, null) { }
                 .nestedScroll(conn)
                 .draggable(rememberDraggableState { d -> scope.launch { off.snapTo((off.value + d).coerceAtLeast(0f)) } }, Orientation.Vertical, onDragStopped = { v -> settle(v) })
                 .navigationBarsPadding().imePadding().padding(top = 8.dp, bottom = 14.dp)) {
@@ -148,7 +149,7 @@ fun SheetHost() {
     }
     AnimatedVisibility(d != null && !sheet, enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.94f), exit = fadeOut(tween(150))) {
         Box(Modifier.fillMaxSize().imePadding(), contentAlignment = Alignment.Center) {
-            Column(Modifier.padding(horizontal = 20.dp).fillMaxWidth().liquid("dialog", 28.dp, C.surface.copy(alpha = 0.6f), z = 7, on = !NpState.open.value).clip(RoundedCornerShape(28.dp)).background(if (NpState.open.value) C.surface else C.surface.copy(alpha = 0.66f)).clickable(remember { MutableInteractionSource() }, null) { }.padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 14.dp)) {
+            Column(Modifier.padding(horizontal = 20.dp).fillMaxWidth().liquid("dialog", 28.dp, C.surface.copy(alpha = 0.45f), z = 9, on = !NpState.open.value).clip(RoundedCornerShape(28.dp)).then(if (NpState.open.value) Modifier.background(C.surface) else Modifier).clickable(remember { MutableInteractionSource() }, null) { }.padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 14.dp)) {
                 Dialogs.cur.value?.invoke()
             }
         }
@@ -196,7 +197,7 @@ fun Modifier.graphicsScale(s: Float): Modifier = this.graphicsLayer { scaleX = s
 /** the glass pill of tool buttons at the top right: search, filter, settings */
 @Composable
 fun Tools(filter: (() -> Unit)? = null) {
-    Row(Modifier.liquid("tools", 22.dp, Color(0x332A272E), z = 2).clip(RoundedCornerShape(22.dp)).background(Color(0xFF2A272E).copy(alpha = 0.30f)).border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(22.dp)).padding(horizontal = 2.dp)) {
+    Row(Modifier.liquid("tools", 22.dp, Color(0xFF2A272E).copy(alpha = 0.35f), z = 2).clip(RoundedCornerShape(22.dp)).padding(horizontal = 2.dp)) {
         IB(Ic.Search, box = 42.dp) { Nav.open(Page.Search) }
         IB(Ic.Filter, box = 42.dp, on = Filt.active()) { if (filter != null) filter() else Dialogs.sheet { FilterSheet() } }
         IB(Ic.Gear, box = 42.dp) { Nav.open(Page.Settings) }
@@ -591,7 +592,7 @@ fun SelectionBar() {
     val by = songs.associateBy { it.id }
     val list = Sel.ids.mapNotNull { by[it] }
     val a = accent
-    Row(Modifier.fillMaxWidth().shadow(20.dp).liquid("selbar", 0.dp, mix(a, 0.22f, C.surface).copy(alpha = 0.5f), z = 5).background(mix(a, 0.22f, C.surface).copy(alpha = 0.45f)).statusBarsPadding().height(60.dp).padding(start = 4.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+    Row(Modifier.fillMaxWidth().shadow(20.dp).liquid("selbar", 0.dp, mix(a, 0.22f, C.surface).copy(alpha = 0.45f), z = 5).statusBarsPadding().height(60.dp).padding(start = 4.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         IB(Ic.Close) { Sel.ids.clear() }
         T("${list.size} selected", 17.sp, W750, modifier = Modifier.weight(1f).padding(start = 4.dp))
         IB(Ic.HeartFill.takeIf { list.all { Store.isFav(it.id) } } ?: Ic.Heart) { Store.setFav(list.map { it.id }); Sel.ids.clear() }

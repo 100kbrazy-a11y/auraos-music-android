@@ -125,6 +125,7 @@ fun SettingsPage() {
                     val tuck by Prefs.tuck.collectAsState(); val timer by Prefs.scrollTimer.collectAsState()
                     var openTimer by remember { mutableStateOf(false) }
                     SwitchItem(Ic.Spark, "Liquid Glass", if (liquid) "Real glass on every clear control: it bends the music behind it, splits light at the edges and catches the light as you tilt" else "Off · classic frosted blur", liquid) { Prefs.setLiquid(it) }
+                    Item(Ic.Eq, "Glass", "Thickness, bend, colour split, frost, opacity, tilt shine", chevron = true, onClick = { Dialogs.sheet { GlassSheet() } })
                     SwitchItem(Ic.Spark, "Motion Effects", "Sliding pages, glow, living background", motion) { Prefs.setMotion(it) }
                     SwitchItem(Ic.Spark, "Save Battery Automatically", "Pause the moving background in Battery Saver or below 20%", saver) { Prefs.setAutoSaver(it) }
                     SwitchItem(Ic.Folder, "Keep Media Bar Tucked", "Sideways: just the album cover, tucked under the tabs", tuck) { Prefs.setTuck(it) }
@@ -224,6 +225,37 @@ fun UpdatesGroup() {
                     for (n in r.notes) Row(Modifier.padding(top = 4.dp)) { T("•", 14.sp, W700, C.sub, modifier = Modifier.width(16.dp)); T(n, 14.sp, color = C.sub, lines = 4) }
                 }
             }
+        }
+    }
+}
+
+
+/** Settings › Look & Feel › Glass: every pane of glass in the app changes live while you drag (this sheet is glass too) */
+@Composable
+fun GlassSheet() {
+    val thick by Prefs.glassThick.collectAsState(); val bend by Prefs.glassBend.collectAsState(); val split by Prefs.glassSplit.collectAsState()
+    val frost by Prefs.glassFrost.collectAsState(); val opacity by Prefs.glassOpacity.collectAsState(); val shine by Prefs.glassShine.collectAsState()
+    val liquid by Prefs.liquid.collectAsState()
+    SheetScroll {
+        Row(Modifier.padding(start = 24.dp, end = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Ic.Eq, tint = accent); Spacer(Modifier.width(12.dp)); T("Glass", 22.sp, W700, modifier = Modifier.weight(1f))
+            TextBtn("Reset") { Hap.soft(); Prefs.setGlass(24f, 0.6f, 0.16f, 0.25f, 0.5f, true) }
+        }
+        if (!liquid) T("Liquid Glass is off: only Frost and Opacity apply (classic frosted blur).", 13.sp, color = C.sub, lines = 2, modifier = Modifier.padding(horizontal = 24.dp))
+        @Composable fun row(title: String, sub: String, value: String, v: Float, range: ClosedFloatingPointRange<Float>, step: Float, set: (Float) -> Unit) {
+            Column(Modifier.padding(horizontal = 24.dp, vertical = 6.dp)) {
+                Row { Column(Modifier.weight(1f)) { T(title, 15.sp, W650); T(sub, 13.sp, color = C.sub, lines = 2) }; T(value, 15.sp, W700, accent) }
+                Slide(v, range, step, set)
+            }
+        }
+        row("Thickness", "How thick the glass rim is — thicker glass bends more of the edge", "${thick.toInt()} dp", thick, 4f..60f, 1f) { Prefs.setGlass(thick = it) }
+        row("Bend", "How strongly the glass refracts what's behind it", "${(bend * 100).toInt()}%", bend, 0f..1f, 0.05f) { Prefs.setGlass(bend = it) }
+        row("Colour Split", "How much white light splits into red, green and blue at the edges", "${(split * 100).toInt()}%", split, 0f..0.5f, 0.02f) { Prefs.setGlass(split = it) }
+        row("Frost", "How blurred the glass is", "${(frost * 100).toInt()}%", frost, 0f..1f, 0.05f) { Prefs.setGlass(frost = it) }
+        row("Opacity", "How dark (and easy to read) the glass is", "${(opacity * 100).toInt()}%", opacity, 0f..1f, 0.05f) { Prefs.setGlass(opacity = it) }
+        Row(Modifier.fillMaxWidth().clickable { Hap.tick(); Prefs.setGlass(shine = !shine) }.padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) { T("Tilt Shine", 15.sp, W650); T("The highlight moves as you tilt your phone", 13.sp, color = C.sub) }
+            Switch(shine) { Prefs.setGlass(shine = it) }
         }
     }
 }

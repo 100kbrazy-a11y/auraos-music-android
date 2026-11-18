@@ -53,6 +53,16 @@ object Hap {
         } catch (_: Throwable) { }
     }
 
+    /** the tugging buzz while you pull the media bar: [k] 0..1 grows the strength */
+    fun tug(k: Float) {
+        val v = vib ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= 30 && v.areAllPrimitivesSupported(VibrationEffect.Composition.PRIMITIVE_TICK))
+                v.vibrate(VibrationEffect.startComposition().addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, (0.15f + 0.85f * k).coerceIn(0f, 1f)).compose())
+            else if (Build.VERSION.SDK_INT >= 26) v.vibrate(VibrationEffect.createOneShot(6L + (10 * k).toLong(), (40 + 200 * k).toInt().coerceIn(1, 255)))
+        } catch (_: Throwable) { }
+    }
+
     /** like main.js snack(): messages that sound like a failure buzz "error", ones that sound like a success buzz "success" */
     fun forMessage(m: String) {
         val l = m.lowercase()

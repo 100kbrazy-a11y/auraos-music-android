@@ -116,8 +116,8 @@ fun BgApp() {
     val pager = rememberPagerState(initialPage = Nav.tab.value) { 4 }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { Pager.animateTo = { i -> scope.launch { pager.animateScrollToPage(i) } } }
-    LaunchedEffect(Nav.tab.value) { if (pager.currentPage != Nav.tab.value) pager.animateScrollToPage(Nav.tab.value) }
-    LaunchedEffect(pager.settledPage) { if (Nav.tab.value != pager.settledPage) { Nav.tab.value = pager.settledPage; Hap.tick() } }   // only where it lands
+    LaunchedEffect(Nav.tab.value) { if (pager.currentPage != Nav.tab.value || pager.currentPageOffsetFraction != 0f) pager.animateScrollToPage(Nav.tab.value) }
+    LaunchedEffect(pager.settledPage, pager.isScrollInProgress) { if (!pager.isScrollInProgress && Nav.tab.value != pager.settledPage) { Nav.tab.value = pager.settledPage; Hap.tick() } }   // only where a swipe lands
     Box(Modifier.fillMaxSize().background(C.bg)) {
         Aurora(motion && !saving)
         HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
@@ -157,7 +157,7 @@ fun FgApp() {
     val cur = q.getOrNull(st.index)?.let { s -> songs.firstOrNull { it.id == s.id } ?: s }
     val acc = accent
     val liquid by Prefs.liquid.collectAsState()
-    LaunchedEffect(liquid) { snapshotFlow { Liquid.specs.toMap() }.collect { Liquid.sync(ctx, it, liquid) } }
+    LaunchedEffect(Unit) { while (true) { withFrameNanos { }; Liquid.frame(ctx) } }
     val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) { if (Build.VERSION.SDK_INT >= 33) askNotif.launch(Manifest.permission.POST_NOTIFICATIONS) }
     LaunchedEffect(Unit) { Toasts.flow.collect { Snack.text.value = it; Hap.forMessage(it) } }
@@ -207,20 +207,20 @@ fun FgApp() {
         }
         AnimatedVisibility(Sel.ids.isNotEmpty(), enter = slideInVertically { -it }, exit = slideOutVertically { -it }) { SelectionBar() }
         Column(Modifier.align(Alignment.BottomCenter)) {
-            if (busy.isNotEmpty()) Box(Modifier.padding(horizontal = 24.dp, vertical = 4.dp).align(Alignment.CenterHorizontally).liquid("busy", 14.dp, C.surface2.copy(alpha = 0.5f), z = 4).clip(RoundedCornerShape(14.dp)).background(C.surface2.copy(alpha = 0.35f)).padding(horizontal = 14.dp, vertical = 8.dp)) { T(busy, 13.sp, W650) }
+            if (busy.isNotEmpty()) Box(Modifier.padding(horizontal = 24.dp, vertical = 4.dp).align(Alignment.CenterHorizontally).liquid("busy", 14.dp, C.surface2.copy(alpha = 0.4f), z = 4).clip(RoundedCornerShape(14.dp)).padding(horizontal = 14.dp, vertical = 8.dp)) { T(busy, 13.sp, W650) }
             AnimatedVisibility(Snack.text.value != null, enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut()) {
                 Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    Box(Modifier.liquid("snack", 14.dp, Color(0x99ECECF0), z = 4).clip(RoundedCornerShape(14.dp)).background(Color(0xFFECECF0).copy(alpha = 0.55f)).heightIn(min = 48.dp).padding(horizontal = 18.dp, vertical = 12.dp), contentAlignment = Alignment.CenterStart) {
+                    Box(Modifier.liquid("snack", 14.dp, Color(0xFFECECF0).copy(alpha = 0.42f), z = 4).clip(RoundedCornerShape(14.dp)).heightIn(min = 48.dp).padding(horizontal = 18.dp, vertical = 12.dp), contentAlignment = Alignment.CenterStart) {
                         T(Snack.text.value ?: "", 15.sp, W550, Color(0xFF19191D), lines = 3)
                     }
                 }
             }
             AnimatedVisibility(Nav.stack.lastOrNull() != Page.Settings, enter = slideInVertically { it }, exit = slideOutVertically { it }) {   // the bottom bar steps away in Settings
-                Dock(cur, Nav.tab.value, { i -> Hap.tick(); Nav.stack.clear(); Nav.tab.value = i; Pager.animateTo?.invoke(i) }) { full = true }
+                Dock(cur, Nav.tab.value, { i -> Hap.tick(); Nav.stack.clear(); Nav.tab.value = i }) { full = true }
             }
         }
-        if (cur != null && Morph.lift.value > 0.5f && Morph.f.value <= 0.001f) FloatingMini(cur)
         if (cur != null && Morph.f.value > 0.001f) PlayerPanel(cur) { full = false }
+        if (cur != null && (Morph.carrying || (Morph.f.value > 0.001f && Morph.f.value < 0.5f))) FloatingMini(cur)
         SheetHost()
     }
 }

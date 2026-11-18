@@ -5,10 +5,6 @@ import android.view.View
 import android.widget.FrameLayout
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -21,35 +17,46 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import com.example.liquidglass.GlassMaterial
 import com.example.liquidglass.LiquidGlassView
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
 /**
- * Liquid glass from QWEA0/Liquid-Glass-Android under every clear element.
+ * Liquid glass from QWEA0/Liquid-Glass-Android under every floating control.
  *
- * The screen is three layers: the library and pages (bottom, a ComposeView), the glass (middle, real LiquidGlassViews), and
- * the controls (top, a ComposeView: tab headers, the dock, menus, the player). Anything on the top layer marked with
- * Modifier.liquid(id) gets a pane of glass under it, kept the same size and place; the glass reads only the bottom layer,
- * so it refracts the music behind it, never the controls on it.
+ * The screen is three layers: the library and pages (bottom ComposeView), the glass (real LiquidGlassViews), and the controls
+ * (top ComposeView). A control marked Modifier.liquid(id) IS a pane of glass: the pane is moved and resized to the control on
+ * every frame (so it can never lag or stay behind), and the control draws no background of its own, only its content. The glass
+ * reads only the bottom layer, so it bends the music behind it, never the controls on it.
  *
- * Liquid Glass on (Settings › Look & Feel): the library's lens (SDF refraction, dispersion, tilt-driven highlight).
- * Off: the same view as plain frosted glass (blur only).
+ * Settings › Look & Feel › Glass: thickness, bend, colour split, frost, opacity and the tilt shine. Liquid Glass off = the same
+ * panes as plain frosted glass.
  */
-/** tl, tr, br, bl corner radii in px; scrim = a plain dark layer (dims the glass below it too, never the glass above) */
-class GlassSpec(val rect: Rect, val radii: FloatArray, val tint: Int, val z: Int, val alpha: Float, val scrim: Boolean = false)
+class GlassStyle(val radii: FloatArray, val tint: Color, val z: Int, val alpha: Float, val scrim: Boolean)
 
 object Liquid {
-    val specs = mutableStateMapOf<String, GlassSpec>()
+    /** how each pane looks (changes rarely) */
+    val styles = mutableStateMapOf<String, GlassStyle>()
+    /** where each pane is (changes every frame while things move; not snapshot state, so it costs no recomposition) */
+    val rects = ConcurrentHashMap<String, Rect>()
     private var host: FrameLayout? = null
     private var source: View? = null
     private val views = HashMap<String, View>()
+    private val applied = HashMap<String, String>()
     private var order = ""
+    var density = 2.625f
 
-    fun attach(h: FrameLayout, src: View) { host = h; source = src }
+    fun attach(h: FrameLayout, src: View) { host = h; source = src; density = h.resources.displayMetrics.density }
 
-    fun sync(ctx: Context, all: Map<String, GlassSpec>, liquid: Boolean) {
+    /** called once per frame by the controls layer */
+    fun frame(ctx: Context) {
         val h = host ?: return
-        for (id in views.keys.toList()) if (id !in all) { h.removeView(views[id]); views.remove(id) }
+        val all = styles.toMap()
+        for (id in views.keys.toList()) if (id !in all) { h.removeView(views[id]); views.remove(id); applied.remove(id) }
+        val liquid = Prefs.liquid.value
+        val thick = Prefs.glassThick.value; val bend = Prefs.glassBend.value; val split = Prefs.glassSplit.value
+        val frost = Prefs.glassFrost.value; val opacity = Prefs.glassOpacity.value; val shine = Prefs.glassShine.value
         for ((id, s) in all) {
+            val r = rects[id] ?: continue
             val v = views.getOrPut(id) {
                 (if (s.scrim) View(ctx).also { it.setBackgroundColor(android.graphics.Color.BLACK) } else LiquidGlassView(ctx).also { g ->
                     g.backdropSource = source; g.enableDynamicBackground = true
@@ -58,33 +65,45 @@ object Liquid {
                     h.addView(g, FrameLayout.LayoutParams(1, 1))
                 }
             }
-            val w = s.rect.width.roundToInt().coerceAtLeast(1); val ht = s.rect.height.roundToInt().coerceAtLeast(1)
+            val w = r.width.roundToInt().coerceAtLeast(1); val ht = r.height.roundToInt().coerceAtLeast(1)
             val lp = v.layoutParams as FrameLayout.LayoutParams
             if (lp.width != w || lp.height != ht) { lp.width = w; lp.height = ht; v.layoutParams = lp }
-            v.translationX = s.rect.left; v.translationY = s.rect.top
-            v.alpha = s.alpha; v.visibility = if (s.alpha <= 0.01f || s.rect.isEmpty) View.INVISIBLE else View.VISIBLE
+            if (v.translationX != r.left) v.translationX = r.left
+            if (v.translationY != r.top) v.translationY = r.top
+            val vis = if (s.alpha <= 0.01f || r.isEmpty) View.INVISIBLE else View.VISIBLE
+            if (v.visibility != vis) v.visibility = vis
+            if (v.alpha != s.alpha) v.alpha = s.alpha
             val g = v as? LiquidGlassView ?: continue
-            if (g.cornerRadiusTopLeft != s.radii[0] || g.cornerRadiusTopRight != s.radii[1] || g.cornerRadiusBottomRight != s.radii[2] || g.cornerRadiusBottomLeft != s.radii[3]) {
-                g.cornerRadiusTopLeft = s.radii[0]; g.cornerRadiusTopRight = s.radii[1]; g.cornerRadiusBottomRight = s.radii[2]; g.cornerRadiusBottomLeft = s.radii[3]
-            }
-            if (g.glassTint != s.tint) g.glassTint = s.tint
+            val key = "${s.radii.joinToString()}|${s.tint}|$liquid|$thick|$bend|$split|$frost|$opacity|$shine"
+            if (applied[id] == key) continue
+            applied[id] = key
+            g.cornerRadiusTopLeft = s.radii[0]; g.cornerRadiusTopRight = s.radii[1]; g.cornerRadiusBottomRight = s.radii[2]; g.cornerRadiusBottomLeft = s.radii[3]
+            val t = s.tint
+            g.glassTint = t.copy(alpha = (t.alpha * opacity * 2f).coerceIn(0f, 0.95f)).toArgb()
+            g.material = GlassMaterial.REGULAR
             if (liquid) {
-                if (g.refractionHeight != 60f) { g.material = GlassMaterial.REGULAR; g.refractionHeight = 60f; g.bevelWidth = 36f; g.dispersionStrength = 0.16f; g.enableSensorHighlight = true }
-            } else if (g.refractionHeight != 0f) { g.refractionHeight = 0f; g.bevelWidth = 2f; g.dispersionStrength = 0f; g.enableSensorHighlight = false; g.blurAmount = 0.12f }
+                g.bevelWidth = (thick * density).coerceIn(2f, 200f)
+                g.refractionHeight = (bend * thick * density * 2.2f).coerceIn(0f, 300f)
+                g.dispersionStrength = split
+                g.blurAmount = frost * 0.25f
+                g.enableSensorHighlight = shine
+            } else {
+                g.bevelWidth = 2f; g.refractionHeight = 0f; g.dispersionStrength = 0f
+                g.blurAmount = (0.35f + frost) * 0.25f
+                g.enableSensorHighlight = false
+            }
         }
         val o = all.entries.sortedBy { it.value.z }.joinToString(",") { it.key }
         if (o != order) { order = o; for (id in o.split(",")) views[id]?.bringToFront() }
     }
 }
 
-/** put a pane of glass under this element (top layer only). [corners]: tl, tr, br, bl in dp (null = all [corner]) */
-fun Modifier.liquid(id: String, corner: Dp, tint: Color = Color.Transparent, z: Int = 0, alpha: Float = 1f, on: Boolean = true,
+/** this control is a pane of glass. [corners]: tl, tr, br, bl in dp (null = all [corner]); [scrim] = a dark layer instead */
+fun Modifier.liquid(id: String, corner: Dp, tint: Color = Color(0xFF1A1A20).copy(alpha = 0.4f), z: Int = 0, alpha: Float = 1f, on: Boolean = true,
                     corners: List<Dp>? = null, scrim: Boolean = false): Modifier = composed {
     val d = LocalDensity.current
-    var r by remember { mutableStateOf<Rect?>(null) }
     val radii = with(d) { (corners ?: listOf(corner, corner, corner, corner)).map { it.toPx() }.toFloatArray() }
-    val t = tint.toArgb()
-    SideEffect { val rr = r; if (on && rr != null) Liquid.specs[id] = GlassSpec(rr, radii, t, z, alpha, scrim) else if (!on) Liquid.specs.remove(id) }
-    DisposableEffect(id) { onDispose { Liquid.specs.remove(id) } }
-    this.onGloballyPositioned { r = it.boundsInRoot() }
+    SideEffect { if (on) Liquid.styles[id] = GlassStyle(radii, tint, z, alpha, scrim) else { Liquid.styles.remove(id); Liquid.rects.remove(id) } }
+    DisposableEffect(id) { onDispose { Liquid.styles.remove(id); Liquid.rects.remove(id) } }
+    this.onGloballyPositioned { Liquid.rects[id] = it.boundsInRoot() }
 }

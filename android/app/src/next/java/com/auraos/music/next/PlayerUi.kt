@@ -4,6 +4,7 @@ package com.auraos.music.next
 
 import android.os.Build
 import androidx.compose.animation.core.*
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -117,53 +118,66 @@ fun Aurora(moving: Boolean) {
 }
 
 /** #dock: the media bar and the tab pill share one floating glass bubble; the visualizer glows behind both */
+fun smooth(e0: Float, e1: Float, x: Float): Float { val t = ((x - e0) / (e1 - e0)).coerceIn(0f, 1f); return t * t * (3f - 2f * t) }
+
 @Composable
 fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
     val a = accent
     val st by NativePlayer.state.collectAsState()
     val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
     val levels by rememberLevels(cur != null && st.playing && motion && !saving, 40)
-    // while the media bar is pulled away (or the player is open) its slot stays, empty, and the tabs stand alone
-    val away = Morph.lift.value > 0.5f || Morph.f.value > 0.001f
-    val tint = mix(a, 0.09f, Color(0xFF1A1A20))
+    val fv = Morph.f.value
+    // the media bar is off the dock while you carry it, or while the player panel is up: its slot empties and the tabs stand alone
+    val away = Morph.carrying || fv > 0.001f
+    val tint = mix(a, 0.10f, Color(0xFF1A1A20)).copy(alpha = 0.40f)
     val r = 26.dp
-    Column(Modifier.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp).fillMaxWidth()) {
-        if (cur != null) Box(Modifier.fillMaxWidth().height(62.dp)
-            .liquid("dock-mini", r, tint.copy(alpha = 0.35f), z = 1, alpha = if (away) 0f else 1f, corners = listOf(r, r, 0.dp, 0.dp))
-            .graphicsLayer { alpha = if (away) 0f else 1f }.clip(RoundedCornerShape(topStart = r, topEnd = r)).background(tint.copy(alpha = 0.22f))) {
-            if (motion && !saving) Bars(levels, a.copy(alpha = 0.32f), Modifier.matchParentSize())
-            MiniBar(cur, st, onOpen)
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.07f)))
+    // the corners ease (never snap) between "one bubble" and "tabs on their own"
+    val join by animateDpAsState(if (cur != null && !away) 0.dp else r, tween(260, easing = FastOutSlowInEasing), label = "join")
+    val sheetUp = Dialogs.cur.value != null && Dialogs.isSheet.value
+    val fade by animateFloatAsState(if (sheetUp) 0f else 1f, tween(200), label = "dockfade")
+    Column(Modifier.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp).fillMaxWidth()
+        .offset { IntOffset(0, -Morph.tug.value.roundToInt()) }                      // the whole dock gives a little as you tug
+        .graphicsLayer { alpha = fade * (1f - smooth(0.05f, 0.45f, fv)) }) {
+        if (cur != null) {
+            val miniA = if (away) 0f else 1f
+            Box(Modifier.fillMaxWidth().height(62.dp)
+                .liquid("dock-mini", r, tint, z = 1, alpha = miniA * fade, corners = listOf(r, r, 0.dp, 0.dp))
+                .graphicsLayer { alpha = miniA }.clip(RoundedCornerShape(topStart = r, topEnd = r))) {
+                if (motion && !saving) Bars(levels, a.copy(alpha = 0.32f), Modifier.matchParentSize())
+                MiniBar(cur, st, onOpen)
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.07f)))
+            }
         }
-        val tabShape = if (cur != null && !away) RoundedCornerShape(bottomStart = r, bottomEnd = r) else RoundedCornerShape(r)
         Box(Modifier.fillMaxWidth()
-            .liquid("dock-tabs", r, tint.copy(alpha = 0.35f), z = 1, corners = if (cur != null && !away) listOf(0.dp, 0.dp, r, r) else null)
-            .clip(tabShape).background(tint.copy(alpha = 0.22f))) {
+            .liquid("dock-tabs", r, tint, z = 1, alpha = fade * (1f - smooth(0.05f, 0.45f, fv)), corners = listOf(join, join, r, r))
+            .clip(RoundedCornerShape(topStart = join, topEnd = join, bottomStart = r, bottomEnd = r))) {
             Tabs(tab, onTab)
         }
     }
 }
 
 /**
- * The media bar → player reveal (the Discord-banner way): pull the bar up and it peels off the dock and rises with you, then
- * sticks, resisting; pull past that and it breaks loose with a thud: a full-width panel shoots up from the bottom of the screen
- * with its top edge under your finger. Let go high (or flick up) and it opens; low and it drops back into the dock.
- *  lift: phase 1, how far the bar has been pulled off (px).  f: phase 2, the panel: 0 = gone below, 1 = the full player.
+ * The media bar → player reveal. Pull the bar up: the whole dock gives a little, like you're tugging something stuck, with a
+ * buzz that grows the harder you pull. Then it lets go (a thud): the media bar comes off the dock and jumps to your finger, and a
+ * panel of liquid glass slides up fast from the bottom of the screen to meet it. It stays glass until it's fully the player.
+ * Let go high (or flick up) and it opens; low and it drops back into the dock.
+ *  tug: the dock's give (px)   carrying: the bar is in your hand   miniY: where the carried bar is   f: the panel, 0 = gone, 1 = full
  */
 object Morph {
-    val lift = Animatable(0f)
+    val tug = Animatable(0f)
     val f = Animatable(0f)
+    val miniY = Animatable(0f)
+    var carrying by mutableStateOf(false)
     var mini = Rect.Zero; var screen = Rect.Zero
     /** set by the app's screen: animations need its frame clock (a plain MainScope crashes) */
     var scope: kotlinx.coroutines.CoroutineScope? = null
     fun snap(v: Float) { scope?.launch { f.snapTo(v.coerceIn(0f, 1f)) } }
     fun to(v: Float) { scope?.launch { f.animateTo(v, if (v > 0.5f) spring(0.82f, 320f) else tween(380, easing = Ease)) } }
-    /** a tap: the bar hops up off the dock, then the panel flies up from where it was */
+    /** a tap: a little tug, then the glass panel slides up and opens */
     fun tapOpen() {
         scope?.launch {
-            lift.animateTo(46f * (screen.width / 412f).coerceAtLeast(1f), tween(120, easing = FastOutSlowInEasing))
-            lift.snapTo(0f); f.snapTo((1f - mini.top / screen.height.coerceAtLeast(1f)).coerceIn(0f, 1f))
-            NpState.open.value = true
+            launch { tug.animateTo(10f * Liquid.density, tween(90, easing = FastOutSlowInEasing)); tug.animateTo(0f, spring(0.45f, 600f)) }
+            delay(90); Hap.thud(); NpState.open.value = true
         }
     }
 }
@@ -235,35 +249,44 @@ fun MiniRow(s: Song, st: NativePlayer.St, swipe: Boolean = true) {
 private fun MiniBar(s: Song, st: NativePlayer.St, onOpen: () -> Unit) {
     val a = accent
     val d = LocalDensity.current
-    val stick = with(d) { 70.dp.toPx() }; val breakAt = with(d) { 128.dp.toPx() }; val barH = with(d) { 62.dp.toPx() }
-    val edge = remember { Edge() }
-    Box(Modifier.fillMaxSize().onGloballyPositioned { Morph.mini = it.boundsInRoot() }
+    val tugMax = with(d) { 20.dp.toPx() }; val tugK = with(d) { 55.dp.toPx() }; val breakAt = with(d) { 120.dp.toPx() }; val barH = with(d) { 62.dp.toPx() }
+    Box(Modifier.fillMaxSize().onGloballyPositioned { if (!Morph.carrying) Morph.mini = it.boundsInRoot() }
         .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.tap(); Morph.tapOpen() }
         .pointerInput(Unit) {
             val vt = androidx.compose.ui.input.pointer.util.VelocityTracker()
-            var up = 0f; var broke = false
+            var up = 0f; var broke = false; var lastBuzz = 0f; var origin = 0f
+            fun chase(fingerY: Float) {
+                val top = fingerY - barH / 2
+                val h = Morph.screen.height.coerceAtLeast(1f)
+                Morph.scope?.launch { Morph.miniY.animateTo(top, spring(1f, 1600f)) }                       // the bar sticks to your finger
+                Morph.scope?.launch { Morph.f.animateTo((1f - (top - 8f * Liquid.density) / h).coerceIn(0f, 1f), spring(0.9f, 700f)) }   // the panel slides up to it
+            }
             detectVerticalDragGestures(
-                onDragStart = { up = 0f; broke = false; vt.resetTracking(); edge.reset() },
+                onDragStart = { up = 0f; broke = false; lastBuzz = 0f; vt.resetTracking(); origin = Morph.mini.top },
                 onDragEnd = {
                     val v = vt.calculateVelocity().y
-                    if (broke) { if (v < -700f || Morph.f.value > 0.42f) { Hap.soft(); onOpen() } else { Morph.to(0f) } }
-                    else Morph.scope?.launch { Morph.lift.animateTo(0f, spring(0.45f, 500f)) }
+                    if (broke) {
+                        Morph.carrying = false
+                        if (v < -700f || Morph.f.value > 0.42f) { Hap.soft(); onOpen() } else { Hap.soft(); Morph.to(0f) }
+                    } else Morph.scope?.launch { Morph.tug.animateTo(0f, spring(0.4f, 600f)) }
                 },
-                onDragCancel = { Morph.scope?.launch { Morph.lift.animateTo(0f, spring(0.45f, 500f)); Morph.f.animateTo(0f) } },
+                onDragCancel = { Morph.carrying = false; Morph.scope?.launch { Morph.tug.animateTo(0f, spring(0.4f, 600f)); Morph.f.animateTo(0f) } },
             ) { c, dy ->
                 c.consume(); vt.addPosition(c.uptimeMillis, c.position); up -= dy
+                val fingerY = origin + c.position.y
                 if (!broke) {
-                    edge.set(up > stick * 0.75f)
+                    val k = (up / breakAt).coerceIn(0f, 1f)
+                    Morph.scope?.launch { Morph.tug.snapTo(tugMax * (1f - kotlin.math.exp(-kotlin.math.max(up, 0f) / tugK))) }
+                    // the tug: buzzes come closer together and get stronger as you pull
+                    if (up > 0 && up - lastBuzz > with(d) { (18.dp - 13.dp * k).toPx() }) { lastBuzz = up; Hap.tug(k) }
                     if (up > breakAt) {
                         broke = true; Hap.thud()
-                        Morph.scope?.launch { Morph.lift.snapTo(0f) }
-                        val y = Morph.mini.top + c.position.y
-                        Morph.snap(1f - (y - barH / 2) / Morph.screen.height.coerceAtLeast(1f))
-                    } else Morph.scope?.launch { Morph.lift.snapTo(stick * (1f - kotlin.math.exp(-kotlin.math.max(up, 0f) / stick))) }     // rises, then sticks
-                } else {
-                    val y = Morph.mini.top + c.position.y
-                    Morph.snap(1f - (y - barH / 2) / Morph.screen.height.coerceAtLeast(1f))      // the panel's top edge stays under the finger
-                }
+                        Morph.scope?.launch { Morph.miniY.snapTo(Morph.mini.top - Morph.tug.value); Morph.f.snapTo(0f) }
+                        Morph.carrying = true
+                        Morph.scope?.launch { Morph.tug.animateTo(0f, spring(0.35f, 700f)) }                       // the dock springs back
+                        chase(fingerY)
+                    }
+                } else chase(fingerY)
             }
         }) {
         MiniRow(s, st)
@@ -273,37 +296,44 @@ private fun MiniBar(s: Song, st: NativePlayer.St, onOpen: () -> Unit) {
     }
 }
 
-/** phase 1: the bar, pulled off the dock, floating on its own piece of glass */
+/** the media bar, off the dock: in your hand while you carry it, then riding the top of the panel (fading as the player arrives) */
 @Composable
 fun FloatingMini(s: Song) {
     val st by NativePlayer.state.collectAsState()
     val d = LocalDensity.current
     val m = Morph.mini
     if (m == Rect.Zero) return
-    val tint = mix(accent, 0.09f, Color(0xFF1A1A20))
-    Box(Modifier.offset { IntOffset(m.left.roundToInt(), (m.top - Morph.lift.value).roundToInt()) }.size(with(d) { m.width.toDp() }, with(d) { m.height.toDp() })
-        .liquid("mini-float", 22.dp, tint.copy(alpha = 0.35f), z = 3).clip(RoundedCornerShape(22.dp)).background(tint.copy(alpha = 0.22f))) {
+    val fv = Morph.f.value
+    val panelTop = Morph.screen.height * (1f - fv) + 8f * Liquid.density
+    val y = if (Morph.carrying) Morph.miniY.value else panelTop
+    val alpha = if (Morph.carrying) 1f else 1f - smooth(0.2f, 0.5f, fv)
+    val r by animateDpAsState(if (Morph.carrying) 22.dp else 26.dp, tween(240), label = "fr")
+    Box(Modifier.offset { IntOffset(m.left.roundToInt(), y.roundToInt()) }.size(with(d) { m.width.toDp() }, with(d) { m.height.toDp() })
+        .graphicsLayer { this.alpha = alpha }
+        .liquid("mini-float", r, mix(accent, 0.10f, Color(0xFF1A1A20)).copy(alpha = 0.40f), z = 10, alpha = alpha).clip(RoundedCornerShape(r))) {
         MiniRow(s, st, swipe = false)
     }
 }
 
-/** phase 2 and the open player: a panel from the bottom of the screen; its head is the media bar until it's well on its way */
+/**
+ * The player panel: liquid glass sliding up from the bottom while it rises (the music behind it bends through), turning into the
+ * player as it nears the top. Its top corners ease from round to square in the last stretch.
+ */
 @Composable
 fun PlayerPanel(cur: Song, onClose: () -> Unit) {
-    val st by NativePlayer.state.collectAsState()
     val d = LocalDensity.current
     val fv = Morph.f.value
     val h = Morph.screen.height.coerceAtLeast(1f)
     val top = h * (1f - fv)
-    val radius = 28.dp * (1f - ((fv - 0.85f) / 0.15f).coerceIn(0f, 1f))
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f * fv)))
+    val radius = 30.dp * (1f - smooth(0.82f, 1f, fv))
+    val solid = smooth(0.62f, 0.98f, fv)              // 0 = all glass, 1 = the player's own background
+    Box(Modifier.fillMaxSize().liquid("np-dim", 0.dp, Color.Black, z = 5, alpha = 0.45f * smooth(0f, 0.6f, fv), scrim = true))
     Box(Modifier.offset { IntOffset(0, top.roundToInt()) }.fillMaxWidth().height(with(d) { h.toDp() })
-        .clip(RoundedCornerShape(topStart = radius, topEnd = radius)).background(mix(accent, 0.14f, Color(0xFF1A1A1F)))) {
-        FullPlayer(cur, ((fv - 0.25f) / 0.5f).coerceIn(0f, 1f), false, onClose)
-        val head = (1f - fv / 0.45f).coerceIn(0f, 1f)
-        if (head > 0f) Column(Modifier.fillMaxWidth().graphicsLayer { alpha = head }) {
-            Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) { Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF55555C))) }
-            Box(Modifier.fillMaxWidth().height(62.dp).padding(horizontal = 12.dp)) { MiniRow(cur, st, swipe = false) }
+        .liquid("np-panel", radius, mix(accent, 0.14f, Color(0xFF1A1A1F)).copy(alpha = 0.40f), z = 6, alpha = 1f - smooth(0.9f, 1f, fv), corners = listOf(radius, radius, 0.dp, 0.dp))
+        .clip(RoundedCornerShape(topStart = radius, topEnd = radius)).background(mix(accent, 0.14f, Color(0xFF1A1A1F)).copy(alpha = solid))) {
+        FullPlayer(cur, smooth(0.35f, 0.9f, fv), false, onClose)
+        Box(Modifier.fillMaxWidth().padding(top = 8.dp).graphicsLayer { alpha = 1f - smooth(0.6f, 0.9f, fv) }, contentAlignment = Alignment.Center) {
+            Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.35f)))
         }
     }
 }
@@ -344,10 +374,7 @@ private fun Tabs(tab: Int, onTab: (Int) -> Unit) {
         }) {
         if (cell > 0) Box(Modifier.offset { IntOffset(x.roundToInt(), 0) }.padding(top = 5.dp).width(with(LocalDensity.current) { cell.toDp() }).height(52.dp)
             .graphicsLayer { val k = if (drag != null) 1.06f else 1f; scaleX = k * (1f + stretch); scaleY = k * (1f - stretch * 0.35f) }
-            .liquid("tab-bubble", 20.dp, mix(a, 0.24f, Color.Transparent).copy(alpha = 0.22f), z = 2)
-            .then(if (liquid) Modifier.clip(RoundedCornerShape(20.dp)).background(mix(a, if (drag != null) 0.30f else 0.22f, Color.White.copy(alpha = 0.08f)))
-                .drawWithContent { drawContent(); drawRect(Brush.verticalGradient(0f to Color.White.copy(alpha = 0.22f), 0.45f to Color.Transparent)); drawRoundRect(Brush.linearGradient(listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.05f), Color.White.copy(alpha = 0.25f))), cornerRadius = CornerRadius(20.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(1.2.dp.toPx())) }
-            else Modifier.clip(RoundedCornerShape(20.dp)).background(mix(a, if (drag != null) 0.32f else 0.24f, Color.White.copy(alpha = 0.06f))).border(1.dp, Color.White.copy(alpha = if (drag != null) 0.16f else 0.08f), RoundedCornerShape(20.dp))))
+            .liquid("tab-bubble", 20.dp, mix(a, if (drag != null) 0.40f else 0.30f, Color(0xFF2A2830)).copy(alpha = 0.45f), z = 2))
         Row(Modifier.fillMaxSize()) {
             tabs.forEachIndexed { i, (label, ic) ->
                 val on = (hover ?: tab) == i

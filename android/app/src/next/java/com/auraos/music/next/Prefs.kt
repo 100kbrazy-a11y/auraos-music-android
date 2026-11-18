@@ -38,6 +38,9 @@ object Prefs {
     val eqCustom = MutableStateFlow(List(10) { 0f })
     val motion = MutableStateFlow(true)
     val liquid = MutableStateFlow(true)
+    // the glass (Settings › Look & Feel › Glass): thickness of the rim (dp), how much it bends, colour split, frost, opacity, tilt shine
+    val glassThick = MutableStateFlow(24f); val glassBend = MutableStateFlow(0.6f); val glassSplit = MutableStateFlow(0.16f)
+    val glassFrost = MutableStateFlow(0.25f); val glassOpacity = MutableStateFlow(0.5f); val glassShine = MutableStateFlow(true)
     val tuck = MutableStateFlow(false)
     val scrollTimer = MutableStateFlow(1.5f)
     val autoSaver = MutableStateFlow(true)
@@ -57,7 +60,9 @@ object Prefs {
         beatMatch.value = s.optBoolean("beatMatch", true); trimSilence.value = s.optBoolean("trimSilence", true)
         keepAwake.value = s.optBoolean("keepAwake", false); eqName.value = s.optString("eq", "Flat")
         eqCustom.value = s.optJSONArray("eqCustom")?.let { a -> (0 until 10).map { a.optDouble(it, 0.0).toFloat() } } ?: List(10) { 0f }
-        motion.value = s.optBoolean("motion", true); liquid.value = s.optBoolean("liquidGlass", true); tuck.value = s.optBoolean("tuckPinned", false); scrollTimer.value = s.optDouble("scrollTimer", 1.5).toFloat(); autoSaver.value = s.optBoolean("autoSaver", true)
+        motion.value = s.optBoolean("motion", true); liquid.value = s.optBoolean("liquidGlass", true);
+        glassThick.value = s.optDouble("glassThick", 24.0).toFloat(); glassBend.value = s.optDouble("glassBend", 0.6).toFloat(); glassSplit.value = s.optDouble("glassSplit", 0.16).toFloat()
+        glassFrost.value = s.optDouble("glassFrost", 0.25).toFloat(); glassOpacity.value = s.optDouble("glassOpacity", 0.5).toFloat(); glassShine.value = s.optBoolean("glassShine", true); tuck.value = s.optBoolean("tuckPinned", false); scrollTimer.value = s.optDouble("scrollTimer", 1.5).toFloat(); autoSaver.value = s.optBoolean("autoSaver", true)
         compress.value = s.optBoolean("compress", true); autofill.value = s.optBoolean("autofill", true)
         npLyrics.value = s.optBoolean("npLyrics", false); sort.value = s.optInt("nativeSort", 0)
         applyAudio()
@@ -74,6 +79,10 @@ object Prefs {
     fun setEqBand(i: Int, v: Float) { val l = eqGains().toMutableList(); l[i] = v; eqCustom.value = l; s.put("eqCustom", JSONArray(l.map { it.toDouble() })); setEq("Custom") }
     fun setTuck(v: Boolean) { tuck.value = v; put("tuckPinned", v) }
     fun setScrollTimer(v: Float) { scrollTimer.value = v; put("scrollTimer", v.toDouble()) }
+    fun setGlass(thick: Float = glassThick.value, bend: Float = glassBend.value, split: Float = glassSplit.value, frost: Float = glassFrost.value, opacity: Float = glassOpacity.value, shine: Boolean = glassShine.value) {
+        glassThick.value = thick; glassBend.value = bend; glassSplit.value = split; glassFrost.value = frost; glassOpacity.value = opacity; glassShine.value = shine
+        s.put("glassThick", thick.toDouble()); s.put("glassBend", bend.toDouble()); s.put("glassSplit", split.toDouble()); s.put("glassFrost", frost.toDouble()); s.put("glassOpacity", opacity.toDouble()); s.put("glassShine", shine); Store.save()
+    }
     fun setLiquid(v: Boolean) { liquid.value = v; put("liquidGlass", v) }
     fun setMotion(v: Boolean) { motion.value = v; put("motion", v) }
     fun setAutoSaver(v: Boolean) { autoSaver.value = v; put("autoSaver", v) }

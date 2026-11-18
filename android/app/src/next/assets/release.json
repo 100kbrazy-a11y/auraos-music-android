@@ -6,9 +6,12 @@
       "name": "The Glamor Update",
       "date": "2026-11-18",
       "notes": [
-        "Liquid Glass everywhere: the bottom bar, the tab bubble, the tool buttons, menus, messages and the selection bar are real glass (QWEA0's Liquid Glass) that bends the music behind it, splits light at the edges and catches the light as you tilt your phone",
-        "New way to open the player: pull the media bar up and it peels off, sticks for a moment, then breaks loose and the player follows your finger up from the bottom",
-        "Haptics everywhere, just like before: taps, ticks on sliders and the seek bar, a thud when the bar breaks loose, buzzes for likes, saves and errors",
+        "Liquid Glass everywhere: the bottom bar, the tab bubble, the tool buttons, menus, dialogs, messages and the selection bar are real glass panes (QWEA0's Liquid Glass) that follow the controls exactly, bend the music behind them, split light at the edges and catch the light as you tilt",
+        "Glass settings: thickness, bend, colour split, frost, opacity and tilt shine (Settings › Look & Feel › Glass), live while you drag",
+        "New way to open the player: tug the media bar up — the whole bar gives a little with a buzz that grows as you pull — then it lets go, jumps to your finger, and a glass panel slides up from the bottom to meet it",
+        "The player stays glass until it's fully open; its corners ease into shape",
+        "Haptics everywhere, just like before: taps, ticks on sliders and the seek bar, the tug, a thud when it lets go, buzzes for likes, saves and errors",
+        "Fixed: tapping a tab could stop halfway and show the wrong page",
         "Liquid Glass off gives the classic frosted blur on the same controls"
       ]
     },
