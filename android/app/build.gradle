@@ -60,6 +60,7 @@ dependencies {
     nextImplementation "androidx.compose.material:material-icons-core"
     nextImplementation "androidx.activity:activity-compose:1.8.2"
     nextImplementation "io.coil-kt:coil-compose:2.5.0"
+    nextImplementation "com.github.QWEA0:liquidglass:2.0.11"
     nextImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
     implementation "androidx.media3:media3-exoplayer:1.4.1"
     implementation "androidx.media3:media3-session:1.4.1"

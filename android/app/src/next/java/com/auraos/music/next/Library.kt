@@ -119,7 +119,7 @@ fun AlbumsScreen() {
             if (songs.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { AddMusicEmpty() }
             gitems(albums, key = { it.key }) { AlbumCard(it) }
         }
-        Head("Albums", gs.scrolled) { Tools() }
+        val sc = gs.scrolled; LaunchedEffect(sc) { TabScroll.v[0] = sc }
     }
 }
 
@@ -144,7 +144,7 @@ fun ArtistsScreen() {
                 }
             }
         }
-        Head("Artists", ls.scrolled) { Tools() }
+        val sc = ls.scrolled; LaunchedEffect(sc) { TabScroll.v[1] = sc }
     }
 }
 
@@ -161,7 +161,7 @@ fun SongsScreen() {
             else item { Plays(list, "Songs", if (Filt.active()) "${plural(list.size, "song")} · ${fmtLong(list.sumOf { it.durMs })} · filtered" else null) }
             items(list, key = { it.id }) { s -> SongRow(s, list, "Songs") }
         }
-        Head("Songs", ls.scrolled) { Tools() }
+        val sc = ls.scrolled; LaunchedEffect(sc) { TabScroll.v[2] = sc }
     }
 }
 
@@ -188,7 +188,7 @@ fun PlaylistsScreen() {
                     name, plural(ids.count { it in by }, "song")) { Nav.open(Page.PlaylistP(name)) }
             }
         }
-        Head("Playlists", ls.scrolled) { Tools() }
+        val sc = ls.scrolled; LaunchedEffect(sc) { TabScroll.v[3] = sc }
     }
 }
 @Composable

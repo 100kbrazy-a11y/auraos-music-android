@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.*
+import androidx.compose.animation.core.spring
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,9 +69,16 @@ class NextActivity : ComponentActivity() {
         NativePlayer.start(this)
         if (savedInstanceState == null) Ctl.restore(this)
         handle(intent)
-        setContent {
-            MaterialTheme(colorScheme = darkColorScheme(background = C.bg, surface = C.surface, onSurface = C.text, onBackground = C.text)) { App() }
-        }
+        Hap.init(this)
+        // three layers: library & pages | liquid glass | controls (see LiquidHost.kt)
+        val root = android.widget.FrameLayout(this)
+        val bg = androidx.compose.ui.platform.ComposeView(this).apply { setContent { Themed { BgApp() } } }
+        val glass = android.widget.FrameLayout(this)
+        val fg = androidx.compose.ui.platform.ComposeView(this).apply { setContent { Themed { FgApp() } } }
+        val mp = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        root.addView(bg, mp, mp); root.addView(glass, mp, mp); root.addView(fg, mp, mp)
+        Liquid.attach(glass, bg)
+        setContentView(root)
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); handle(intent) }
     private fun handle(i: Intent?) {
@@ -81,9 +89,61 @@ class NextActivity : ComponentActivity() {
 }
 
 object Snack { val text = mutableStateOf<String?>(null) }
+/** each tab reports whether it's scrolled, so the header (on the controls layer) can darken */
+object TabScroll { val v = mutableStateListOf(false, false, false, false) }
+/** set by the controls layer: the bottom layer's pager follows it */
+object Pager { var animateTo: ((Int) -> Unit)? = null }
 
 @Composable
-fun App() {
+fun Themed(content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = darkColorScheme(background = C.bg, surface = C.surface, onSurface = C.text, onBackground = C.text)) {
+        val songs by Store.songs.collectAsState()
+        val st by NativePlayer.state.collectAsState()
+        val q by Ctl.queue.collectAsState()
+        val cur = q.getOrNull(st.index)?.let { s -> songs.firstOrNull { it.id == s.id } ?: s }
+        // the whole app takes the playing song's cover colour (like --accent)
+        val target = remember(cur?.cover) { cur?.cover?.takeIf { it.isNotEmpty() }?.let { Accents.of(Store.coverFile(it)) } } ?: C.defAccent
+        val acc by animateColorAsState(target, tween(600), label = "acc")
+        val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        CompositionLocalProvider(LocalAccent provides acc, LocalBottom provides (if (cur != null) 163.dp else 100.dp) + nav) { content() }
+    }
+}
+
+/** the bottom layer: the living background, the four tabs and the pages opened over them (what the glass looks through) */
+@Composable
+fun BgApp() {
+    val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
+    val pager = rememberPagerState(initialPage = Nav.tab.value) { 4 }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { Pager.animateTo = { i -> scope.launch { pager.animateScrollToPage(i) } } }
+    LaunchedEffect(Nav.tab.value) { if (pager.currentPage != Nav.tab.value) pager.animateScrollToPage(Nav.tab.value) }
+    LaunchedEffect(pager.settledPage) { if (Nav.tab.value != pager.settledPage) { Nav.tab.value = pager.settledPage; Hap.tick() } }   // only where it lands
+    Box(Modifier.fillMaxSize().background(C.bg)) {
+        Aurora(motion && !saving)
+        HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
+            when (page) { 0 -> AlbumsScreen(); 1 -> ArtistsScreen(); 2 -> SongsScreen(); else -> PlaylistsScreen() }
+        }
+        Nav.stack.forEachIndexed { i, p ->
+            key(i, p) {
+                var shown by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) { shown = true }
+                AnimatedVisibility(shown, enter = slideInHorizontally(tween(320, easing = Ease)) { it / 3 } + fadeIn(tween(200)), exit = fadeOut()) {
+                    Box(Modifier.fillMaxSize().background(C.bg)) {
+                        when (p) {
+                            is Page.AlbumP -> AlbumPage(p.key); is Page.ArtistP -> ArtistPage(p.name); is Page.PlaylistP -> PlaylistPage(p.name)
+                            Page.Favorites -> FavoritesPage(); Page.Search -> SearchPage(); Page.Settings -> SettingsPage()
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** the controls layer: tab headers, selection bar, messages, the dock, the player panel, menus and dialogs */
+@Composable
+fun FgApp() {
+
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     Morph.scope = scope
@@ -95,13 +155,12 @@ fun App() {
     val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
     var full by NpState.open
     val cur = q.getOrNull(st.index)?.let { s -> songs.firstOrNull { it.id == s.id } ?: s }
-    val pager = rememberPagerState(initialPage = Nav.tab.value) { 4 }
-    // the whole app takes the playing song's cover colour (like --accent)
-    val target = remember(cur?.cover) { cur?.cover?.takeIf { it.isNotEmpty() }?.let { Accents.of(Store.coverFile(it)) } } ?: C.defAccent
-    val acc by animateColorAsState(target, tween(600), label = "acc")
+    val acc = accent
+    val liquid by Prefs.liquid.collectAsState()
+    LaunchedEffect(liquid) { snapshotFlow { Liquid.specs.toMap() }.collect { Liquid.sync(ctx, it, liquid) } }
     val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) { if (Build.VERSION.SDK_INT >= 33) askNotif.launch(Manifest.permission.POST_NOTIFICATIONS) }
-    LaunchedEffect(Unit) { Toasts.flow.collect { Snack.text.value = it } }
+    LaunchedEffect(Unit) { Toasts.flow.collect { Snack.text.value = it; Hap.forMessage(it) } }
     LaunchedEffect(Unit) {                     // the last crash, if there was one: shown once, with a Copy button
         val f = java.io.File(ctx.filesDir, "last-crash.txt")
         if (f.exists()) {
@@ -120,8 +179,6 @@ fun App() {
         Updater.autoCheck(ctx)
     }
     LaunchedEffect(Unit) { while (true) { Prefs.saving.value = Prefs.autoSaver.value && Tasks.saver(ctx); delay(60000) } }
-    LaunchedEffect(Nav.tab.value) { if (pager.currentPage != Nav.tab.value) pager.animateScrollToPage(Nav.tab.value) }
-    LaunchedEffect(pager.settledPage) { Nav.tab.value = pager.settledPage }   // only where it lands, not the pages it passes
     LaunchedEffect(awake, full) {
         val w = (ctx as? Activity)?.window ?: return@LaunchedEffect
         if (awake && full) w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) else w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -136,74 +193,34 @@ fun App() {
         NativePlayer.artwork(c.id, bytes)
         Ctl.save()
     }
-    LaunchedEffect(full) { Morph.p.animateTo(if (full) 1f else 0f, tween(if (full) 460 else 400, easing = Ease)) }
+    LaunchedEffect(full) { if (full) Morph.f.animateTo(1f, spring(0.82f, 320f)) else Morph.f.animateTo(0f, tween(380, easing = Ease)) }
     LaunchedEffect(Unit) { NativePlayer.errors.collect { Toasts.show("Couldn't play: $it"); Diag.log("playback: $it") } }
     LaunchedEffect(Unit) { while (true) { delay(5000); if (NativePlayer.state.value.playing) Ctl.save() } }
     BackHandler(enabled = full || Nav.stack.isNotEmpty() || Sel.ids.isNotEmpty()) {
-        when { full -> full = false; Sel.ids.isNotEmpty() -> Sel.ids.clear(); else -> Nav.back() }
+        Hap.soft(); when { full -> full = false; Sel.ids.isNotEmpty() -> Sel.ids.clear(); else -> Nav.back() }
     }
-    val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    CompositionLocalProvider(LocalAccent provides acc, LocalBottom provides (if (cur != null) 163.dp else 100.dp) + nav) {
-        Box(Modifier.fillMaxSize().background(C.bg).onGloballyPositioned { Morph.screen = it.boundsInRoot() }) {
-            val backdrop = rememberGraphicsLayer()
-          CompositionLocalProvider(LocalBackdrop provides backdrop) {
-           CompositionLocalProvider(LocalBackdrop provides null) {   // glass inside the backdrop can't look through itself
-           Box(Modifier.fillMaxSize().backdropSource(backdrop)) {
-            Aurora(motion && !saving)
-            HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
-                when (page) { 0 -> AlbumsScreen(); 1 -> ArtistsScreen(); 2 -> SongsScreen(); else -> PlaylistsScreen() }
-            }
-            Nav.stack.forEachIndexed { i, p ->
-                key(i, p) {
-                    var shown by remember { mutableStateOf(false) }
-                    LaunchedEffect(Unit) { shown = true }
-                    AnimatedVisibility(shown, enter = slideInHorizontally(tween(320, easing = Ease)) { it / 3 } + fadeIn(tween(200)), exit = fadeOut()) {
-                        Box(Modifier.fillMaxSize().background(C.bg)) {
-                            when (p) {
-                                is Page.AlbumP -> AlbumPage(p.key); is Page.ArtistP -> ArtistPage(p.name); is Page.PlaylistP -> PlaylistPage(p.name)
-                                Page.Favorites -> FavoritesPage(); Page.Search -> SearchPage(); Page.Settings -> SettingsPage()
-                            }
-                        }
-                    }
-                }
-            }
-           }
-           }
-            AnimatedVisibility(Sel.ids.isNotEmpty(), enter = slideInVertically { -it }, exit = slideOutVertically { -it }) { SelectionBar() }
-            Column(Modifier.align(Alignment.BottomCenter)) {
-                if (busy.isNotEmpty()) Box(Modifier.padding(horizontal = 24.dp, vertical = 4.dp).align(Alignment.CenterHorizontally).clip(RoundedCornerShape(14.dp)).background(C.surface2).padding(horizontal = 14.dp, vertical = 8.dp)) { T(busy, 13.sp, W650) }
-                AnimatedVisibility(Snack.text.value != null, enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut()) {
-                    Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-                        Box(Modifier.shadow(30.dp, RoundedCornerShape(14.dp)).glass(RoundedCornerShape(14.dp), Color(0xFF2A2A30), strong = true, corner = 14.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFECECF0).copy(alpha = if (Prefs.liquid.value) 0.5f else 0.85f)).heightIn(min = 48.dp).padding(horizontal = 18.dp, vertical = 12.dp), contentAlignment = Alignment.CenterStart) {
-                            T(Snack.text.value ?: "", 15.sp, W550, Color(0xFF19191D), lines = 3)
-                        }
-                    }
-                }
-                AnimatedVisibility(Nav.stack.lastOrNull() != Page.Settings, enter = slideInVertically { it }, exit = slideOutVertically { it }) {   // the bottom bar steps away in Settings
-                Dock(cur, Nav.tab.value, { i -> Nav.stack.clear(); Nav.tab.value = i; scope.launch { pager.animateScrollToPage(i) } }) { full = true } }
-            }
-            // the media bar grows into the player (and shrinks back): the bubble's outline widens to the screen, the cover flies
-            // from the bar to its place, and the player's own background and controls fade in on the way
-            val pv = Morph.p.value
-            if (cur != null && pv > 0.001f) {
-                val d = LocalDensity.current
-                val scr = Morph.screen
-                val from = if (Morph.mini != Rect.Zero) Morph.mini else Rect(scr.left, scr.bottom - with(d) { 150.dp.toPx() }, scr.right, scr.bottom - with(d) { 88.dp.toPx() })
-                val r = lerp(from, scr, pv)
-                val rad = with(d) { 26.dp.toPx() } * (1f - pv)
-                Box(Modifier.fillMaxSize().graphicsLayer { clip = true; shape = MorphShape(r, rad) }.background(mix(acc, 0.14f, Color(0xFF1A1A1F)))) {
-                    FullPlayer(cur, ((pv - 0.3f) / 0.6f).coerceIn(0f, 1f), pv < 0.995f) { full = false }
-                }
-                if (pv < 0.995f) {
-                    val to = if (Morph.cover != Rect.Zero) Morph.cover else Rect(scr.left + with(d) { 24.dp.toPx() }, scr.top + scr.height * 0.14f, scr.right - with(d) { 24.dp.toPx() }, scr.top + scr.height * 0.14f + scr.width - with(d) { 48.dp.toPx() })
-                    val ar = lerp(if (Morph.miniArt != Rect.Zero) Morph.miniArt else from, to, pv)
-                    Box(Modifier.offset { IntOffset(ar.left.roundToInt(), ar.top.roundToInt()) }.size(with(d) { ar.width.toDp() }, with(d) { ar.height.toDp() })) {
-                        Art(cur.cover, null, Modifier.fillMaxSize(), RoundedCornerShape((10f + 12f * pv).dp), phName = cur.album, square = false)
-                    }
-                }
-            }
-            SheetHost()
-          }
+    Box(Modifier.fillMaxSize().onGloballyPositioned { Morph.screen = it.boundsInRoot() }) {
+        // the four tabs' header: title + the glass pill of tools (pages draw their own header)
+        if (Nav.stack.isEmpty()) {
+            val t = Nav.tab.value
+            Head(listOf("Albums", "Artists", "Songs", "Playlists")[t], TabScroll.v[t]) { Tools() }
         }
+        AnimatedVisibility(Sel.ids.isNotEmpty(), enter = slideInVertically { -it }, exit = slideOutVertically { -it }) { SelectionBar() }
+        Column(Modifier.align(Alignment.BottomCenter)) {
+            if (busy.isNotEmpty()) Box(Modifier.padding(horizontal = 24.dp, vertical = 4.dp).align(Alignment.CenterHorizontally).liquid("busy", 14.dp, C.surface2.copy(alpha = 0.5f), z = 4).clip(RoundedCornerShape(14.dp)).background(C.surface2.copy(alpha = 0.35f)).padding(horizontal = 14.dp, vertical = 8.dp)) { T(busy, 13.sp, W650) }
+            AnimatedVisibility(Snack.text.value != null, enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut()) {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.liquid("snack", 14.dp, Color(0x99ECECF0), z = 4).clip(RoundedCornerShape(14.dp)).background(Color(0xFFECECF0).copy(alpha = 0.55f)).heightIn(min = 48.dp).padding(horizontal = 18.dp, vertical = 12.dp), contentAlignment = Alignment.CenterStart) {
+                        T(Snack.text.value ?: "", 15.sp, W550, Color(0xFF19191D), lines = 3)
+                    }
+                }
+            }
+            AnimatedVisibility(Nav.stack.lastOrNull() != Page.Settings, enter = slideInVertically { it }, exit = slideOutVertically { it }) {   // the bottom bar steps away in Settings
+                Dock(cur, Nav.tab.value, { i -> Hap.tick(); Nav.stack.clear(); Nav.tab.value = i; Pager.animateTo?.invoke(i) }) { full = true }
+            }
+        }
+        if (cur != null && Morph.lift.value > 0.5f && Morph.f.value <= 0.001f) FloatingMini(cur)
+        if (cur != null && Morph.f.value > 0.001f) PlayerPanel(cur) { full = false }
+        SheetHost()
     }
 }

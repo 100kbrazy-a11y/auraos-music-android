@@ -2,6 +2,17 @@
   "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
   "releases": [
     {
+      "version": "2.2.0",
+      "name": "The Glamor Update",
+      "date": "2026-11-18",
+      "notes": [
+        "Liquid Glass everywhere: the bottom bar, the tab bubble, the tool buttons, menus, messages and the selection bar are real glass (QWEA0's Liquid Glass) that bends the music behind it, splits light at the edges and catches the light as you tilt your phone",
+        "New way to open the player: pull the media bar up and it peels off, sticks for a moment, then breaks loose and the player follows your finger up from the bottom",
+        "Haptics everywhere, just like before: taps, ticks on sliders and the seek bar, a thud when the bar breaks loose, buzzes for likes, saves and errors",
+        "Liquid Glass off gives the classic frosted blur on the same controls"
+      ]
+    },
+    {
       "version": "2.1.0",
       "name": "The Mirror Update",
       "date": "2026-11-18",

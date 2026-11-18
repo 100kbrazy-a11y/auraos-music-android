@@ -101,8 +101,8 @@ object Sel { val ids = mutableStateListOf<String>(); fun toggle(id: String) { if
 object Dialogs {
     val cur = mutableStateOf<(@Composable () -> Unit)?>(null)
     val isSheet = mutableStateOf(true)
-    fun show(d: @Composable () -> Unit) { isSheet.value = false; cur.value = d }
-    fun sheet(d: @Composable () -> Unit) { isSheet.value = true; cur.value = d }
+    fun show(d: @Composable () -> Unit) { Hap.soft(); isSheet.value = false; cur.value = d }
+    fun sheet(d: @Composable () -> Unit) { Hap.tap(); isSheet.value = true; cur.value = d }
     fun close() { cur.value = null }
 }
 
@@ -134,7 +134,8 @@ fun SheetHost() {
         }
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
             Column(Modifier.fillMaxWidth().fillMaxHeight(0.86f).wrapContentHeight(Alignment.Bottom).offset { IntOffset(0, off.value.roundToInt()) }
-                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(C.surface).clickable(remember { MutableInteractionSource() }, null) { }
+                .liquid("sheet", 28.dp, C.surface.copy(alpha = 0.55f), z = 6, on = !NpState.open.value, corners = listOf(28.dp, 28.dp, 0.dp, 0.dp))
+                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(if (NpState.open.value) C.surface else C.surface.copy(alpha = 0.62f)).clickable(remember { MutableInteractionSource() }, null) { }
                 .nestedScroll(conn)
                 .draggable(rememberDraggableState { d -> scope.launch { off.snapTo((off.value + d).coerceAtLeast(0f)) } }, Orientation.Vertical, onDragStopped = { v -> settle(v) })
                 .navigationBarsPadding().imePadding().padding(top = 8.dp, bottom = 14.dp)) {
@@ -147,7 +148,7 @@ fun SheetHost() {
     }
     AnimatedVisibility(d != null && !sheet, enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.94f), exit = fadeOut(tween(150))) {
         Box(Modifier.fillMaxSize().imePadding(), contentAlignment = Alignment.Center) {
-            Column(Modifier.padding(horizontal = 20.dp).fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(C.surface).clickable(remember { MutableInteractionSource() }, null) { }.padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 14.dp)) {
+            Column(Modifier.padding(horizontal = 20.dp).fillMaxWidth().liquid("dialog", 28.dp, C.surface.copy(alpha = 0.6f), z = 7, on = !NpState.open.value).clip(RoundedCornerShape(28.dp)).background(if (NpState.open.value) C.surface else C.surface.copy(alpha = 0.66f)).clickable(remember { MutableInteractionSource() }, null) { }.padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 14.dp)) {
                 Dialogs.cur.value?.invoke()
             }
         }
@@ -162,7 +163,7 @@ fun Modifier.press(scaleTo: Float = 0.95f, onLong: (() -> Unit)? = null, onDoubl
     val src = remember { MutableInteractionSource() }
     val p by src.collectIsPressedAsState()
     val s by animateFloatAsState(if (p) scaleTo else 1f, tween(150, easing = Spring), label = "p")
-    return this.scale(s).combinedClickable(src, null, onLongClick = onLong, onDoubleClick = onDouble) { onClick() }
+    return this.scale(s).combinedClickable(src, null, onLongClick = onLong?.let { f -> { Hap.press(); f() } }, onDoubleClick = onDouble) { Hap.tap(); onClick() }
 }
 
 // ------------------------------------------------------------------ building blocks
@@ -171,7 +172,7 @@ fun IB(ic: Ic, tint: Color = C.text, size: Dp = 24.dp, box: Dp = 44.dp, on: Bool
     val src = remember { MutableInteractionSource() }
     val p by src.collectIsPressedAsState()
     val s by animateFloatAsState(if (p) 0.92f else 1f, tween(150), label = "ib")
-    Box(modifier.size(box).scale(s).clip(CircleShape).background(if (p) Color.White.copy(alpha = 0.1f) else Color.Transparent).clickable(src, null) { onClick() }, contentAlignment = Alignment.Center) {
+    Box(modifier.size(box).scale(s).clip(CircleShape).background(if (p) Color.White.copy(alpha = 0.1f) else Color.Transparent).clickable(src, null) { if (ic == Ic.Back) Hap.soft() else Hap.tap(); onClick() }, contentAlignment = Alignment.Center) {
         Icon(ic, size = size, tint = if (on) accent else tint)
     }
 }
@@ -195,7 +196,7 @@ fun Modifier.graphicsScale(s: Float): Modifier = this.graphicsLayer { scaleX = s
 /** the glass pill of tool buttons at the top right: search, filter, settings */
 @Composable
 fun Tools(filter: (() -> Unit)? = null) {
-    Row(Modifier.clip(RoundedCornerShape(22.dp)).background(Color(0xFF2A272E).copy(alpha = 0.85f)).border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(22.dp)).padding(horizontal = 2.dp)) {
+    Row(Modifier.liquid("tools", 22.dp, Color(0x332A272E), z = 2).clip(RoundedCornerShape(22.dp)).background(Color(0xFF2A272E).copy(alpha = 0.30f)).border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(22.dp)).padding(horizontal = 2.dp)) {
         IB(Ic.Search, box = 42.dp) { Nav.open(Page.Search) }
         IB(Ic.Filter, box = 42.dp, on = Filt.active()) { if (filter != null) filter() else Dialogs.sheet { FilterSheet() } }
         IB(Ic.Gear, box = 42.dp) { Nav.open(Page.Settings) }
@@ -219,7 +220,7 @@ fun Btn(text: String, ic: Ic? = null, tonal: Boolean = false, modifier: Modifier
 fun Chip(label: String, on: Boolean, n: Int? = null, ic: Ic? = null, onClick: () -> Unit) {
     val a = accent
     Row(Modifier.height(34.dp).clip(RoundedCornerShape(10.dp)).background(if (on) mix(a, 0.30f, C.surface2) else Color.Transparent)
-        .then(if (on) Modifier else Modifier.border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(10.dp))).clickable { onClick() }.padding(horizontal = 14.dp),
+        .then(if (on) Modifier else Modifier.border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(10.dp))).clickable { Hap.tick(); onClick() }.padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         if (ic != null) Icon(ic, size = 16.dp)
         T(label, 13.5.sp, W650)
@@ -232,7 +233,7 @@ fun Chip(label: String, on: Boolean, n: Int? = null, ic: Ic? = null, onClick: ()
 fun Switch(on: Boolean, onChange: (Boolean) -> Unit) {
     val a = accent
     val x by animateDpAsState(if (on) 20.dp else 0.dp, tween(200), label = "sw")
-    Box(Modifier.size(52.dp, 32.dp).clip(RoundedCornerShape(16.dp)).background(if (on) a else C.surface3).then(if (on) Modifier else Modifier.border(2.dp, Color(0xFF55555C), RoundedCornerShape(16.dp))).clickable { onChange(!on) }) {
+    Box(Modifier.size(52.dp, 32.dp).clip(RoundedCornerShape(16.dp)).background(if (on) a else C.surface3).then(if (on) Modifier else Modifier.border(2.dp, Color(0xFF55555C), RoundedCornerShape(16.dp))).clickable { Hap.tick(); onChange(!on) }) {
         Box(Modifier.padding(4.dp).offset(x = x).size(24.dp).clip(CircleShape).background(if (on) C.onAccent else Color(0xFF9A9AA2)))
     }
 }
@@ -299,7 +300,7 @@ fun SongRow(s: Song, list: List<Song>, label: String, number: Int? = null, playl
     Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
         Row(Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(14.dp))
             .background(if (picked) mix(a, 0.35f, C.bg) else Color.Transparent)
-            .combinedClickable(onLongClick = { Sel.toggle(s.id) }, onDoubleClick = { if (!selecting) likeToast(Store.toggleFav(s.id)) }) { if (selecting) Sel.toggle(s.id) else Ctl.play(ctx, list, list.indexOf(s).coerceAtLeast(0), label) }
+            .combinedClickable(onLongClick = { Hap.press(); Sel.toggle(s.id) }, onDoubleClick = { if (!selecting) { val on = Store.toggleFav(s.id); if (on) Hap.success() else Hap.tap(); likeToast(on) } }) { if (selecting) { Sel.toggle(s.id); if (s.id in Sel.ids) Hap.tick() else Hap.soft() } else { Hap.tap(); Ctl.play(ctx, list, list.indexOf(s).coerceAtLeast(0), label) } }
             .padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (showArt) Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                 Art(s.cover, 48.dp, phName = s.album.ifEmpty { s.title })
@@ -317,7 +318,7 @@ fun SongRow(s: Song, list: List<Song>, label: String, number: Int? = null, playl
     }
 }
 
-fun likeToast(on: Boolean, what: String = "Favorites") = Toasts.show(if (on) "Added to $what" else "Removed from $what")
+fun likeToast(on: Boolean, what: String = "Favorites") { Toasts.show(if (on) "Added to $what" else "Removed from $what") }
 
 // ------------------------------------------------------------------ sheets
 @Composable
@@ -330,7 +331,7 @@ fun SheetHead(cover: String, title: String, sub: String, phName: String = title,
 }
 @Composable
 fun Act(ic: Ic, label: String, sub: String = "", danger: Boolean = false, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable { Dialogs.close(); onClick() }.padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+    Row(Modifier.fillMaxWidth().clickable { if (danger) Hap.thud() else Hap.tap(); Dialogs.close(); onClick() }.padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
         Icon(ic, tint = if (danger) C.danger else C.sub)
         Column { T(label, 15.5.sp, W550, if (danger) C.danger else C.text); if (sub.isNotEmpty()) T(sub, 13.sp, color = C.sub, lines = 2) }
     }
@@ -590,7 +591,7 @@ fun SelectionBar() {
     val by = songs.associateBy { it.id }
     val list = Sel.ids.mapNotNull { by[it] }
     val a = accent
-    Row(Modifier.fillMaxWidth().shadow(20.dp).glass(androidx.compose.ui.graphics.RectangleShape, mix(a, 0.22f, C.surface), strong = true, corner = 0.dp).statusBarsPadding().height(60.dp).padding(start = 4.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+    Row(Modifier.fillMaxWidth().shadow(20.dp).liquid("selbar", 0.dp, mix(a, 0.22f, C.surface).copy(alpha = 0.5f), z = 5).background(mix(a, 0.22f, C.surface).copy(alpha = 0.45f)).statusBarsPadding().height(60.dp).padding(start = 4.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         IB(Ic.Close) { Sel.ids.clear() }
         T("${list.size} selected", 17.sp, W750, modifier = Modifier.weight(1f).padding(start = 4.dp))
         IB(Ic.HeartFill.takeIf { list.all { Store.isFav(it.id) } } ?: Ic.Heart) { Store.setFav(list.map { it.id }); Sel.ids.clear() }

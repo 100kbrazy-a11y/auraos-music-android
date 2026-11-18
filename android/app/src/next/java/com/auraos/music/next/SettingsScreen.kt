@@ -45,7 +45,7 @@ fun Group(title: String?, content: @Composable ColumnScope.() -> Unit) {
 /** .item */
 @Composable
 fun Item(ic: Ic, title: String, sub: String = "", value: String? = null, chevron: Boolean = false, open: Boolean = false, onClick: (() -> Unit)? = null, trailing: (@Composable () -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).then(if (onClick != null) Modifier.clickable { onClick() } else Modifier).padding(horizontal = 18.dp, vertical = 14.dp),
+    Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).then(if (onClick != null) Modifier.clickable { Hap.tap(); onClick() } else Modifier).padding(horizontal = 18.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Icon(ic, tint = C.sub)
         Column(Modifier.weight(1f)) { T(title, 15.sp, W650); if (sub.isNotEmpty()) T(sub, 13.sp, color = C.sub, lines = 3) }
@@ -61,7 +61,7 @@ fun Item(ic: Ic, title: String, sub: String = "", value: String? = null, chevron
 fun Slide(v: Float, range: ClosedFloatingPointRange<Float>, step: Float, set: (Float) -> Unit) {
     val a = accent
     var w by remember { mutableStateOf(1f) }
-    fun at(x: Float) = (range.start + (x / w).coerceIn(0f, 1f) * (range.endInclusive - range.start)).let { Math.round(it / step) * step }
+    fun at(x: Float) = (range.start + (x / w).coerceIn(0f, 1f) * (range.endInclusive - range.start)).let { Math.round(it / step) * step }.also { if (it != v) Hap.tick() }
     Box(Modifier.fillMaxWidth().height(36.dp).onSizeChanged { w = it.width.toFloat() }
         .pointerInput(w) { detectTapGestures { set(at(it.x)) } }
         .pointerInput(w) { detectHorizontalDragGestures { c, _ -> c.consume(); set(at(c.position.x)) } }) {
@@ -124,7 +124,7 @@ fun SettingsPage() {
                     val liquid by Prefs.liquid.collectAsState()
                     val tuck by Prefs.tuck.collectAsState(); val timer by Prefs.scrollTimer.collectAsState()
                     var openTimer by remember { mutableStateOf(false) }
-                    SwitchItem(Ic.Spark, "Liquid Glass", if (liquid) "Clear glass that bends and splits the light behind it" else "Off · classic frosted blur", liquid) { Prefs.setLiquid(it) }
+                    SwitchItem(Ic.Spark, "Liquid Glass", if (liquid) "Real glass on every clear control: it bends the music behind it, splits light at the edges and catches the light as you tilt" else "Off · classic frosted blur", liquid) { Prefs.setLiquid(it) }
                     SwitchItem(Ic.Spark, "Motion Effects", "Sliding pages, glow, living background", motion) { Prefs.setMotion(it) }
                     SwitchItem(Ic.Spark, "Save Battery Automatically", "Pause the moving background in Battery Saver or below 20%", saver) { Prefs.setAutoSaver(it) }
                     SwitchItem(Ic.Folder, "Keep Media Bar Tucked", "Sideways: just the album cover, tucked under the tabs", tuck) { Prefs.setTuck(it) }
