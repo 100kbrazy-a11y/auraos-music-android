@@ -135,7 +135,7 @@ fun SheetHost() {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
             Column(Modifier.fillMaxWidth().fillMaxHeight(0.86f).wrapContentHeight(Alignment.Bottom).offset { IntOffset(0, off.value.roundToInt()) }
                 .liquid("sheet", 28.dp, C.surface.copy(alpha = 0.55f), z = 6, on = !NpState.open.value, corners = listOf(28.dp, 28.dp, 0.dp, 0.dp))
-                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(if (NpState.open.value) C.surface else C.surface.copy(alpha = 0.62f)).clickable(remember { MutableInteractionSource() }, null) { }
+                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(if (NpState.open.value) C.surface else C.surface.copy(alpha = 0.84f)).clickable(remember { MutableInteractionSource() }, null) { }
                 .nestedScroll(conn)
                 .draggable(rememberDraggableState { d -> scope.launch { off.snapTo((off.value + d).coerceAtLeast(0f)) } }, Orientation.Vertical, onDragStopped = { v -> settle(v) })
                 .navigationBarsPadding().imePadding().padding(top = 8.dp, bottom = 14.dp)) {
