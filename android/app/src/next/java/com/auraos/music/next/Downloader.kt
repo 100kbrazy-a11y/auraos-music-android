@@ -3,6 +3,8 @@ package com.auraos.music.next
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -34,15 +36,23 @@ object Downloader {
     fun stop() { stopAll = true; items.value = items.value.map { if (!it.done && !it.failed) it.copy(failed = true, status = "Stopped") else it } }
     fun retryFailed() { items.value = items.value.map { if (it.failed) it.copy(failed = false, status = "Waiting", frac = 0f) else it }; stopAll = false; kick() }
 
+    /** three songs at a time: while one is being fetched, the next is already asking YouTube for its address */
+    private const val WORKERS = 3
+    private val claimLock = Any()
+    private val registerLock = Any()
+    private fun claim(): Dl? = synchronized(claimLock) {
+        val d = items.value.firstOrNull { !it.done && !it.failed && it.status == "Waiting" } ?: return null
+        items.value = items.value.map { if (it.track.id == d.track.id && !it.done && !it.failed) it.copy(status = "Starting…") else it }
+        d
+    }
     private fun waiting() = items.value.firstOrNull { !it.done && !it.failed && it.status == "Waiting" }
     private fun kick() {
-        if (worker?.isActive == true) return
+        if (worker?.isActive == true) { extra() ; return }
         worker = scope.launch {
             try {
                 Engine.use { e ->
-                    while (!stopAll) {
-                        val next = waiting() ?: break
-                        process(e, next)
+                    kotlinx.coroutines.coroutineScope {
+                        repeat(WORKERS) { launch { while (!stopAll) { val next = claim() ?: break; process(e, next) } } }
                     }
                 }
             } catch (x: Exception) {
@@ -51,17 +61,21 @@ object Downloader {
             if (!stopAll && waiting() != null) { worker = null; kick() }
         }
     }
+    /** songs added while the workers are running are picked up by whichever worker is free; if all three have already finished, start again */
+    private fun extra() { scope.launch { delay(400); if (worker?.isActive != true && waiting() != null) kick() } }
 
     private fun upd(id: String, f: (Dl) -> Dl) { items.value = items.value.map { if (it.track.id == id && !it.done && !it.failed) f(it) else it } }
 
-    private suspend fun process(e: YtEngine, d: Dl) {
+    private suspend fun process(e: YtEngine, d: Dl) = kotlinx.coroutines.coroutineScope {
         val t = d.track
         // already in the library (same YouTube song): nothing to download
         Store.songs.value.firstOrNull { it.j.optString("yt") == t.id }?.let { s ->
             upd(t.id) { it.copy(status = "Already in your library", frac = 1f, done = true) }
             if (d.play) withContext(Dispatchers.Main) { Ctl.append(Store.app, s) }
-            return
+            return@coroutineScope
         }
+        // the cover is fetched at the same time as the audio, not after it
+        val coverJob = if (t.thumb.isNotBlank()) async(Dispatchers.IO) { try { Net.get(t.thumb.replace(Regex("=w\\d+-h\\d+"), "=w1200-h1200")) } catch (_: Exception) { null } } else null
         var last = ""
         for (attempt in 1..2) {
             try {
@@ -71,28 +85,101 @@ object Downloader {
                 val tmp = File(Store.app.cacheDir, "yt-${t.id}-${safeName(t.title.ifBlank { j.optString("title") })}.$ext")
                 upd(t.id) { it.copy(status = "Downloading…") }
                 fetch(j.getString("url"), j.optLong("size"), j.optString("ua"), j.optString("origin"), tmp) { f -> upd(t.id) { it.copy(frac = f) } }
-                val cover = if (t.thumb.isNotBlank()) try { Net.get(t.thumb.replace(Regex("=w\\d+-h\\d+"), "=w1200-h1200")) } catch (_: Exception) { null } else null
+                val cover = coverJob?.await()
                 val title = t.title.ifBlank { j.optString("title") }
                 val artist = t.artist.ifBlank { j.optString("artist") }
-                val s = Store.register(tmp, ext, Meta(title = title, artist = artist, album = t.album.ifBlank { null }, albumartist = t.albumArtist.ifBlank { null },
-                    track = t.track.takeIf { it > 0 }, year = t.year.ifBlank { null }, cover = cover, yt = t.id))
+                val s = synchronized(registerLock) {
+                    Store.register(tmp, ext, Meta(title = title, artist = artist, album = t.album.ifBlank { null }, albumartist = t.albumArtist.ifBlank { null },
+                        track = t.track.takeIf { it > 0 }, year = t.year.ifBlank { null }, cover = cover, yt = t.id))
+                }
                 Store.update(listOf(s?.id ?: "")) { put("codec", "${if (ext == "webm") "Opus" else "AAC"}${if (j.optInt("kbps") > 0) " · ${j.optInt("kbps")} kbps" else ""} · from YouTube") }
                 upd(t.id) { it.copy(status = if (s != null) "Added" else "Already in your library", frac = 1f, done = true) }
                 val song = s ?: Store.songs.value.firstOrNull { it.title.equals(title, true) && primaryArtist(it.artist).equals(primaryArtist(artist), true) }
                 if (d.play && song != null) withContext(Dispatchers.Main) { Ctl.append(Store.app, song) }
-                return
-            } catch (x: Exception) { last = x.message ?: x.javaClass.simpleName }
+                return@coroutineScope
+            } catch (x: kotlinx.coroutines.CancellationException) { throw x
+            } catch (x: Exception) { last = x.message ?: x.javaClass.simpleName; if (stopAll) break }
         }
         Diag.log("download ${t.id}: $last")
         upd(t.id) { it.copy(status = last.replace(Regex("https://\\S+"), "(address)"), failed = true) }
     }
 
-    private fun fetch(url: String, size: Long, ua: String, origin: String, out: File, onFrac: (Float) -> Unit) {
-        val full = if (size > 0) "$url&range=0-${size - 1}" else url
-        val c = URL(full).openConnection() as HttpURLConnection
-        c.connectTimeout = 20000; c.readTimeout = 40000
+    private fun open(url: String, ua: String, origin: String, timeout: Int = 40000): HttpURLConnection {
+        val c = URL(url).openConnection() as HttpURLConnection
+        c.connectTimeout = 20000; c.readTimeout = timeout
         if (ua.isNotBlank()) c.setRequestProperty("User-Agent", ua)
         if (origin.isNotBlank()) { c.setRequestProperty("Origin", origin); c.setRequestProperty("Referer", "$origin/") }
+        return c
+    }
+
+    /**
+     * YouTube hands out audio slowly on one long connection and quickly on several short ones, so the file is cut into pieces
+     * and four pieces are fetched at once, straight into place in the file. If that's refused, it's one plain download.
+     */
+    private fun fetch(url: String, size: Long, ua: String, origin: String, out: File, onFrac: (Float) -> Unit) {
+        if (size >= 1_500_000L) {
+            try { fetchParallel(url, size, ua, origin, out, onFrac); return } catch (x: Exception) {
+                if (stopAll) throw x
+                Diag.log("parallel download: ${x.message} — going one piece"); out.delete()
+            }
+        }
+        fetchSingle(url, size, ua, origin, out, onFrac)
+    }
+
+    private fun fetchParallel(url: String, size: Long, ua: String, origin: String, out: File, onFrac: (Float) -> Unit) {
+        val piece = maxOf(1_000_000L, minOf(4_000_000L, (size + 3) / 4))
+        val n = ((size + piece - 1) / piece).toInt()
+        val next = java.util.concurrent.atomic.AtomicInteger(0)
+        val got = java.util.concurrent.atomic.AtomicLong(0)
+        val failure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        val lastTick = java.util.concurrent.atomic.AtomicLong(0)
+        java.io.RandomAccessFile(out, "rw").use { raf ->
+            raf.setLength(size)
+            val ch = raf.channel
+            val threads = (0 until minOf(4, n)).map {
+                Thread {
+                    while (failure.get() == null && !stopAll) {
+                        val i = next.getAndIncrement(); if (i >= n) break
+                        val from = i * piece; val to = minOf(size - 1, from + piece - 1)
+                        var ok = false; var err: Throwable? = null
+                        for (try_ in 0..2) {
+                            if (try_ > 0) Thread.sleep(300L * try_)
+                            var base = 0L
+                            try {
+                                val c = open("$url&range=$from-$to", ua, origin, 25000)
+                                val code = c.responseCode
+                                if (code !in 200..299) throw RuntimeException("download refused (HTTP $code)")
+                                c.inputStream.use { inp ->
+                                    val buf = ByteArray(32 * 1024)
+                                    var pos = from
+                                    while (true) {
+                                        if (stopAll) throw RuntimeException("Stopped")
+                                        val r = inp.read(buf); if (r < 0) break
+                                        ch.write(java.nio.ByteBuffer.wrap(buf, 0, r), pos); pos += r; base += r
+                                        val all = got.addAndGet(r.toLong())
+                                        val now = System.currentTimeMillis(); val lt = lastTick.get()
+                                        if (now - lt > 150 && lastTick.compareAndSet(lt, now)) onFrac((all.toFloat() / size).coerceIn(0f, 1f))
+                                    }
+                                    if (pos <= to) throw RuntimeException("short piece")
+                                }
+                                ok = true; break
+                            } catch (x: Throwable) { err = x; got.addAndGet(-base); if (stopAll) break }
+                        }
+                        if (!ok) { failure.compareAndSet(null, err ?: RuntimeException("piece failed")); break }
+                    }
+                }.also { it.start() }
+            }
+            threads.forEach { it.join() }
+        }
+        failure.get()?.let { throw RuntimeException(it.message ?: "download failed") }
+        if (stopAll) throw RuntimeException("Stopped")
+        if (out.length() < size) { out.delete(); throw RuntimeException("download refused (incomplete)") }
+        onFrac(1f)
+    }
+
+    private fun fetchSingle(url: String, size: Long, ua: String, origin: String, out: File, onFrac: (Float) -> Unit) {
+        val full = if (size > 0) "$url&range=0-${size - 1}" else url
+        val c = open(full, ua, origin)
         val code = c.responseCode
         if (code !in 200..299) throw RuntimeException("download refused (HTTP $code)")
         val total = if (size > 0) size else c.contentLengthLong

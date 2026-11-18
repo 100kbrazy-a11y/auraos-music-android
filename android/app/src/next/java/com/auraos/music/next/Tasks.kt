@@ -56,6 +56,15 @@ object Tasks {
             if (comp != null) { compress(comp, all); delay(300); continue }
             val fill = if (Prefs.autofill.value) all.firstOrNull { (it.genre.isBlank() || it.year.isBlank()) && it.j.optInt("autofilled", 0) == 0 } else null
             if (fill != null) { autofill(fill); delay(1200); continue }
+            val covAlbum = if (Prefs.autofill.value) Store.albums(all.filter { it.cover.isEmpty() && it.j.optInt("coverTry", 0) < 2 }).firstOrNull() else null
+            if (covAlbum != null) {
+                status.value = "Finding cover · ${covAlbum.title}"
+                val r = Covers.forAlbum(covAlbum)
+                if (r == Covers.Result.OFFLINE) { status.value = ""; return }       // try again later
+                Store.update(covAlbum.songs.map { it.id }) { put("coverTry", 2) }
+                if (r == Covers.Result.FOUND) Accents.forget()
+                delay(500); continue
+            }
             status.value = ""; return
         }
     }
@@ -119,21 +128,22 @@ object Tasks {
             if (h != null) { if (s.genre.isBlank() && h.genre.isNotBlank()) f["genre"] = h.genre; if (s.year.isBlank() && h.year.isNotBlank()) f["year"] = h.year }
             if (f.isNotEmpty()) Store.edit(s.id, f)
             Store.update(listOf(s.id)) { put("autofilled", 1) }
-            if (s.cover.isEmpty() && h != null && h.cover.isNotBlank()) Store.setCover(Store.songs.value.filter { it.albumKey == s.albumKey }.map { it.id }, Net.get(h.cover))
         } catch (e: Throwable) { Store.update(listOf(s.id)) { put("autofilled", -1) } }
     }
 
-    /** Settings › Find Missing Covers */
-    fun findCovers() {
+    /** Settings › Find Missing Covers (or Find Cover Online on albums you pick) */
+    fun findCovers(only: List<Album>? = null) {
         scope.launch {
-            val missing = Store.albums().filter { it.cover == null }
+            val missing = only ?: Store.albums().filter { it.cover == null }
             if (missing.isEmpty()) { Toasts.show("Every album already has a cover"); return@launch }
-            var n = 0
-            missing.forEachIndexed { i, a ->
-                status.value = "Finding covers · ${i + 1} of ${missing.size}"
-                try { val h = Online.bestAlbum(a); if (h != null && h.cover.isNotBlank()) { Store.setCover(a.songs.map { it.id }, Net.get(h.cover)); n++ } } catch (_: Exception) { }
-            }
-            status.value = ""; Toasts.show("Found $n of ${missing.size} covers")
+            status.value = "Finding covers · 0 of ${missing.size}"
+            val (n, missed, offline) = Covers.forAlbums(missing) { d, t -> status.value = "Finding covers · $d of $t" }
+            status.value = ""
+            Store.update(missing.flatMap { a -> a.songs.map { it.id } }) { put("coverTry", 2) }
+            Accents.forget()
+            if (offline) Toasts.show("Couldn't reach the internet to find covers")
+            else Toasts.show(if (missed.isEmpty()) "Found all $n covers" else "Found $n of ${missing.size} · ${missed.size} couldn't be matched (try Find Cover Online on them)")
+            missed.forEach { Diag.log("no cover found: ${it.artist} — ${it.title}") }
         }
     }
 }

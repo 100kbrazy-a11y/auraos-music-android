@@ -698,7 +698,7 @@ object Lyr { val v = mutableStateOf(0); fun bump() { v.value++ } }
 // ------------------------------------------------------------------ cards
 @Composable
 fun AlbumCard(a: Album, modifier: Modifier = Modifier) {
-    Column(modifier.press(0.96f, onDouble = { val on = !a.songs.all { Store.isFav(it.id) }; Store.setFav(a.songs.map { it.id }, on); likeToast(on) }) { Nav.open(Page.AlbumP(a.key)) }) {
+    Column(modifier.press(0.96f, onLong = { Dialogs.sheet { AlbumSheet(a) } }, onDouble = { val on = !a.songs.all { Store.isFav(it.id) }; Store.setFav(a.songs.map { it.id }, on); likeToast(on) }) { Nav.open(Page.AlbumP(a.key)) }) {
         Art(a.cover?.cover ?: "", null, Modifier.fillMaxWidth(), RoundedCornerShape(14.dp), Ic.Disc, a.title)
         T(a.title, 14.sp, W700, modifier = Modifier.padding(top = 8.dp))
         T(a.artist, 13.sp, color = C.sub)

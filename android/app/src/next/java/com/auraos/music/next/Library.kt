@@ -135,7 +135,7 @@ fun ArtistsScreen() {
         LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
             if (songs.isEmpty()) item { AddMusicEmpty() }
             items(artists, key = { it.key }) { (name, l) ->
-                Row(Modifier.fillMaxWidth().press(0.98f, onDouble = { Store.toggleFavArtist(name); likeToast(name.lowercase() in Store.favArtists.value, "favorite artists") }) { Nav.open(Page.ArtistP(name)) }.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(Modifier.fillMaxWidth().press(0.98f, onLong = { Dialogs.sheet { ArtistSheet(name) } }, onDouble = { Store.toggleFavArtist(name); likeToast(name.lowercase() in Store.favArtists.value, "favorite artists") }) { Nav.open(Page.ArtistP(name)) }.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     Art(Store.artistInfo(name)?.optString("image")?.takeIf { Store.coverFile(it).exists() } ?: l.firstOrNull { it.cover.isNotEmpty() }?.cover ?: "", 56.dp, shape = CircleShape, ph = Ic.Person, phName = name)
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) { T(name, 15.sp, W700); if (name.lowercase() in favA) Icon(Ic.HeartFill, size = 14.dp, tint = accent) }
@@ -230,9 +230,6 @@ fun AlbumPage(key: String) {
     val scope = rememberCoroutineScope()
     val songs by Store.songs.collectAsState()
     val a = remember(songs, key) { Store.albums(songs.filter { it.albumKey == key }).firstOrNull() }
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { u ->
-        if (u != null && a != null) Store.scope.launch { try { ctx.contentResolver.openInputStream(u)?.use { Store.setCover(a.songs.map { it.id }, it.readBytes()) }; Accents.forget(); Toasts.show("Cover updated") } catch (_: Exception) { } }
-    }
     if (a == null) { LaunchedEffect(Unit) { Nav.back() }; return }
     val ls = rememberLazyListState()
     val multiDisc = a.songs.map { it.disc }.distinct().size > 1
@@ -254,21 +251,7 @@ fun AlbumPage(key: String) {
         }
         Head(if (ls.scrolled) a.title else "", ls.scrolled, back = true) {
             IB(Ic.More, modifier = Modifier.padding(4.dp).clip(CircleShape).background(mix(accent, 0.28f, Color(0x661E1E24)))) {
-                Dialogs.sheet {
-                    SheetScroll {
-                        SheetHead(a.cover?.cover ?: "", a.title, "${a.artist} · ${plural(a.songs.size, "song")}")
-                        Act(Ic.PlayNext, "Play Next") { Ctl.playNext(ctx, a.songs) }
-                        Act(Ic.AddQ, "Add to Queue") { Ctl.addToQueue(ctx, a.songs) }
-                        Act(Ic.List, "Add to Playlist…") { Dialogs.sheet { PlaylistPicker(a.songs.map { it.id }) } }
-                        Act(Ic.HeartFill, "Favorite All Songs") { Store.setFav(a.songs.map { it.id }, true); Toasts.show("Added to Favorites") }
-                        Act(Ic.Person, "Go to Artist") { Nav.open(Page.ArtistP(a.artist)) }
-                        Act(Ic.Search, "Look Up Album Info…") { Dialogs.sheet { LookupAlbum(a, false) } }
-                        Act(Ic.Image, "Find Cover Online") { Dialogs.sheet { LookupAlbum(a, true) } }
-                        Act(Ic.Folder, "Choose Cover from Phone…") { pick.launch("image/*") }
-                        Act(Ic.Pack, "Share as Music Pack…") { scope.launch { sharePack(ctx, a.title, a.songs, null) } }
-                        Act(Ic.Trash, "Remove Album…", danger = true) { Dialogs.show { Confirm("Remove “${a.title}”?", "${plural(a.songs.size, "song")} are deleted from this phone.", "Remove") { Store.remove(a.songs.map { it.id }); Nav.back() } } }
-                    }
-                }
+                Dialogs.sheet { AlbumSheet(a) { Nav.back() } }
             }
         }
     }
@@ -442,7 +425,7 @@ fun SearchPage() {
                 Shelf("Artists") {
                     androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(hitArtists, key = { it.key }) { (n, l) ->
-                            Column(Modifier.width(150.dp).press(0.96f) { Nav.open(Page.ArtistP(n)) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                            Column(Modifier.width(150.dp).press(0.96f, onLong = { Dialogs.sheet { ArtistSheet(n) } }) { Nav.open(Page.ArtistP(n)) }, horizontalAlignment = Alignment.CenterHorizontally) {
                                 Art(Store.artistInfo(n)?.optString("image")?.takeIf { Store.coverFile(it).exists() } ?: l.firstOrNull { it.cover.isNotEmpty() }?.cover ?: "", null, Modifier.fillMaxWidth(), CircleShape, Ic.Person, n)
                                 T(n, 14.sp, W700, modifier = Modifier.padding(top = 8.dp)); T(plural(l.size, "song"), 13.sp, color = C.sub)
                             }
@@ -464,5 +447,61 @@ fun SearchPage() {
                 }
             }
         }
+    }
+}
+
+
+/** the album menu (hold an album, or the ⋮ on its page) */
+@Composable
+fun AlbumSheet(a: Album, onRemoved: () -> Unit = {}) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val favs by Store.favs.collectAsState()
+    val allFav = a.songs.all { it.id in favs }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { u ->
+        if (u != null) Store.scope.launch { try { ctx.contentResolver.openInputStream(u)?.use { Store.setCover(a.songs.map { it.id }, it.readBytes()) }; Accents.forget(); Toasts.show("Cover updated") } catch (_: Exception) { } }
+    }
+    SheetScroll {
+        SheetHead(a.cover?.cover ?: "", a.title, "${a.artist} · ${plural(a.songs.size, "song")}")
+        Act(Ic.Play, "Play") { Ctl.play(ctx, a.songs, 0, a.title, false) }
+        Act(Ic.Shuffle, "Shuffle") { Ctl.shuffleAll(ctx, a.songs, a.title) }
+        Act(Ic.PlayNext, "Play Next") { Ctl.playNext(ctx, a.songs); Toasts.show("Playing next") }
+        Act(Ic.AddQ, "Add to Queue") { Ctl.addToQueue(ctx, a.songs); Toasts.show("Added to queue") }
+        Act(Ic.List, "Add to Playlist…") { Dialogs.sheet { PlaylistPicker(a.songs.map { it.id }) } }
+        Act(if (allFav) Ic.HeartFill else Ic.Heart, if (allFav) "Remove All from Favorites" else "Favorite All Songs") { Store.setFav(a.songs.map { it.id }, !allFav); likeToast(!allFav) }
+        Act(Ic.Person, "Go to Artist") { Nav.open(Page.ArtistP(a.artist)) }
+        Act(Ic.Search, "Look Up Album Info…") { Dialogs.sheet { LookupAlbum(a, false) } }
+        Act(Ic.Image, "Find Cover Automatically", if (a.cover == null) "This album has no cover yet" else "Replaces the current cover") { Tasks.findCovers(listOf(a)) }
+        Act(Ic.Image, "Choose Cover Online…") { Dialogs.sheet { LookupAlbum(a, true) } }
+        Act(Ic.Folder, "Choose Cover from Phone…") { pick.launch("image/*") }
+        Act(Ic.Pack, "Share as Music Pack…") { scope.launch { sharePack(ctx, a.title, a.songs, null) } }
+        Act(Ic.Trash, "Remove Album…", danger = true) { Dialogs.show { Confirm("Remove “${a.title}”?", "${plural(a.songs.size, "song")} are deleted from this phone.", "Remove") { Store.remove(a.songs.map { it.id }); onRemoved() } } }
+    }
+}
+
+/** the artist menu (hold an artist) */
+@Composable
+fun ArtistSheet(name: String) {
+    val ctx = LocalContext.current
+    val songs by Store.songs.collectAsState()
+    val favA by Store.favArtists.collectAsState()
+    val mine = remember(songs, name) { Store.artists(songs)[name] ?: emptyList() }
+    val fav = name.lowercase() in favA
+    val info = Store.artistInfo(name)
+    val photo = info?.optString("image")?.takeIf { Store.coverFile(it).exists() } ?: mine.firstOrNull { it.cover.isNotEmpty() }?.cover ?: ""
+    val noCover = remember(mine) { Store.albums(mine).filter { it.cover == null } }
+    SheetScroll {
+        SheetHead(photo, name, plural(mine.size, "song"), name, round = true)
+        if (mine.isNotEmpty()) {
+            Act(Ic.Play, "Play") { Ctl.play(ctx, mine, 0, name, false) }
+            Act(Ic.Shuffle, "Shuffle") { Ctl.shuffleAll(ctx, mine, name) }
+            Act(Ic.Spark, "Radio", "Similar songs from YouTube Music") { Radio.artist(ctx, name, mine) }
+            Act(Ic.PlayNext, "Play Next") { Ctl.playNext(ctx, mine); Toasts.show("Playing next") }
+            Act(Ic.AddQ, "Add to Queue") { Ctl.addToQueue(ctx, mine); Toasts.show("Added to queue") }
+            Act(Ic.List, "Add to Playlist…") { Dialogs.sheet { PlaylistPicker(mine.map { it.id }) } }
+        }
+        Act(if (fav) Ic.HeartFill else Ic.Heart, if (fav) "Unfavorite (unpin)" else "Favorite (pin to the top)") { Store.toggleFavArtist(name); likeToast(name.lowercase() in Store.favArtists.value, "favorite artists") }
+        Act(Ic.Globe, "Get More from YouTube Music") { Yt.findArtist(name, info?.optString("channel") ?: ""); Nav.open(Page.Search); Yt.mode.value = true }
+        if (noCover.isNotEmpty()) Act(Ic.Image, "Find Missing Covers", plural(noCover.size, "album") + " without a cover") { Tasks.findCovers(noCover) }
     }
 }

@@ -129,7 +129,7 @@ class YtEngine(private val ctx: Context) {
 
 /** Hands out the hidden browser: opened on first use, closed [IDLE_MS] after the last job. Otherwise nothing runs. */
 object Engine {
-    private const val IDLE_MS = 8000L
+    private const val IDLE_MS = 15000L
     private val mutex = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var eng: YtEngine? = null
@@ -158,6 +158,9 @@ object Engine {
             }
         }
     }
+
+    /** opens the hidden browser ahead of time (when the YouTube search screen opens) so the first search / download doesn't wait for it */
+    fun warm() { scope.launch { try { use { } } catch (_: Exception) { } } }
 
     suspend fun search(q: String, type: String): List<JSONObject> = use { e ->
         val arr = org.json.JSONArray(e.call("search", JSONObject().put("q", q).put("type", type).toString()))
