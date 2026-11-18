@@ -44,6 +44,8 @@ object Prefs {
     val tuck = MutableStateFlow(false)
     val scrollTimer = MutableStateFlow(1.5f)
     val autoSaver = MutableStateFlow(true)
+    /** ms: how much later (+) or earlier (-) the visualizer and background effects move than the music */
+    val vizShift = MutableStateFlow(0f)
     val compress = MutableStateFlow(true)
     val autofill = MutableStateFlow(true)
     val npLyrics = MutableStateFlow(false)
@@ -62,7 +64,7 @@ object Prefs {
         eqCustom.value = s.optJSONArray("eqCustom")?.let { a -> (0 until 10).map { a.optDouble(it, 0.0).toFloat() } } ?: List(10) { 0f }
         motion.value = s.optBoolean("motion", true); liquid.value = s.optBoolean("liquidGlass", true);
         glassThick.value = s.optDouble("glassThick", 24.0).toFloat(); glassBend.value = s.optDouble("glassBend", 0.6).toFloat(); glassSplit.value = s.optDouble("glassSplit", 0.16).toFloat()
-        glassFrost.value = s.optDouble("glassFrost", 0.25).toFloat(); glassOpacity.value = s.optDouble("glassOpacity", 0.5).toFloat(); glassShine.value = s.optBoolean("glassShine", true); tuck.value = s.optBoolean("tuckPinned", false); scrollTimer.value = s.optDouble("scrollTimer", 1.5).toFloat(); autoSaver.value = s.optBoolean("autoSaver", true)
+        glassFrost.value = s.optDouble("glassFrost", 0.25).toFloat(); glassOpacity.value = s.optDouble("glassOpacity", 0.5).toFloat(); glassShine.value = s.optBoolean("glassShine", true); tuck.value = s.optBoolean("tuckPinned", false); scrollTimer.value = s.optDouble("scrollTimer", 1.5).toFloat(); autoSaver.value = s.optBoolean("autoSaver", true); vizShift.value = s.optDouble("vizShift", 0.0).toFloat(); NativePlayer.vizShift(vizShift.value)
         compress.value = s.optBoolean("compress", true); autofill.value = s.optBoolean("autofill", true)
         npLyrics.value = s.optBoolean("npLyrics", false); sort.value = s.optInt("nativeSort", 0)
         applyAudio()
@@ -85,6 +87,7 @@ object Prefs {
     }
     fun setLiquid(v: Boolean) { liquid.value = v; put("liquidGlass", v) }
     fun setMotion(v: Boolean) { motion.value = v; put("motion", v) }
+    fun setVizShift(v: Float) { vizShift.value = v; NativePlayer.vizShift(v); put("vizShift", v.toDouble()) }
     fun setAutoSaver(v: Boolean) { autoSaver.value = v; put("autoSaver", v) }
     fun setCompress(v: Boolean) { compress.value = v; put("compress", v); if (v) Tasks.poke() }
     fun setAutofill(v: Boolean) { autofill.value = v; put("autofill", v); if (v) Tasks.poke() }

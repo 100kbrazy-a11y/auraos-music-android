@@ -223,6 +223,8 @@ public class AuraPlaybackService extends MediaSessionService {
     final double[] vizStart = { 0, 0 }, vizAcc = { 0, 0 };
     final boolean[] vizSeek = { false, false };
     private final int[] vizFlush = { -1, -1 };
+    /** Settings › Visual Timing: positive = the visuals come later, negative = earlier (ms) */
+    static volatile double vizShiftMs = 0;
     byte[] levels() {
         int i = cur;
         AuraAudioProcessor pr = procs[i];
@@ -231,7 +233,7 @@ public class AuraPlaybackService extends MediaSessionService {
         if (fl != vizFlush[i]) { vizFlush[i] = fl; if (!vizSeek[i]) { vizStart[i] = pos; vizAcc[i] = 0; } vizSeek[i] = false; }
         double played = pos + vizAcc[i] - vizStart[i];
         if (played > pr.processedMs() + 50 || played < -2000) { vizStart[i] = pos - Math.max(0, pr.processedMs() - pr.leadMs()); vizAcc[i] = 0; played = pos - vizStart[i]; }   // lost track: line up again
-        return pr.levelsAt(played);
+        return pr.levelsAt(played - vizShiftMs);
     }
 
     // ------------------------------------------------------------------ crossfade

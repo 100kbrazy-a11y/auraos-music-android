@@ -18,6 +18,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import com.auraos.music.NativePlayer
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
@@ -125,6 +128,9 @@ fun SettingsPage() {
                     val tuck by Prefs.tuck.collectAsState(); val timer by Prefs.scrollTimer.collectAsState()
                     var openTimer by remember { mutableStateOf(false) }
                     SwitchItem(Ic.Spark, "Liquid Glass", if (liquid) "Real glass on every clear control: it bends the music behind it, splits light at the edges and catches the light as you tilt" else "Off · classic frosted blur", liquid) { Prefs.setLiquid(it) }
+ 
+                   val shift by Prefs.vizShift.collectAsState()
+                    Item(Ic.Eq, "Visual Timing", "Line the visualizer and background up with the music", value = if (shift == 0f) "In time" else "%+d ms".format(shift.toInt()), chevron = true, onClick = { Dialogs.sheet { TimingSheet() } })
                     Item(Ic.Eq, "Glass", "Thickness, bend, colour split, frost, opacity, tilt shine", chevron = true, onClick = { Dialogs.sheet { GlassSheet() } })
                     SwitchItem(Ic.Spark, "Motion Effects", "Sliding pages, glow, living background", motion) { Prefs.setMotion(it) }
                     SwitchItem(Ic.Spark, "Save Battery Automatically", "Pause the moving background in Battery Saver or below 20%", saver) { Prefs.setAutoSaver(it) }
@@ -257,5 +263,38 @@ fun GlassSheet() {
             Column(Modifier.weight(1f)) { T("Tilt Shine", 15.sp, W650); T("The highlight moves as you tilt your phone", 13.sp, color = C.sub) }
             Switch(shine) { Prefs.setGlass(shine = it) }
         }
+    }
+}
+
+
+/** Settings › Visual Timing: a live visualizer right under the slider, to line it up with what you hear */
+@Composable
+fun TimingSheet() {
+    val shift by Prefs.vizShift.collectAsState()
+    val st by NativePlayer.state.collectAsState()
+    val a = accent
+    val levels by rememberLevels(st.playing, 48)
+    val bass = if (levels.size >= 4) levels.take(4).average().toFloat() else 0f
+    SheetScroll {
+        Row(Modifier.padding(start = 24.dp, end = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Ic.Eq, tint = a); Spacer(Modifier.width(12.dp)); T("Visual Timing", 22.sp, W700, modifier = Modifier.weight(1f))
+            TextBtn("Reset") { Hap.soft(); Prefs.setVizShift(0f) }
+        }
+        T("Play a song and watch the bars and the pulse below. If they hit after you hear the beat, move the slider to Earlier; if they hit before it, move it to Later. It applies to the player's visualizer and background.", 13.sp, color = C.sub, lines = 6, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+        // the live view: bars, and a pulse that flashes on every bass hit
+        Box(Modifier.padding(horizontal = 24.dp, vertical = 10.dp).fillMaxWidth().height(150.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF0B0B0E))) {
+            Bars(levels, a.copy(alpha = 0.85f), Modifier.matchParentSize().padding(horizontal = 6.dp, vertical = 6.dp))
+            Box(Modifier.align(Alignment.TopCenter).padding(top = 10.dp).size(22.dp).graphicsLayer { val k = (0.5f + bass * 1.4f).coerceIn(0.5f, 1.5f); scaleX = k; scaleY = k; alpha = (0.25f + bass * 1.2f).coerceIn(0.25f, 1f) }.clip(androidx.compose.foundation.shape.CircleShape).background(a))
+            if (!st.playing) T("Play a song to see it", 14.sp, color = C.sub, modifier = Modifier.align(Alignment.Center))
+        }
+        Column(Modifier.padding(horizontal = 24.dp, vertical = 6.dp)) {
+            Row {
+                T("Earlier", 13.sp, color = C.sub); Spacer(Modifier.weight(1f))
+                T(if (shift == 0f) "In time" else if (shift > 0) "${shift.toInt()} ms later" else "${(-shift).toInt()} ms earlier", 15.sp, W700, a)
+                Spacer(Modifier.weight(1f)); T("Later", 13.sp, color = C.sub)
+            }
+            Slide(shift, -500f..500f, 10f) { Prefs.setVizShift(it) }
+        }
+        Spacer(Modifier.height(8.dp))
     }
 }

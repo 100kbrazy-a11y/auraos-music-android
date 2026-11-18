@@ -58,7 +58,7 @@ public final class AuraAudioProcessor extends BaseAudioProcessor {
     private int ringPos = 0, sinceSnap = 0;
     private final double[] re = new double[N], im = new double[N], smooth = new double[N / 2];
     static final int OUT = 512;                      // bins sent to the app (it only looks at the lower ones)
-    private static final int SNAPS = 64;
+    private static final int SNAPS = 160;
     private final byte[][] snaps = new byte[SNAPS][OUT];
     private final long[] snapAt = new long[SNAPS];
     /** where in the audio (ms since the last flush) each snapshot was taken, and how much audio has gone through so far */

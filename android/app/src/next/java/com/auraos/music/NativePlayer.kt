@@ -110,6 +110,7 @@ object NativePlayer {
     /** the spectrum right now (512 bytes) for the visualizer; turns the analysis on while asked for */
     fun viz(on: Boolean) { AuraAudioProcessor.viz = on }
     fun levels(): ByteArray? = AuraPlaybackService.instance?.levels()
+    fun vizShift(ms: Float) { AuraPlaybackService.vizShiftMs = ms.toDouble() }
     /** silence + beat: [start s, end s, dur s, bpmStart, beatStart s, confStart, bpmEnd, beatEnd s, confEnd] */
     fun scanSilence(f: java.io.File, durSec: Double): DoubleArray = AuraSilence.scan(f, durSec)
     /** re-encodes [f] to Opus (or AAC where there is no Opus encoder); returns (path, size, codec, mime) */
