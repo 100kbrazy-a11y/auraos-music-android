@@ -14,7 +14,7 @@ android {
         legacy { dimension "ui" }
         // the native app's version comes from its release notes file (newest entry): MAJOR.MINOR.PATCH -> code MAJOR*10000 + MINOR*100 + PATCH
         next {
-            dimension "ui"; applicationIdSuffix ".next"
+            dimension "ui"; applicationIdSuffix ".next"; minSdkVersion 24   // the liquid glass library needs Android 7.0+
             def rel = new groovy.json.JsonSlurper().parse(file("src/next/assets/release.json")).releases[0]
             def v = rel.version.tokenize(".").collect { it as int }
             versionName rel.version
