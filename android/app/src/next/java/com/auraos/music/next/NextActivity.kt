@@ -67,6 +67,7 @@ class NextActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Store.init(this)
         Prefs.init(this)
+        if (savedInstanceState == null) Cfg.startTab.v.value.let { st -> if (st >= 0) Nav.tab.value = TabsCfg.order.value.indexOf(st).coerceAtLeast(0) }
         if (intent?.getBooleanExtra("seedDemo", false) == true) Demo.seed()
         if (intent?.hasExtra("liquid") == true) Prefs.setLiquid(intent.getBooleanExtra("liquid", true))
         NativePlayer.start(this)
@@ -90,7 +91,8 @@ class NextActivity : ComponentActivity() {
         i?.getStringExtra("open")?.let { o -> Tour.open(this, o); return }
         if (i?.action == Intent.ACTION_SEND) { val t = i.getStringExtra(Intent.EXTRA_TEXT) ?: return; Nav.stack.clear(); Nav.open(Page.Search); Yt.link(t) }
     }
-    override fun onStop() { super.onStop(); Ctl.save(); Store.save(true) }
+    override fun onStart() { super.onStart(); VizHold.fg = true; VizHold.refresh(NativePlayer.state.value.playing, Prefs.motion.value && !Prefs.saving.value) }
+    override fun onStop() { super.onStop(); VizHold.fg = false; VizHold.refresh(false, false); Ctl.save(); Store.save(true) }
 }
 
 object Snack { val text = mutableStateOf<String?>(null) }
@@ -112,7 +114,9 @@ fun Themed(content: @Composable () -> Unit) {
         val q by Ctl.queue.collectAsState()
         val cur = q.getOrNull(st.index)?.let { s -> songs.firstOrNull { it.id == s.id } ?: s }
         // the whole app takes the playing song's cover colour (like --accent)
-        val target = remember(cur?.cover) { cur?.cover?.takeIf { it.isNotEmpty() }?.let { Accents.of(Store.coverFile(it)) } } ?: C.defAccent
+        val follow by Prefs.coverAccent.collectAsState(); val fixed by Prefs.accent.collectAsState()
+        val fromCover = remember(cur?.cover) { cur?.cover?.takeIf { it.isNotEmpty() }?.let { Accents.of(Store.coverFile(it)) } }
+        val target = if (follow) fromCover ?: C.defAccent else androidx.compose.ui.graphics.Color(fixed)
         val acc by animateColorAsState(target, tween(600), label = "acc")
         val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         CompositionLocalProvider(LocalAccent provides acc, LocalBottom provides (if (isLand()) (if (cur != null) 96.dp else 24.dp) else if (cur != null) 163.dp else 100.dp) + nav) { content() }
@@ -123,7 +127,9 @@ fun Themed(content: @Composable () -> Unit) {
 @Composable
 fun BgApp() {
     val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
-    val pager = rememberPagerState(initialPage = Nav.tab.value) { 4 }
+    val order by TabsCfg.order.collectAsState()
+    val pager = rememberPagerState(initialPage = Nav.tab.value.coerceIn(0, order.size - 1)) { order.size }
+    LaunchedEffect(order) { if (Nav.tab.value > order.size - 1) Nav.tab.value = order.size - 1 }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { Pager.animateTo = { i -> scope.launch { pager.animateScrollToPage(i) } } }
     LaunchedEffect(Nav.tab.value) { if (pager.currentPage != Nav.tab.value || pager.currentPageOffsetFraction != 0f) pager.animateScrollToPage(Nav.tab.value) }
@@ -140,7 +146,7 @@ fun BgApp() {
         CompositionLocalProvider(LocalBgLayer provides true) {
         Box(Modifier.fillMaxSize().nestedScroll(Tuck.watch).padding(end = railPad)) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
-            when (page) { 0 -> AlbumsScreen(); 1 -> ArtistsScreen(); 2 -> SongsScreen(); else -> PlaylistsScreen() }
+            when (order.getOrElse(page) { 2 }) { 0 -> AlbumsScreen(); 1 -> ArtistsScreen(); 2 -> SongsScreen(); else -> PlaylistsScreen() }
         }
         Nav.stack.forEachIndexed { i, p ->
             key(i, p) {
@@ -150,7 +156,7 @@ fun BgApp() {
                     Box(Modifier.fillMaxSize().background(C.bg)) { CompositionLocalProvider(LocalPageIndex provides i) {
                         when (p) {
                             is Page.AlbumP -> AlbumPage(p.key); is Page.ArtistP -> ArtistPage(p.name); is Page.PlaylistP -> PlaylistPage(p.name)
-                            Page.Favorites -> FavoritesPage(); Page.Search -> SearchPage(); Page.Settings -> SettingsPage()
+                            Page.Favorites -> FavoritesPage(); Page.Search -> SearchPage(); Page.Settings -> SettingsPage(); Page.Customize -> CustomizePage()
                         }
                     } }
                 }
@@ -170,6 +176,8 @@ fun FgApp() {
     Morph.scope = scope
     val songs by Store.songs.collectAsState()
     val st by NativePlayer.state.collectAsState()
+    val vMotion by Prefs.motion.collectAsState(); val vSaving by Prefs.saving.collectAsState()
+    LaunchedEffect(st.playing, vMotion, vSaving) { VizHold.refresh(st.playing, vMotion && !vSaving) }
     val q by Ctl.queue.collectAsState()
     val busy by Store.busy.collectAsState()
     val awake by Prefs.keepAwake.collectAsState()
@@ -224,8 +232,8 @@ fun FgApp() {
         val land = isLand()
         Box(Modifier.padding(end = if (land) Rail + 22.dp else 0.dp)) {
         if (Nav.stack.isEmpty()) {
-            val t = Nav.tab.value
-            Head(listOf("Albums", "Artists", "Songs", "Playlists")[t], TabScroll.v[t]) { Tools() }
+            val tid = TabsCfg.order.collectAsState().value.getOrElse(Nav.tab.value) { 2 }
+            Head(TabsCfg.NAMES[tid], TabScroll.v[tid]) { Tools(sortTab = tid) }
         } else {
             // a page's header is drawn up here too, so its bar can be real glass over the page
             val top = Nav.stack.lastIndex
@@ -242,7 +250,7 @@ fun FgApp() {
                     }
                 }
             }
-            if (!land) AnimatedVisibility(Nav.stack.lastOrNull() != Page.Settings, enter = slideInVertically { it }, exit = slideOutVertically { it }) {   // the bottom bar steps away in Settings
+            if (!land) AnimatedVisibility(Nav.stack.lastOrNull() != Page.Settings && Nav.stack.lastOrNull() != Page.Customize, enter = slideInVertically { it }, exit = slideOutVertically { it }) {   // the bottom bar steps away in Settings
                 Dock(cur, Nav.tab.value, { i -> Hap.tick(); Nav.stack.clear(); Nav.tab.value = i }) { full = true }
             }
         }

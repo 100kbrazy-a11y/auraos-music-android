@@ -91,15 +91,6 @@ fun FilterSheet() {
     }
 }
 
-private fun sortSongs(l: List<Song>, sort: Int): List<Song> = when (sort) {
-    1 -> l.sortedWith(compareBy({ it.artist.lowercase() }, { it.album.lowercase() }, { it.disc }, { it.track }))
-    2 -> l.sortedWith(compareBy({ it.album.lowercase() }, { it.disc }, { it.track }))
-    3 -> l.sortedByDescending { it.added }
-    4 -> l.sortedByDescending { it.durMs }
-    5 -> l.sortedByDescending { it.j.optInt("plays") }
-    else -> l.sortedWith(compareBy({ it.title.lowercase() }, { it.artist.lowercase() }))
-}
-
 @Composable
 fun AddMusicEmpty() = Empty(Ic.Note, "Add your music", "Add songs from your phone, a music pack someone shared with you, or a YouTube link.", "Add Music" to { Dialogs.sheet { AddMusicSheet() } })
 
@@ -107,14 +98,13 @@ fun AddMusicEmpty() = Empty(Ic.Note, "Add your music", "Add songs from your phon
 fun AlbumsScreen() {
     val songs by Store.songs.collectAsState()
     val favs by Store.favs.collectAsState()
-    val sort by Prefs.sort.collectAsState()
+    val sortK by Sorting.key[0].collectAsState(); val sortD by Sorting.desc[0].collectAsState(); val size = Cfg.albumSize.use()
     val gs = rememberLazyGridState()
-    val albums = remember(songs, sort, favs, Filt.active(), Filt.genre.toList(), Filt.artist.toList(), Filt.decade.toList(), Filt.length.toList(), Filt.favs.value, Filt.recent.value) {
-        val a = Store.albums(songs.filter { Filt.pass(it, favs.keys) })
-        when (sort) { 1 -> a.sortedBy { it.artist.lowercase() }; 3 -> a.sortedByDescending { it.added }; else -> a }
+    val albums = remember(songs, sortK, sortD, favs, Filt.active(), Filt.genre.toList(), Filt.artist.toList(), Filt.decade.toList(), Filt.length.toList(), Filt.favs.value, Filt.recent.value) {
+        Sorting.albums(Store.albums(songs.filter { Filt.pass(it, favs.keys) }))
     }
     Box(Modifier.fillMaxSize()) {
-        LazyVerticalGrid(GridCells.Adaptive(150.dp), state = gs, contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = topPad() + 6.dp, bottom = LocalBottom.current),
+        LazyVerticalGrid(GridCells.Adaptive(listOf(110, 150, 190)[size.coerceIn(0, 2)].dp), state = gs, contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = topPad() + 6.dp, bottom = LocalBottom.current),
             horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             if (songs.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { AddMusicEmpty() }
             gitems(albums, key = { it.key }) { AlbumCard(it) }
@@ -129,8 +119,9 @@ fun ArtistsScreen() {
     val favA by Store.favArtists.collectAsState()
     val favs by Store.favs.collectAsState()
     Store.ver.collectAsState().value
+    val sortK by Sorting.key[1].collectAsState(); val sortD by Sorting.desc[1].collectAsState()
     val ls = rememberLazyListState()
-    val artists = remember(songs, favA, favs, Filt.active()) { Store.artists(songs.filter { Filt.pass(it, favs.keys) }).entries.toList().sortedWith(compareBy({ it.key.lowercase() !in favA }, { it.key.lowercase() })) }
+    val artists = remember(songs, favA, favs, Filt.active(), sortK, sortD) { Sorting.artists(Store.artists(songs.filter { Filt.pass(it, favs.keys) }).entries.toList(), favA) }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
             if (songs.isEmpty()) item { AddMusicEmpty() }
@@ -152,13 +143,13 @@ fun ArtistsScreen() {
 fun SongsScreen() {
     val songs by Store.songs.collectAsState()
     val favs by Store.favs.collectAsState()
-    val sort by Prefs.sort.collectAsState()
+    val sortK by Sorting.key[2].collectAsState(); val sortD by Sorting.desc[2].collectAsState()
     val ls = rememberLazyListState()
-    val list = remember(songs, sort, favs, Filt.active(), Filt.genre.toList(), Filt.artist.toList(), Filt.decade.toList(), Filt.length.toList(), Filt.favs.value, Filt.recent.value) { sortSongs(songs.filter { Filt.pass(it, favs.keys) }, sort) }
+    val list = remember(songs, sortK, sortD, favs, Filt.active(), Filt.genre.toList(), Filt.artist.toList(), Filt.decade.toList(), Filt.length.toList(), Filt.favs.value, Filt.recent.value) { Sorting.songs(songs.filter { Filt.pass(it, favs.keys) }) }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
             if (songs.isEmpty()) item { AddMusicEmpty() }
-            else item { Plays(list, "Songs", if (Filt.active()) "${plural(list.size, "song")} · ${fmtLong(list.sumOf { it.durMs })} · filtered" else null) }
+            else item { Plays(list, "Songs", "${plural(list.size, "song")} · ${fmtLong(list.sumOf { it.durMs })} · ${Sorting.label(2)}" + if (Filt.active()) " · filtered" else "") }
             items(list, key = { it.id }) { s -> SongRow(s, list, "Songs") }
         }
         val sc = ls.scrolled; LaunchedEffect(sc) { TabScroll.v[2] = sc }
@@ -171,6 +162,8 @@ fun PlaylistsScreen() {
     val favs by Store.favs.collectAsState()
     val songs by Store.songs.collectAsState()
     val by = remember(songs) { songs.associateBy { it.id } }
+    val sortK by Sorting.key[3].collectAsState(); val sortD by Sorting.desc[3].collectAsState()
+    val plNames = remember(pls, sortK, sortD) { Sorting.playlists(pls.keys.toList()) { n -> pls[n]?.size ?: 0 } }
     val ls = rememberLazyListState()
     val a = accent
     Box(Modifier.fillMaxSize()) {
@@ -182,7 +175,7 @@ fun PlaylistsScreen() {
                 PlRow({ Box(Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)).background(Brush.linearGradient(listOf(a, mix(a, 0.6f, Color(0xFF7A1A3A))))), contentAlignment = Alignment.Center) { Icon(Ic.HeartFill, tint = C.onAccent) } },
                     "Favorite Songs", plural(favs.keys.count { it in by }, "song")) { Nav.open(Page.Favorites) }
             }
-            items(pls.keys.toList(), key = { it }) { name ->
+            items(plNames, key = { it }) { name ->
                 val ids = pls[name] ?: emptyList()
                 PlRow({ Art(ids.firstNotNullOfOrNull { by[it]?.cover?.takeIf { c -> c.isNotEmpty() } } ?: "", 56.dp, shape = RoundedCornerShape(10.dp), ph = Ic.List, phName = name) },
                     name, plural(ids.count { it in by }, "song")) { Nav.open(Page.PlaylistP(name)) }

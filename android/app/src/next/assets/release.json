@@ -2,6 +2,23 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.10.0",
+   "name": "The Customizer Update",
+   "date": "2026-11-18",
+   "notes": [
+    "New Customize centre (Settings → Make it yours): reorder or hide the four tabs, pick your start tab, change song row size, album grid size, and what each row shows",
+    "Sorting like Musicolet: a sort button on every tab — title, artist, album, year, date added, duration, most played and more, ascending or descending, remembered per tab",
+    "Fullscreen player: choose the background (living fog, blurred cover, accent glow or black), visualizer style (bars, mirror, wave, dots), its colour, height and opacity",
+    "Choose the cover's shape and size, the lyrics' size, alignment, glow and fade, the play button style and the seek bar thickness, and add lyrics / equalizer / sleep / queue buttons",
+    "Sideways Fullscreen is rebuilt: the big album cover on the left, lyrics or the title on the right, controls along the bottom",
+    "Lyrics no longer have hard edges: the top, bottom and sides fade softly and the glow and blur are never cut off",
+    "The equalizer is live the instant you open Fullscreen — no more delay",
+    "When the media bar is tucked into its little square, the player now grows out of it and shrinks back into it",
+    "The top glass bar is raised above the screen edge so its rounded top is never seen",
+    "Media bar: optionally hide the progress line or the next button; accent colour can follow the cover or stay fixed"
+   ]
+  },
+  {
    "version": "2.9.0",
    "name": "The Collector Update",
    "date": "2026-11-18",

@@ -53,6 +53,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.composed
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -94,6 +95,7 @@ sealed class Page {
     object Favorites : Page()
     object Search : Page()
     object Settings : Page()
+    object Customize : Page()
 }
 object Nav {
     val stack = mutableStateListOf<Page>()
@@ -230,7 +232,12 @@ fun HeadBar(title: String, scrolled: Boolean, back: Boolean, actions: @Composabl
     val barA by animateFloatAsState(if (scrolled) 1f else 0f, tween(300, easing = Ease), label = "hb")
     val drop = with(LocalDensity.current) { 14.dp.toPx() }
     Box(Modifier.fillMaxWidth()) {
-        Box(Modifier.matchParentSize().graphicsLayer { translationY = -(1f - barA) * drop }
+        // the glass bar reaches up past the top of the screen, so its top edge and rim are never seen (only the round bottom)
+        val up = with(LocalDensity.current) { 28.dp.roundToPx() }
+        Box(Modifier.matchParentSize().layout { m, c ->
+            val p = m.measure(androidx.compose.ui.unit.Constraints.fixed(c.maxWidth, c.maxHeight + up))
+            layout(c.maxWidth, c.maxHeight) { p.place(0, -up) }
+        }.graphicsLayer { translationY = -(1f - barA) * (drop + up) }
             .liquid("head", 24.dp, Color(0xFF0B0B0E).copy(alpha = 0.42f), z = 1, alpha = barA, corners = listOf(0.dp, 0.dp, 24.dp, 24.dp)))
         Row(Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 60.dp).padding(start = if (back) 8.dp else 18.dp, end = 8.dp, top = 10.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -272,9 +279,10 @@ fun Modifier.graphicsScale(s: Float): Modifier = this.graphicsLayer { scaleX = s
 
 /** the glass pill of tool buttons at the top right: search, filter, settings */
 @Composable
-fun Tools(filter: (() -> Unit)? = null) {
+fun Tools(filter: (() -> Unit)? = null, sortTab: Int? = null) {
     Row(Modifier.liquid("tools", 22.dp, Color(0xFF2A272E).copy(alpha = 0.35f), z = 2).clip(RoundedCornerShape(22.dp)).padding(horizontal = 2.dp)) {
         IB(Ic.Search, box = 42.dp) { Nav.open(Page.Search) }
+        if (sortTab != null) IB(Ic.UpDown, box = 42.dp) { Dialogs.sheet { SortSheet(sortTab) } }
         IB(Ic.Filter, box = 42.dp, on = Filt.active()) { if (filter != null) filter() else Dialogs.sheet { FilterSheet() } }
         IB(Ic.Gear, box = 42.dp) { Nav.open(Page.Settings) }
     }
@@ -428,24 +436,27 @@ fun SongRow(s: Song, list: List<Song>, label: String, number: Int? = null, playl
     val st by NativePlayer.state.collectAsState()
     val favs by Store.favs.collectAsState()
     val a = accent
+    val dens = Cfg.rowDensity.use(); val cfgArt = Cfg.rowArt.use(); val cfgAlbum = Cfg.rowAlbum.use(); val cfgDur = Cfg.rowDur.use()
+    val textOnly = number == null && !cfgArt
+    val artSz = if (dens == 2) 56.dp else if (dens == 0) 44.dp else 48.dp
     val now = Ctl.queue.value.getOrNull(st.index)?.id == s.id
     val selecting = Sel.ids.isNotEmpty(); val picked = s.id in Sel.ids
     Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-        Row(Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(14.dp))
+        Row(Modifier.fillMaxWidth().height(if (dens == 0) 54.dp else if (dens == 2) 76.dp else 64.dp).clip(RoundedCornerShape(14.dp))
             .background(if (picked) mix(a, 0.35f, C.bg) else Color.Transparent)
             .combinedClickable(onLongClick = { Hap.press(); Sel.toggle(s.id) }, onDoubleClick = { if (!selecting) { val on = Store.toggleFav(s.id); if (on) Hap.success() else Hap.tap(); likeToast(on) } }) { if (selecting) { Sel.toggle(s.id); if (s.id in Sel.ids) Hap.tick() else Hap.soft() } else { Hap.tap(); Ctl.play(ctx, list, list.indexOf(s).coerceAtLeast(0), label) } }
             .padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (showArt) Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                Art(s.cover, 48.dp, phName = s.album.ifEmpty { s.title })
+            if (textOnly) Spacer(Modifier.width(4.dp)) else if (showArt) Box(Modifier.size(artSz), contentAlignment = Alignment.Center) {
+                Art(s.cover, artSz, phName = s.album.ifEmpty { s.title })
                 if (now) { Box(Modifier.matchParentSize().clip(RoundedCornerShape(9.dp)).background(Color.Black.copy(alpha = 0.45f))); EqBars(st.playing) }
                 if (picked) Box(Modifier.matchParentSize().clip(RoundedCornerShape(9.dp)).background(mix(a, 0.35f, Color.Transparent)).border(3.dp, a, RoundedCornerShape(9.dp)), contentAlignment = Alignment.Center) { Icon(Ic.Check, size = 18.dp, strokeWidth = 3f) }
             } else Box(Modifier.width(30.dp), contentAlignment = Alignment.Center) { if (now) EqBars(st.playing, a) else T(if ((number ?: 0) > 0) "$number" else "–", 15.sp, W600, C.sub) }
             Column(Modifier.weight(1f)) {
                 T(s.title, 15.sp, W650, if (now) a else C.text)
-                T((if (showArt) listOf(s.artist, s.album) else listOf(s.artist)).filter { it.isNotBlank() }.joinToString(" · ").ifEmpty { "Unknown Artist" }, 13.sp, color = C.sub)
+                T((if (showArt && cfgAlbum) listOf(s.artist, s.album) else listOf(s.artist)).filter { it.isNotBlank() }.joinToString(" · ").ifEmpty { "Unknown Artist" }, 13.sp, color = C.sub)
             }
             if (s.id in favs) Icon(Ic.HeartFill, size = 16.dp, tint = a)
-            if (s.durMs > 0) T(fmt(s.durMs), 12.5.sp, color = C.faint)
+            if (s.durMs > 0 && cfgDur) T(fmt(s.durMs), 12.5.sp, color = C.faint)
             IB(Ic.More, C.sub) { Dialogs.sheet { SongSheet(s, playlist) } }
         }
     }

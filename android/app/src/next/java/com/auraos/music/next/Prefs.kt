@@ -68,6 +68,7 @@ object Prefs {
         compress.value = s.optBoolean("compress", true); autofill.value = s.optBoolean("autofill", true)
         npLyrics.value = s.optBoolean("npLyrics", false); sort.value = s.optInt("nativeSort", 0)
         applyAudio()
+        Cfg.load()
     }
     private fun put(k: String, v: Any) { s.put(k, v); Store.save() }
 

@@ -105,6 +105,9 @@ fun SettingsPage() {
                     }
                     T("${fmtSize(bytes)} on this phone", 12.sp, color = C.sub, align = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 14.dp))
                 }
+                Group("Make it yours") {
+                    Item(Ic.Spark, "Customize", "Tabs, sorting, library layout, player, visualizer, lyrics, colours", chevron = false, onClick = { Nav.open(Page.Customize) })
+                }
                 Group("Your Music") {
                     Item(Ic.Plus, "Add Music", "Songs, a folder, music packs or a YouTube link", onClick = { Dialogs.sheet { AddMusicSheet() } })
                     Item(Ic.Folder, "Library", task.ifEmpty { listOf(if (noCover > 0) plural(noCover, "missing cover") else "", if (noGenre > 0) "$noGenre without a genre" else "").filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { "Covers, genres, compression, clean-up · all set" } },
