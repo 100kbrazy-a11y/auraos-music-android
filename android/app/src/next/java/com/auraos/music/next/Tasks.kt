@@ -27,6 +27,23 @@ object Tasks {
 
     fun poke() { if (job?.isActive != true) job = scope.launch { delay(3000); run() } }
 
+    /** battery percent (-1 unknown) and whether it's charging */
+    fun battery(c: Context): Pair<Int, Boolean> {
+        val b = c.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return -1 to false
+        val lvl = b.getIntExtra(BatteryManager.EXTRA_LEVEL, -1); val sc = b.getIntExtra(BatteryManager.EXTRA_SCALE, 100); val st = b.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+        return (if (lvl >= 0) lvl * 100 / sc else -1) to (st == BatteryManager.BATTERY_STATUS_CHARGING || st == BatteryManager.BATTERY_STATUS_FULL)
+    }
+    /** why motion is (not) running, in words */
+    fun motionWhy(c: Context): String {
+        val (pct, chg) = battery(c)
+        val pm = c.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        return when {
+            !Prefs.motion.value -> "Motion Effects is switched off (Settings › Look & Feel)"
+            Prefs.saving.value && pm?.isPowerSaveMode == true -> "Android's battery saver is on, so motion is paused"
+            Prefs.saving.value -> "battery is at $pct% and not charging, so motion is paused (Settings › Look & Feel › Battery Saver)"
+            else -> "motion is running (battery ${if (pct >= 0) "$pct%" else "unknown"}${if (chg) ", charging" else ""})"
+        }
+    }
     fun saver(c: Context): Boolean {
         val pm = c.getSystemService(Context.POWER_SERVICE) as? PowerManager
         if (pm?.isPowerSaveMode == true) return true

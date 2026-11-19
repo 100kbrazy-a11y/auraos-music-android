@@ -2,6 +2,15 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.10.3",
+   "name": "The Customizer Update",
+   "date": "2026-11-19",
+   "notes": [
+    "New \"Motion check\" at the top of Customize: says plainly whether the living background and visualizer are running (or paused by Motion Effects, Android's battery saver, or the app's low-battery saver) and whether the audio analyser can hear the music — with one tap to keep motion on",
+    "Diagnostics now records why motion is on or paused, and what the player is using, so problems show up there"
+   ]
+  },
+  {
    "version": "2.10.2",
    "name": "The Customizer Update",
    "date": "2026-11-18",

@@ -550,6 +550,10 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
     val live = motion && !saving
     val levels by rememberLevels(live && st.playing && (bgStyle == 0 || vizStyle != 4), vizBars)
     val land = isLand()
+    val ctxD = LocalContext.current
+    LaunchedEffect(live, vizStyle, bgStyle) {
+        Diag.log("player: ${Tasks.motionWhy(ctxD)} · background=$bgStyle visualizer=$vizStyle bars=$vizBars")
+    }
     Box(Modifier.fillMaxSize()) {
       Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.background(Color(0xFF08080A)).clipToBounds()) {
         // .bg: the cover itself, hugely blurred and darkened; .bg2: vignette; .glowpulse: the accent breathing with the bass

@@ -206,7 +206,7 @@ fun FgApp() {
         Tasks.poke()
         Updater.autoCheck(ctx)
     }
-    LaunchedEffect(Unit) { while (true) { Prefs.saving.value = Prefs.autoSaver.value && Tasks.saver(ctx); delay(60000) } }
+    LaunchedEffect(Unit) { while (true) { val was = Prefs.saving.value; Prefs.saving.value = Prefs.autoSaver.value && Tasks.saver(ctx); if (Prefs.saving.value != was || was == false && Diag.lines.value.none { it.contains("motion check") }) Diag.log("motion check: ${Tasks.motionWhy(ctx)}"); delay(60000) } }
     LaunchedEffect(awake, full) {
         val w = (ctx as? Activity)?.window ?: return@LaunchedEffect
         if (awake && full) w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) else w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

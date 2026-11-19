@@ -230,6 +230,7 @@ fun CustomizePage() {
         LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
             item {
                 T("Make it yours. Everything here changes live and is kept with your library.", 14.sp, color = C.sub, lines = 3, modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp))
+                MotionStatus()
 
                 // ---- tabs
                 Group("Tabs") {
@@ -318,5 +319,35 @@ fun CustomizePage() {
             }
         }
         Head("Customize", ls.scrolled, back = true)
+    }
+}
+
+
+/** says plainly whether the living background and the visualizer can run right now, and what the analyser is hearing */
+@Composable
+private fun MotionStatus() {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState(); val saver by Prefs.autoSaver.collectAsState()
+    val st by com.auraos.music.NativePlayer.state.collectAsState()
+    var heard by remember { mutableStateOf(-1f) }
+    val why = remember(motion, saving) { Tasks.motionWhy(ctx) }
+    LaunchedEffect(st.playing) {
+        if (!st.playing) { heard = -1f; return@LaunchedEffect }
+        com.auraos.music.NativePlayer.viz(true)
+        try {
+            while (true) {
+                val b = com.auraos.music.NativePlayer.levels()
+                heard = if (b == null) 0f else (b.maxOfOrNull { it.toInt() and 255 } ?: 0) / 255f
+                kotlinx.coroutines.delay(400)
+            }
+        } finally { com.auraos.music.NativePlayer.viz(VizHold.keep) }
+    }
+    LaunchedEffect(why) { Diag.log("motion: $why") }
+    val running = motion && !saving
+    Group("Motion check") {
+        Item(if (running) Ic.Check else Ic.Info, if (running) "Living background and visualizer are on" else "Living background and visualizer are paused", why)
+        Item(Ic.Eq, "Audio analyser", when { !st.playing -> "Play a song to test it"; heard < 0f -> "Starting…"; heard < 0.02f -> "Running but hearing nothing yet (silence, or the volume is at zero)"; else -> "Hearing the music (level ${(heard * 100).toInt()}%)" })
+        if (!running && motion && saver) Item(Ic.Spark, "Keep motion on anyway", "Turns off the automatic battery saver so the background and visualizer keep moving at low battery", onClick = { Prefs.setAutoSaver(false); Prefs.saving.value = false; Toasts.show("Battery saver is off — motion stays on") })
+        if (!motion) Item(Ic.Spark, "Switch Motion Effects on", "Sliding pages, glow, living background and the visualizer", onClick = { Prefs.setMotion(true) })
     }
 }
