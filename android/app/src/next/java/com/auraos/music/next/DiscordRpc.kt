@@ -1,18 +1,14 @@
 package com.auraos.music.next
 
-import android.annotation.SuppressLint
 import android.content.Context
-import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONArray
@@ -68,6 +64,17 @@ object DiscordRpc {
         else status.value = if (loggedIn.value) "Signed in (paused in settings)" else "Not signed in"
     }
 
+    fun openLoginInBrowser(ctx: Context) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://discord.com/login")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            ctx.startActivity(intent)
+        } catch (e: Exception) {
+            Toasts.show("Couldn't open browser: ${e.message}")
+        }
+    }
+
     fun login(ctx: Context, rawToken: String) {
         val clean = rawToken.trim().removeSurrounding("\"").removePrefix("Bot ").removePrefix("Bearer ").trim()
         if (clean.length < 20) {
@@ -90,7 +97,6 @@ object DiscordRpc {
         loggedIn.value = false
         status.value = "Not signed in"
         ctx.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE).edit().clear().apply()
-        try { CookieManager.getInstance().removeAllCookies(null) } catch (_: Exception) { }
         Toasts.show("Signed out of Discord")
     }
 
@@ -358,7 +364,7 @@ object DiscordRpc {
     }
 }
 
-// ------------------------------------------------------------------ UI: Account Sheet, WebView Login & Customization
+// ------------------------------------------------------------------ UI: Account Sheet, Browser Login & Customization
 
 @Composable
 fun DiscordAccountSheet() {
@@ -376,10 +382,11 @@ fun DiscordAccountSheet() {
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 12.dp)
         )
         if (!loggedIn) {
-            Act(Ic.Person, "Sign in with Discord", "Opens Discord login right inside Strata Music") {
-                Dialogs.show { DiscordWebLoginDialog() }
+            Act(Ic.Globe, "Sign in with Discord", "Opens Discord in your default browser") {
+                DiscordRpc.openLoginInBrowser(ctx)
+                Dialogs.show { DiscordBrowserLoginDialog() }
             }
-            Act(Ic.Edit, "Paste Discord Token Manually", "For advanced users who already have their token") {
+            Act(Ic.Edit, "Paste Discord Token Manually", "Already have your token? Paste it directly") {
                 Dialogs.show {
                     Prompt("Discord Token", "", "Connect") { tok -> DiscordRpc.login(ctx, tok) }
                 }
@@ -395,59 +402,29 @@ fun DiscordAccountSheet() {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun DiscordWebLoginDialog() {
+fun DiscordBrowserLoginDialog() {
     val ctx = LocalContext.current
-    var captured by remember { mutableStateOf(false) }
+    var tok by remember { mutableStateOf("") }
 
-    DTitle("Sign in to Discord")
-    T("Log in normally — Strata Music will connect automatically once you're in.", 13.sp, color = C.sub, lines = 2, modifier = Modifier.padding(bottom = 10.dp))
-
-    Box(Modifier.fillMaxWidth().height(430.dp)) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { c ->
-                WebView(c).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.userAgentString = "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-                    webViewClient = object : WebViewClient() {
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            super.onPageFinished(view, url)
-                            if (captured || url == null) return
-                            // Once Discord redirects away from /login into /channels or /app, grab token from localStorage
-                            if (url.contains("discord.com/channels") || url.contains("discord.com/app")) {
-                                val js = """
-                                    (function() {
-                                        try {
-                                            var iframe = document.createElement('iframe');
-                                            document.body.appendChild(iframe);
-                                            var t = iframe.contentWindow.localStorage.getItem('token');
-                                            document.body.removeChild(iframe);
-                                            return t || '';
-                                        } catch(e) { return ''; }
-                                    })();
-                                """.trimIndent()
-                                view?.evaluateJavascript(js) { res ->
-                                    val tok = res?.trim()?.removeSurrounding("\"")?.replace("\\\"", "") ?: ""
-                                    if (!captured && tok.length >= 20) {
-                                        captured = true
-                                        DiscordRpc.login(ctx, tok)
-                                        Dialogs.close()
-                                    }
-                                }
-                            }
-                        }
-                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = false
-                    }
-                    loadUrl("https://discord.com/login")
-                }
+    DTitle("Connect Discord")
+    DText("Sign in to Discord in your browser, copy your token, and paste it below to connect Rich Presence.")
+    Field(tok, { tok = it }, hint = "Paste Discord token", onDone = {
+        if (tok.isNotBlank()) {
+            DiscordRpc.login(ctx, tok)
+            Dialogs.close()
+        }
+    })
+    DButtons(
+        "Open Browser" to { DiscordRpc.openLoginInBrowser(ctx) },
+        "Cancel" to { Dialogs.close() },
+        "Connect" to {
+            if (tok.isNotBlank()) {
+                DiscordRpc.login(ctx, tok)
+                Dialogs.close()
             }
-        )
-    }
-
-    DButtons("Cancel" to { Dialogs.close() })
+        }
+    )
 }
 
 @Composable
