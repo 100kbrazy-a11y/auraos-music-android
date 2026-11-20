@@ -2,11 +2,19 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.12.3",
+   "name": "The Presence Update",
+   "date": "2026-11-20",
+   "notes": [
+    "-fixed the login proccess for discord"
+   ]
+  },
+  {
    "version": "2.12.2",
    "name": "The Presence Update",
    "date": "2026-11-20",
    "notes": [
-    "Discord Rich Presence: show the song, artist, and live playback timeline on Strata Music (toggle it in Settings › Appearance)",
+    "Discord Rich Presence: show the song, artist, and live playback timeline on Strata Music (toggle it in Settings · Appearance)",
     "Sharper automatic covers: upgrades Apple/iTunes album art to 1200x1200, skips low-res thumbnails, and grabs max-res YouTube covers when downloading",
     "Settings polish: added the Concurrent Downloads subtitle and search entry for Discord Rich Presence"
    ]
@@ -16,7 +24,7 @@
    "name": "The Connectivity Update",
    "date": "2026-11-20",
    "notes": [
-    "Discord Rich Presence: show the song, artist, and live playback timeline on Strata Music (toggle it in Settings › Appearance)",
+    "Discord Rich Presence: show the song, artist, and live playback timeline on Strata Music (toggle it in Settings · Appearance)",
     "Sharper automatic covers: upgrades Apple/iTunes album art to 1200x1200, skips low-res thumbnails, and grabs max-res YouTube covers when downloading",
     "Settings polish: added the Concurrent Downloads subtitle and search entry for Discord Rich Presence"
    ]
@@ -27,7 +35,7 @@
    "date": "2026-11-20",
    "notes": [
     "Settings redesigned: Library & Tabs, Player Layout & Player Look, Visualizer & Lyrics, Appearance (Buttons, Colors, Shapes, Motion, Touch), Playback and About, with a live preview of the player and a search button to find any setting",
-    "Lyrics: three more sources (NetEase, QQ Music, Kugou) next to LRCLIB, so many more songs get timed lyrics. Choose which to use and in what order in Visualizer & Lyrics › LRC Providers",
+    "Lyrics: three more sources (NetEase, QQ Music, Kugou) next to LRCLIB, so many more songs get timed lyrics. Choose which to use and in what order in Visualizer & Lyrics · LRC Providers",
     "Import your own .lrc files: pick one or many (name them like \"Artist - Title.lrc\" to match songs automatically), or from \"Wrong lyrics?\" in the player for one song",
     "Lyrics options: Sync with LRC on/off, highlight style, and where the current line sits (top, centre or bottom)",
     "Concurrent Downloads: choose how many songs download at once, from 1 to 8",
