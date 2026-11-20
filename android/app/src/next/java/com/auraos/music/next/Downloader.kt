@@ -14,7 +14,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class Dl(val track: Track, val status: String = "Waiting", val frac: Float = 0f, val done: Boolean = false, val failed: Boolean = false, val play: Boolean = false)
+data class Dl(val track: Track, val status: String = "Waiting", val frac: Float = 0f, val done: Boolean = false, val failed: Boolean = false, val play: Boolean = false, val how: String = "", val batch: String = "")
 
 /** Download queue. The hidden browser is only asked for the audio *address*; the file itself is fetched natively. */
 object Downloader {
@@ -23,14 +23,28 @@ object Downloader {
     private var worker: Job? = null
     @Volatile private var stopAll = false
 
-    /** [play]: each song joins the queue as soon as it's downloaded (radio / mixes) */
-    fun enqueue(ts: List<Track>, play: Boolean = false) {
+    /** [play]: each song joins the queue as soon as it's downloaded (radio / mixes).
+     *  [how]: "now" (the first song to land starts playing, the rest follow it), "next" (plays next) or "queue" (added to the queue). */
+    fun enqueue(ts: List<Track>, play: Boolean = false, how: String = "") {
+        val batch = if (how == "now") java.util.UUID.randomUUID().toString() else ""
+        // something asked for again (say Play on a song that's already on its way): it just gets the new instruction
+        if (how.isNotEmpty()) items.value = items.value.map { d -> if (!d.failed && !d.done && ts.any { it.id == d.track.id }) d.copy(how = how, batch = batch) else d }
         val have = items.value.filter { !it.failed }.map { it.track.id }.toSet()
-        val fresh = ts.filter { it.id !in have }.map { Dl(it, play = play) }
+        val fresh = ts.filter { it.id !in have }.map { Dl(it, play = play, how = how, batch = batch) }
         if (fresh.isEmpty()) return
         items.value = items.value.filter { !it.failed } + fresh
         stopAll = false
         kick()
+    }
+    private val started = java.util.Collections.synchronizedSet(HashSet<String>())
+    /** a finished song goes where it was asked to go */
+    private suspend fun deliver(d: Dl, s: Song) = withContext(Dispatchers.Main) {
+        when {
+            d.how == "now" -> if (d.batch.isNotEmpty() && started.add(d.batch)) Ctl.play(Store.app, listOf(s), 0, "YouTube Music") else Ctl.append(Store.app, s)
+            d.how == "next" -> Ctl.playNext(Store.app, listOf(s))
+            d.how == "queue" -> Ctl.append(Store.app, s)
+            d.play -> Ctl.append(Store.app, s)
+        }
     }
     fun clearFinished() { items.value = items.value.filter { !it.done && !it.failed } }
     fun stop() { stopAll = true; items.value = items.value.map { if (!it.done && !it.failed) it.copy(failed = true, status = "Stopped") else it } }
@@ -71,7 +85,7 @@ object Downloader {
         // already in the library (same YouTube song): nothing to download
         Store.songs.value.firstOrNull { it.j.optString("yt") == t.id }?.let { s ->
             upd(t.id) { it.copy(status = "Already in your library", frac = 1f, done = true) }
-            if (d.play) withContext(Dispatchers.Main) { Ctl.append(Store.app, s) }
+            deliver(items.value.firstOrNull { it.track.id == t.id } ?: d, s)
             return@coroutineScope
         }
         // the cover is fetched at the same time as the audio, not after it
@@ -95,7 +109,7 @@ object Downloader {
                 Store.update(listOf(s?.id ?: "")) { put("codec", "${if (ext == "webm") "Opus" else "AAC"}${if (j.optInt("kbps") > 0) " · ${j.optInt("kbps")} kbps" else ""} · from YouTube") }
                 upd(t.id) { it.copy(status = if (s != null) "Added" else "Already in your library", frac = 1f, done = true) }
                 val song = s ?: Store.songs.value.firstOrNull { it.title.equals(title, true) && primaryArtist(it.artist).equals(primaryArtist(artist), true) }
-                if (d.play && song != null) withContext(Dispatchers.Main) { Ctl.append(Store.app, song) }
+                if (song != null) deliver(items.value.firstOrNull { it.track.id == t.id } ?: d, song)
                 return@coroutineScope
             } catch (x: kotlinx.coroutines.CancellationException) { throw x
             } catch (x: Exception) { last = x.message ?: x.javaClass.simpleName; if (stopAll) break }

@@ -98,6 +98,86 @@ private fun YtRow(thumb: String, title: String, sub: String, round: Boolean = fa
     }
 }
 
+/** what a YouTube Music result can do: play straight away (it downloads, and starts the moment it lands), queue, or just add */
+object YtAct {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    fun trackOf(r: JSONObject) = Track(r.getString("id"), r.optString("title"), r.optString("artist"), r.optString("album"), r.optString("thumb"))
+    fun have(id: String): Song? = Store.songs.value.firstOrNull { it.j.optString("yt") == id }
+    private fun said(how: String, what: String) = Toasts.show(when (how) { "now" -> "Getting $what — it plays the moment it's ready"; "next" -> "$what plays next once it's ready"; "queue" -> "$what joins the queue once it's ready"; else -> "Adding $what" })
+
+    /** how: now · next · queue · add */
+    fun act(ctx: android.content.Context, r: JSONObject, how: String) {
+        when (r.optString("kind")) {
+            "song" -> song(ctx, r, how)
+            "artist" -> scope.launch {
+                try {
+                    val ar = Engine.artist(r.getString("id")); val name = ar.optString("name"); val top = Yt.list(ar.optJSONArray("top"))
+                    if (how == "add") { Yt.addAll(ar, true); return@launch }
+                    if (top.isEmpty()) { Toasts.show("No songs found for $name"); return@launch }
+                    Yt.saveArtist(ar); said(how, "$name's top songs")
+                    Downloader.enqueue(top.map { Track(it.getString("id"), it.optString("title"), name, it.optString("album"), it.optString("thumb")) }, how = how.takeIf { it != "next" } ?: "queue")
+                } catch (e: Exception) { Toasts.show(e.message ?: "Couldn't read the artist") }
+            }
+            else -> scope.launch {
+                try {
+                    val (_, tr) = Engine.tracks(JSONObject().put("kind", r.optString("kind")).put("id", r.getString("id")).put("artist", r.optString("artist")))
+                    if (tr.isEmpty()) { Toasts.show("Nothing to add"); return@launch }
+                    if (how == "add") { Downloader.enqueue(tr); Toasts.show("Adding “${r.optString("title")}” (${plural(tr.size, "song")})") }
+                    else { said(how, "“${r.optString("title")}”"); Downloader.enqueue(tr, how = how.takeIf { it != "next" } ?: "queue") }
+                } catch (e: Exception) { Toasts.show(e.message ?: "Couldn't read that") }
+            }
+        }
+    }
+    private fun song(ctx: android.content.Context, r: JSONObject, how: String) {
+        val mine = have(r.getString("id"))
+        if (mine != null) {
+            when (how) { "now" -> Ctl.play(ctx, listOf(mine), 0, "YouTube Music"); "next" -> Ctl.playNext(ctx, listOf(mine)); "queue" -> Ctl.addToQueue(ctx, listOf(mine)); else -> Toasts.show("Already in your library") }
+            return
+        }
+        said(how, "“${r.optString("title")}”")
+        Downloader.enqueue(listOf(trackOf(r)), how = if (how == "add") "" else how)
+    }
+    fun radio(r: JSONObject) {
+        Store.scope.launch {
+            try {
+                val tr = Engine.radio(JSONObject().put("id", r.getString("id")))
+                Downloader.enqueue(listOf(trackOf(r)) + tr, how = "now"); Toasts.show("Mix: ${tr.size + 1} songs on the way")
+            } catch (e: Exception) { Toasts.show(e.message ?: "Radio failed") }
+        }
+    }
+}
+
+/** the ⋯ menu for a result: the same options as a song / album / artist of your own, for things you haven't added yet */
+@Composable
+private fun YtMenu(r: JSONObject) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val kind = r.optString("kind"); val round = kind == "artist"
+    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        AsyncImage(r.optString("thumb"), null, Modifier.size(52.dp).clip(if (round) CircleShape else RoundedCornerShape(10.dp)).background(C.surface2), contentScale = ContentScale.Crop)
+        Column(Modifier.weight(1f)) { T(r.optString("title"), 15.sp, W750); T(r.optString("sub"), 13.sp, color = C.sub) }
+    }
+    Box(Modifier.fillMaxWidth().height(1.dp).background(C.line)); Spacer(Modifier.height(6.dp))
+    SheetScroll {
+        val mine = kind == "song" && YtAct.have(r.optString("id")) != null
+        Act(Ic.Play, if (kind == "artist") "Play Top Songs" else "Play") { YtAct.act(ctx, r, "now") }
+        if (kind == "song") Act(Ic.PlayNext, "Play Next") { YtAct.act(ctx, r, "next") }
+        Act(Ic.AddQ, "Add to Queue") { YtAct.act(ctx, r, "queue") }
+        Act(Ic.Download, when (kind) { "artist" -> "Download Everything"; "song" -> if (mine) "In Your Library" else "Add to Library"; else -> "Add to Library" }, if (mine) "Already downloaded" else "") { YtAct.act(ctx, r, "add") }
+        if (kind == "song") Act(Ic.Spark, "Start Radio", "A mix of similar songs") { YtAct.radio(r) }
+        if (kind == "artist") Act(Ic.Person, "Open Artist") { Yt.openArtist(r.getString("id")) }
+        else if (r.optString("artist").isNotBlank()) Act(Ic.Person, "Go to Artist") { Yt.findArtist(primaryArtist(r.optString("artist")), "") }
+    }
+}
+
+/** the round play button and the ⋯ that end every result row */
+@Composable
+private fun RowScope.YtEnd(r: JSONObject) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val a = accent
+    Box(Modifier.size(38.dp).clip(CircleShape).background(mix(a, 0.22f, C.surface2)).clickable { Hap.tap(); YtAct.act(ctx, r, "now") }, contentAlignment = Alignment.Center) { Icon(Ic.Play, size = 18.dp, tint = a) }
+    IB(Ic.More, C.sub, 20.dp) { Dialogs.sheet { YtMenu(r) } }
+}
+
 fun ytResults(scope: LazyListScope) = with(scope) {
     item {
         val type by Yt.type
@@ -111,38 +191,41 @@ fun ytResults(scope: LazyListScope) = with(scope) {
     item {
         val ar = Yt.artist.value
         if (ar != null) {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
             val name = ar.optString("name"); val albums = Yt.list(ar.optJSONArray("albums")); val top = Yt.list(ar.optJSONArray("top"))
+            val pic = ar.optString("thumb").ifBlank { top.firstOrNull()?.optString("thumb") ?: albums.firstOrNull()?.optString("thumb") ?: "" }
             Column {
                 Row(Modifier.padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    AsyncImage(ar.optString("thumb"), null, Modifier.size(84.dp).clip(CircleShape).background(C.surface2), contentScale = ContentScale.Crop)
+                    AsyncImage(pic.replace(Regex("=w\\d+-h\\d+"), "=w600-h600"), null, Modifier.size(84.dp).clip(CircleShape).background(C.surface2), contentScale = ContentScale.Crop)
                     Column(Modifier.weight(1f)) { T(name, 22.sp, W800, lines = 2); T("${albums.count { !it.optBoolean("single") }} albums · ${albums.count { it.optBoolean("single") }} singles & EPs", 13.sp, color = C.sub) }
                     IB(Ic.Close, C.sub) { Yt.artist.value = null }
                 }
                 Row(Modifier.padding(horizontal = 18.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Btn("Everything", Ic.Download, modifier = Modifier.weight(1f), enabled = albums.isNotEmpty()) { Yt.addAll(ar, true) }
+                    Btn("All", Ic.Download, modifier = Modifier.weight(1f), enabled = albums.isNotEmpty()) { Yt.addAll(ar, true) }
                     Btn("Albums", tonal = true, modifier = Modifier.weight(1f), enabled = albums.isNotEmpty()) { Yt.addAll(ar, false) }
                     Btn("Top", tonal = true, modifier = Modifier.weight(1f), enabled = top.isNotEmpty()) { Yt.saveArtist(ar); Downloader.enqueue(top.map { Track(it.getString("id"), it.optString("title"), name, it.optString("album"), it.optString("thumb")) }) }
                 }
-                for (r in albums) YtRow(r.optString("thumb"), r.optString("title"), listOf(if (r.optBoolean("single")) "Single / EP" else "Album", r.optString("year")).filter { it.isNotBlank() }.joinToString(" · ")) {
-                    IB(Ic.Download, accent) { Yt.saveArtist(ar); Yt.addAlbum(r.getString("id"), name, r.optString("title")) }
+                if (top.isNotEmpty()) {
+                    T("Top songs", 18.sp, W800, modifier = Modifier.padding(start = 18.dp, top = 12.dp, bottom = 2.dp))
+                    for (t in top.take(10)) {
+                        val sr = JSONObject(t.toString()).put("kind", "song").put("sub", listOf(name, t.optString("album")).filter { it.isNotBlank() }.joinToString(" · ")).put("artist", name)
+                        YtRow(t.optString("thumb"), t.optString("title"), sr.optString("sub"), onClick = { YtAct.act(ctx, sr, "now") }) { YtEnd(sr) }
+                    }
+                }
+                T("Albums & singles", 18.sp, W800, modifier = Modifier.padding(start = 18.dp, top = 12.dp, bottom = 2.dp))
+                for (r in albums) {
+                    val ar2 = JSONObject(r.toString()).put("kind", "album").put("artist", name).put("sub", listOf(if (r.optBoolean("single")) "Single / EP" else "Album", r.optString("year")).filter { it.isNotBlank() }.joinToString(" · "))
+                    YtRow(r.optString("thumb"), r.optString("title"), ar2.optString("sub"), onClick = { YtAct.act(ctx, ar2, "now") }) { YtEnd(ar2) }
                 }
             }
         }
     }
     item {
-        if (Yt.artist.value == null) for (r in Yt.results.value) {
-            val kind = r.optString("kind")
-            YtRow(r.optString("thumb"), r.optString("title"), r.optString("sub"), kind == "artist", if (kind == "artist") ({ Yt.openArtist(r.getString("id")) }) else null) {
-                if (kind == "artist") Icon(Ic.Back, Modifier.rotate(180f), tint = C.sub)
-                else {
-                    if (kind == "song") IB(Ic.Spark, C.sub, 20.dp) {
-                        Store.scope.launch { try { val tr = Engine.radio(JSONObject().put("id", r.getString("id"))); Downloader.enqueue(listOf(Track(r.getString("id"), r.optString("title"), r.optString("artist"), r.optString("album"), r.optString("thumb"))) + tr, play = true); Toasts.show("Mix: ${tr.size + 1} songs on the way") } catch (e: Exception) { Toasts.show(e.message ?: "Radio failed") } }
-                    }
-                    IB(Ic.Download, accent) {
-                        if (kind == "song") Downloader.enqueue(listOf(Track(r.getString("id"), r.optString("title"), r.optString("artist"), r.optString("album"), r.optString("thumb"))))
-                        else Store.scope.launch { try { val (_, tr) = Engine.tracks(JSONObject().put("kind", kind).put("id", r.getString("id")).put("artist", r.optString("artist"))); Downloader.enqueue(tr) } catch (e: Exception) { Toasts.show(e.message ?: "Failed") } }
-                    }
-                }
+        if (Yt.artist.value == null) {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            for (r in Yt.results.value) {
+                val kind = r.optString("kind")
+                YtRow(r.optString("thumb"), r.optString("title"), r.optString("sub"), kind == "artist", if (kind == "artist") ({ Yt.openArtist(r.getString("id")) }) else ({ YtAct.act(ctx, r, "now") })) { YtEnd(r) }
             }
         }
         T("Only add music you have the right to.", 12.sp, color = C.faint, modifier = Modifier.padding(18.dp))

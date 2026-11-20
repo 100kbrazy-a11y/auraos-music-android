@@ -58,6 +58,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -576,13 +577,13 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
         }
         if (live && vizStyle != 4) VizBg(levels, if (Cfg.vizColor.use() == 1) (remember(s.cover) { (if (s.cover.isNotEmpty()) Accents.pal(Store.coverFile(s.cover))?.first else null) } ?: a) else a, Modifier.fillMaxWidth().fillMaxHeight(Cfg.vizHeight.use()).align(Alignment.BottomCenter))
       }
-      if (land) NpLand(s, fade, hideCover, onClose) else NpPortrait(s, fade, hideCover, onClose)
+      if (land) NpLand(s, fade, hideCover, onClose) else NpPages(s, fade, hideCover, onClose)
     }
 }
 
 /** the song's cover: swipe to skip, tap to turn it over, double-tap to like. Fills what it's given (up to [maxSide]). */
 @Composable
-private fun NpCover(s: Song, hideCover: Boolean, maxSide: Dp) {
+private fun NpCover(s: Song, hideCover: Boolean, maxSide: Dp, swipeToPages: Boolean = false) {
     val st by NativePlayer.state.collectAsState()
     val shape = Cfg.coverShape.use(); val rad = Cfg.coverRadius.use(); val csz = Cfg.coverSize.use()
     val cs: Shape = when (shape) { 1 -> CircleShape; 2 -> RoundedCornerShape(2.dp); else -> RoundedCornerShape(rad.dp) }
@@ -595,7 +596,9 @@ private fun NpCover(s: Song, hideCover: Boolean, maxSide: Dp) {
         val rot by animateFloatAsState(if (flipped) 180f else 0f, spring(0.72f, 160f), label = "flip")
         val dens = LocalDensity.current.density
         Box(Modifier.size(side).graphicsLayer { alpha = if (hideCover) 0f else 1f; val k = if (st.playing) 1f else 0.92f; scaleX = k; scaleY = k; rotationY = rot; cameraDistance = 14f * dens }, contentAlignment = Alignment.Center) {
-            if (rot <= 90f) SongSwiper(Modifier.fillMaxSize(), 28.dp, onDouble = { if (!Store.isFav(s.id)) Store.toggleFav(s.id); Hap.success(); heart = true },
+            val plain = swipeToPages && Cfg.coverSwipe.use() == 1
+            if (rot <= 90f && plain) Box(Modifier.fillMaxSize().shadow(50.dp, cs).pointerInput(s.id) { detectTapGestures(onDoubleTap = { if (!Store.isFav(s.id)) Store.toggleFav(s.id); Hap.success(); heart = true }, onTap = { Hap.soft(); flipped = true }) }) { Art(s.cover, null, Modifier.fillMaxSize(), cs, phName = s.album) }
+            else if (rot <= 90f) SongSwiper(Modifier.fillMaxSize(), 28.dp, onDouble = { if (!Store.isFav(s.id)) Store.toggleFav(s.id); Hap.success(); heart = true },
                 onTap = { Hap.soft(); flipped = true }, curve = true) { x ->
                 Box(Modifier.fillMaxSize().shadow(50.dp, cs)) { Art(x.cover, null, Modifier.fillMaxSize(), cs, phName = x.album) }
             } else Box(Modifier.fillMaxSize().graphicsLayer { rotationY = 180f }.shadow(50.dp, cs).clip(cs).background(Color(0xFF111111))
@@ -607,14 +610,14 @@ private fun NpCover(s: Song, hideCover: Boolean, maxSide: Dp) {
 
 /** the player's header: close, where it's playing from, (sideways: the extra buttons), keep-awake and the menu */
 @Composable
-private fun NpTopBar(s: Song, onClose: () -> Unit, extrasHere: Boolean, lyr: Boolean) {
+private fun NpTopBar(s: Song, onClose: () -> Unit, extrasHere: Boolean, lyr: Boolean, onLyrics: () -> Unit = { Prefs.setNpLyrics(!lyr) }) {
     val awake by Prefs.keepAwake.collectAsState(); val ctxLabel by Ctl.context.collectAsState()
     Row(Modifier.fillMaxWidth().height(if (extrasHere) 46.dp else 52.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (extrasHere) 0.dp else 6.dp)) {
         IB(Ic.Down, onClick = onClose)
         Column(Modifier.weight(1f).padding(start = if (extrasHere) 4.dp else 0.dp), horizontalAlignment = if (extrasHere) Alignment.Start else Alignment.CenterHorizontally) {
             T("PLAYING FROM", if (extrasHere) 11.sp else 12.sp, color = Color.White.copy(alpha = 0.7f)); T(ctxLabel.ifBlank { s.album.ifBlank { "Your Library" } }, if (extrasHere) 12.5.sp else 13.5.sp, W700, Color.White)
         }
-        if (extrasHere) npExtras(lyr).forEach { it() }
+        if (extrasHere) npExtras(lyr, onLyrics).forEach { it() }
         IB(if (awake) Ic.Sun else Ic.Moon, on = awake) { if (!awake) Hap.success() else Hap.soft(); Prefs.setAwake(!awake); Toasts.show(if (!awake) "The screen stays on while the player is open" else "The screen sleeps as usual") }
         IB(Ic.More) { Dialogs.sheet { NpSheet(s) } }
     }
@@ -622,11 +625,11 @@ private fun NpTopBar(s: Song, onClose: () -> Unit, extrasHere: Boolean, lyr: Boo
 
 /** the buttons you chose in Customize: lyrics, equalizer, sleep timer, queue */
 @Composable
-private fun npExtras(lyr: Boolean): List<@Composable () -> Unit> {
+private fun npExtras(lyr: Boolean, onLyrics: () -> Unit): List<@Composable () -> Unit> {
     val a = accent
     val l = mutableListOf<@Composable () -> Unit>()
     val eos by Sleep.endOfSong.collectAsState()
-    if (Cfg.btnLyrics.use()) l.add { Box(Modifier.size(44.dp).clip(CircleShape).background(if (lyr) Color.White.copy(alpha = 0.14f) else Color.Transparent).clickable { Prefs.setNpLyrics(!lyr) }, contentAlignment = Alignment.Center) { Icon(Ic.Lyrics, tint = if (lyr) Color.White else Color.White.copy(alpha = 0.7f)) } }
+    if (Cfg.btnLyrics.use()) l.add { Box(Modifier.size(44.dp).clip(CircleShape).background(if (lyr) Color.White.copy(alpha = 0.14f) else Color.Transparent).clickable { onLyrics() }, contentAlignment = Alignment.Center) { Icon(Ic.Lyrics, tint = if (lyr) Color.White else Color.White.copy(alpha = 0.7f)) } }
     if (Cfg.btnEq.use()) l.add { IB(Ic.Eq, Color.White.copy(alpha = 0.7f)) { Dialogs.sheet { EqSheet() } } }
     if (Cfg.btnSleep.use()) l.add { IB(Ic.Timer, if (eos) a else Color.White.copy(alpha = 0.7f)) { Dialogs.sheet { SleepSheet() } } }
     if (Cfg.btnQueue.use()) l.add { IB(Ic.Queue, Color.White.copy(alpha = 0.7f)) { Dialogs.sheet { QueueSheet() } } }
@@ -690,36 +693,131 @@ private fun NpControls(playSize: Dp, modifier: Modifier) {
     }
 }
 
+/** the player in portrait: lyrics are one swipe to the left of it, and the artist is one swipe to the right */
 @Composable
-private fun NpPortrait(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
+private fun NpPages(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
+    val a = accent
+    val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = 1) { 3 }
+    val scope = rememberCoroutineScope()
+    val go: (Int) -> Unit = { p -> scope.launch { pager.animateScrollToPage(p) } }
+    var last by remember { mutableStateOf(1) }
+    LaunchedEffect(pager.settledPage) { if (pager.settledPage != last) { last = pager.settledPage; Hap.soft() } }
+    Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade }) {
+        androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
+            Box(Modifier.fillMaxSize().graphicsLayer {
+                val off = kotlin.math.abs(pager.currentPage - page + pager.currentPageOffsetFraction).coerceIn(0f, 1f)
+                alpha = 1f - 0.65f * off; val k = 1f - 0.04f * off; scaleX = k; scaleY = k
+            }) {
+                when (page) { 0 -> NpLyricsPage(s, onClose, go); 1 -> NpPortrait(s, hideCover, onClose, go); else -> NpArtistPage(s, onClose, go) }
+            }
+        }
+        Row(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 5.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            repeat(3) { i ->
+                val on = pager.currentPage == i
+                val w by animateDpAsState(if (on) 16.dp else 6.dp, tween(220), label = "dotw")
+                Box(Modifier.height(6.dp).width(w).clip(CircleShape).background(Color.White.copy(alpha = if (on) 0.9f else 0.35f)).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { go(i) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun NpPortrait(s: Song, hideCover: Boolean, onClose: () -> Unit, go: (Int) -> Unit) {
     val a = accent
     val favs by Store.favs.collectAsState()
-    val lyr by Prefs.npLyrics.collectAsState()
-    Column(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 18.dp)) {
-        NpTopBar(s, onClose, false, lyr)
-        if (lyr) {
-            Row(Modifier.padding(top = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                // tap the cover or the title: back to the big album cover
-                val toAlbum = { Hap.soft(); Prefs.setNpLyrics(false) }
-                Box(Modifier.rubber(4.dp).shadow(20.dp, RoundedCornerShape(10.dp)).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { toAlbum() }) { Art(s.cover, 56.dp, shape = RoundedCornerShape(10.dp), phName = s.album) }
-                Column(Modifier.weight(1f).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { toAlbum() }) { T(s.title, 15.sp, W800); T(s.artist, 13.sp, color = Color.White.copy(alpha = 0.7f)) }
-                IB(if (s.id in favs) Ic.HeartFill else Ic.Heart, if (s.id in favs) a else C.text) { if (Store.toggleFav(s.id)) Hap.success() else Hap.soft() }
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 18.dp)) {
+        NpTopBar(s, onClose, false, false) { go(0) }
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { NpCover(s, hideCover, 420.dp, true) }
+        Row(Modifier.fillMaxWidth().padding(top = 22.dp).heightIn(min = 58.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f)) {
+                T(s.title, 22.sp, W800, spacing = (-0.22).sp)
+                T(s.artist.ifBlank { "Unknown Artist" }, 16.sp, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.clickable { go(2) })
             }
-            Box(Modifier.weight(1f).fillMaxWidth()) { LyricsPane(s) }
-        } else {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { NpCover(s, hideCover, 420.dp) }
-            Row(Modifier.fillMaxWidth().padding(top = 22.dp).heightIn(min = 58.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Column(Modifier.weight(1f)) {
-                    T(s.title, 22.sp, W800, spacing = (-0.22).sp)
-                    T(s.artist.ifBlank { "Unknown Artist" }, 16.sp, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.clickable { onClose(); Nav.open(Page.ArtistP(primaryArtist(s.artist).ifBlank { s.albumArtist })) })
-                }
-                IB(if (s.id in favs) Ic.HeartFill else Ic.Heart, if (s.id in favs) a else C.text) { if (Store.toggleFav(s.id)) Hap.success() else Hap.soft() }
-            }
+            IB(if (s.id in favs) Ic.HeartFill else Ic.Heart, if (s.id in favs) a else C.text) { if (Store.toggleFav(s.id)) Hap.success() else Hap.soft() }
         }
         NpSeek(false)
         NpControls(76.dp, Modifier.fillMaxWidth().padding(top = 12.dp).height(84.dp))
-        // .extras
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) { npExtras(lyr).forEach { it() } }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) { npExtras(false) { go(0) }.forEach { it() } }
+    }
+}
+
+/** the full-screen lyrics: the song stays one tap away (the little header), and the seek bar and buttons stay under them */
+@Composable
+private fun NpLyricsPage(s: Song, onClose: () -> Unit, go: (Int) -> Unit) {
+    val a = accent
+    val favs by Store.favs.collectAsState()
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 24.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            IB(Ic.Down, onClick = onClose)
+            Box(Modifier.rubber(4.dp).shadow(20.dp, RoundedCornerShape(10.dp)).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.soft(); go(1) }) { Art(s.cover, 48.dp, shape = RoundedCornerShape(10.dp), phName = s.album) }
+            Column(Modifier.weight(1f).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.soft(); go(1) }) { T(s.title, 15.sp, W800); T(s.artist, 13.sp, color = Color.White.copy(alpha = 0.7f)) }
+            IB(if (s.id in favs) Ic.HeartFill else Ic.Heart, if (s.id in favs) a else C.text) { if (Store.toggleFav(s.id)) Hap.success() else Hap.soft() }
+            IB(Ic.More) { Dialogs.sheet { NpSheet(s) } }
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) { LyricsPane(s) }
+        NpSeek(false)
+        NpControls(64.dp, Modifier.fillMaxWidth().padding(top = 4.dp).height(72.dp))
+    }
+}
+
+/** the artist: their picture, what you have of theirs, and what they're about */
+@Composable
+private fun NpArtistPage(s: Song, onClose: () -> Unit, go: (Int) -> Unit) {
+    val ctx = LocalContext.current
+    val a = accent
+    val songs by Store.songs.collectAsState()
+    Store.ver.collectAsState().value
+    val name = primaryArtist(s.artist).ifBlank { s.albumArtist.ifBlank { s.artist.ifBlank { "Unknown Artist" } } }
+    val mine = remember(songs, name) { Store.artists(songs)[name] ?: emptyList() }
+    val albums = remember(mine) { Store.albums(mine).sortedByDescending { it.year.ifBlank { "0" } } }
+    val info = Store.artistInfo(name)
+    val photo = info?.optString("image")?.takeIf { Store.coverFile(it).exists() } ?: mine.firstOrNull { it.cover.isNotEmpty() }?.cover ?: s.cover
+    val top = remember(mine) { mine.sortedWith(compareByDescending<Song> { it.j.optInt("plays") }.thenByDescending { Store.isFav(it.id) }).take(5) }
+    val about = info?.optString("about") ?: ""
+    var more by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 36.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+            IB(Ic.Down, onClick = onClose)
+            T("ABOUT THE ARTIST", 12.sp, W700, Color.White.copy(alpha = 0.7f), modifier = Modifier.weight(1f), align = TextAlign.Center)
+            Spacer(Modifier.size(44.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.size(200.dp).shadow(40.dp, CircleShape)) { Art(photo, null, Modifier.fillMaxSize(), CircleShape, Ic.Person, name) }
+        T(name, 30.sp, W800, spacing = (-0.5).sp, lines = 2, align = TextAlign.Center, modifier = Modifier.padding(top = 18.dp))
+        T("${plural(mine.size, "song")} · ${plural(albums.size, "album")} · ${fmtLong(mine.sumOf { it.durMs })}", 14.sp, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Btn("Play", Ic.Play, modifier = Modifier.weight(1f)) { Ctl.play(ctx, mine.sortedBy { it.title }, 0, name, false) }
+            Btn("Shuffle", Ic.Shuffle, tonal = true, modifier = Modifier.weight(1f)) { Ctl.shuffleAll(ctx, mine, name) }
+        }
+        Spacer(Modifier.height(10.dp))
+        Btn("Open Artist Page", tonal = true, modifier = Modifier.fillMaxWidth()) { onClose(); Nav.open(Page.ArtistP(name)) }
+        if (about.isNotBlank()) {
+            Column(Modifier.fillMaxWidth().padding(top = 24.dp)) {
+                T("About", 18.sp, W800, modifier = Modifier.padding(bottom = 6.dp))
+                T(about, 15.sp, color = Color.White.copy(alpha = 0.78f), lines = if (more) 400 else 6, lh = 22.sp, modifier = Modifier.clickable { more = !more })
+            }
+        } else Box(Modifier.padding(top = 14.dp)) { Btn("Get Artist Info from YouTube Music", Ic.Globe, tonal = true, modifier = Modifier.fillMaxWidth()) { onClose(); Yt.findArtist(name, info?.optString("channel") ?: ""); Nav.open(Page.Search) } }
+        if (top.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(top = 24.dp)) {
+            T("Top songs", 18.sp, W800, modifier = Modifier.padding(bottom = 6.dp))
+            top.forEach { t ->
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { Hap.tap(); Ctl.play(ctx, top, top.indexOf(t), name, false) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Art(t.cover, 44.dp, shape = RoundedCornerShape(8.dp), phName = t.album)
+                    Column(Modifier.weight(1f)) { T(t.title, 15.sp, W650); T(t.album, 13.sp, color = Color.White.copy(alpha = 0.6f)) }
+                    if (t.id == s.id) Icon(Ic.Play, size = 16.dp, tint = a)
+                }
+            }
+        }
+        if (albums.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(top = 22.dp)) {
+            T("Albums", 18.sp, W800, modifier = Modifier.padding(bottom = 8.dp))
+            androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(albums, key = { it.key }) { al ->
+                    Column(Modifier.width(120.dp).clickable { onClose(); Nav.open(Page.AlbumP(al.key)) }) {
+                        Art(al.cover?.cover ?: "", 120.dp, shape = RoundedCornerShape(12.dp), phName = al.title)
+                        T(al.title, 13.sp, W700, modifier = Modifier.padding(top = 6.dp)); T(al.year.ifBlank { plural(al.songs.size, "song") }, 12.sp, color = Color.White.copy(alpha = 0.6f))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -821,7 +919,7 @@ fun LyricsPane(s: Song) {
                 l.synced.isNotEmpty() -> {
                     val offMs = (off * 1000).toLong()
                     val cur = l.synced.indexOfLast { it.ms + offMs <= pos }.coerceAtLeast(0)
-                    SyncedLyrics(l.synced, cur) { i -> NativePlayer.seek((l.synced[i].ms + offMs - shift).coerceAtLeast(0)) }
+                    SyncedLyrics(l.synced, cur, { NativePlayer.livePos() + shift - offMs }) { i -> NativePlayer.seek((l.synced[i].ms + offMs - shift).coerceAtLeast(0)) }
                 }
                 l.plain.isNotBlank() -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 24.dp)) { T(l.plain, 22.sp, W800, Color.White.copy(alpha = 0.85f), lines = 1000, lh = 32.sp) }
                 else -> T("No lyrics for this song", 20.sp, W800, Color.White.copy(alpha = 0.7f))
@@ -1010,8 +1108,31 @@ fun CoverBack(s: Song) {
  * spring (never jumps). Lines you've passed dim and blur away above it; the next ones wait below. Drag to look around (every
  * line sharp, a tick per line); a moment after you let go it glides back to the song. Tap a line to jump there.
  */
+/** the line being sung: its words fill in as they come, like the singer is reading them out */
 @Composable
-private fun SyncedLyrics(lines: List<Online.Line>, cur: Int, onSeek: (Int) -> Unit) {
+private fun KaraokeLine(text: String, from: Long, to: Long, now: () -> Long, size: Float, center: Boolean) {
+    var p by remember(text) { mutableFloatStateOf(0f) }
+    LaunchedEffect(text, from, to) {
+        var last = 0L
+        while (true) withFrameNanos { n -> if (n - last > 30_000_000L) { last = n; p = ((now() - from).toFloat() / ((to - from).coerceIn(600L, 9000L) * 0.82f)).coerceIn(0f, 1f) } }
+    }
+    val words = remember(text) { text.split(" ") }
+    val total = text.length.coerceAtLeast(1)
+    val str = androidx.compose.ui.text.buildAnnotatedString {
+        var before = 0
+        words.forEachIndexed { k, w ->
+            val f0 = before.toFloat() / total; val f1 = (before + w.length).toFloat() / total
+            val wp = ((p - f0) / (f1 - f0).coerceAtLeast(0.01f)).coerceIn(0f, 1f)
+            withStyle(androidx.compose.ui.text.SpanStyle(color = Color.White.copy(alpha = 0.5f + 0.5f * wp))) { append(w) }
+            if (k < words.size - 1) append(" ")
+            before += w.length + 1
+        }
+    }
+    androidx.compose.material3.Text(str, Modifier.fillMaxWidth(), fontSize = size.sp, fontWeight = W800, lineHeight = (size * 1.22f).sp, letterSpacing = (-0.4).sp, textAlign = if (center) TextAlign.Center else TextAlign.Start, maxLines = 6)
+}
+
+@Composable
+private fun SyncedLyrics(lines: List<Online.Line>, cur: Int, now: () -> Long, onSeek: (Int) -> Unit) {
     val a = accent
     val n = lines.size
     val scroll = remember { Animatable(cur.toFloat()) }
@@ -1027,6 +1148,7 @@ private fun SyncedLyrics(lines: List<Online.Line>, cur: Int, onSeek: (Int) -> Un
     var avgH by remember { mutableStateOf(100f) }
     val blurOk = Build.VERSION.SDK_INT >= 31
     val dens = LocalDensity.current.density
+    val sweep = Cfg.lyricSweep.use()
     val lySize = Cfg.lyricSize.use(); val center = Cfg.lyricAlign.use() == 1; val glow = Cfg.lyricGlow.use(); val soft = Cfg.lyricBlur.use()
     val gutter = with(LocalDensity.current) { 18.dp.roundToPx() }
     androidx.compose.ui.layout.Layout(content = {
@@ -1052,7 +1174,8 @@ private fun SyncedLyrics(lines: List<Online.Line>, cur: Int, onSeek: (Int) -> Un
                 }
                 .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.tick(); onSeek(i) }
                 .padding(horizontal = 22.dp, vertical = 16.dp)) {
-                T(ln.text.ifBlank { "♪" }, lySize.sp, W800, Color.White, lines = 6, lh = (lySize * 1.22f).sp, align = if (center) TextAlign.Center else TextAlign.Start, modifier = Modifier.fillMaxWidth())
+                if (sweep && i == cur && ln.text.isNotBlank()) KaraokeLine(ln.text, ln.ms, lines.getOrNull(i + 1)?.ms ?: (ln.ms + 5000), now, lySize, center)
+                else T(ln.text.ifBlank { "♪" }, lySize.sp, W800, Color.White, lines = 6, lh = (lySize * 1.22f).sp, align = if (center) TextAlign.Center else TextAlign.Start, spacing = (-0.4).sp, modifier = Modifier.fillMaxWidth())
             }
         }
     }, modifier = Modifier.fillMaxSize().graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }.drawWithContent {

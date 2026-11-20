@@ -57,11 +57,13 @@ object Cfg {
     val vizOpacity = F("cfgVizOp", 0.42f)
     val vizHeight = F("cfgVizH", 0.58f)
     val vizBars = I("cfgVizBars", 40)
+    val coverSwipe = I("cfgCoverSwipe", 1)     // swiping the cover: skips songs · changes pages (lyrics / artist)
     val coverShape = I("cfgCoverShape", 0)     // rounded · circle · sharp
     val coverRadius = F("cfgCoverR", 22f)
     val coverSize = F("cfgCoverSz", 1f)
     val lyricSize = F("cfgLySize", 27f)
     val lyricAlign = I("cfgLyAlign", 0)        // left · centre
+    val lyricSweep = B("cfgLySweep", true)     // words fill in as they are sung
     val lyricGlow = B("cfgLyGlow", true)
     val lyricBlur = B("cfgLyBlur", true)
     val playStyle = I("cfgPlayStyle", 0)       // white · accent · outline
@@ -277,6 +279,7 @@ fun CustomizePage() {
                 Group("Player · cover") {
                     val shape = Cfg.coverShape.use()
                     Choice("Cover shape", listOf("Rounded", "Circle", "Sharp"), shape) { Cfg.coverShape.set(it) }
+                    Choice("Swiping the cover", listOf("Skips songs", "Changes pages"), Cfg.coverSwipe.use()) { Cfg.coverSwipe.set(it) }
                     if (shape == 0) { val r = Cfg.coverRadius.use(); Sl("Corner roundness", "", "${r.toInt()} dp", r, 0f..48f, 2f) { Cfg.coverRadius.set(it) } }
                     val sz = Cfg.coverSize.use()
                     Sl("Cover size", "", "${(sz * 100).toInt()}%", sz, 0.6f..1f, 0.05f) { Cfg.coverSize.set(it) }
@@ -285,6 +288,7 @@ fun CustomizePage() {
                     val ls2 = Cfg.lyricSize.use()
                     Sl("Text size", "", "${ls2.toInt()}", ls2, 18f..38f, 1f) { Cfg.lyricSize.set(it) }
                     Choice("Alignment", listOf("Left", "Centre"), Cfg.lyricAlign.use()) { Cfg.lyricAlign.set(it) }
+                    Tog(Ic.Lyrics, "Words fill in as they are sung", "Each word lights up as the singer reaches it", Cfg.lyricSweep)
                     Tog(Ic.Spark, "Glow behind the current line", "A soft light in the song's colour", Cfg.lyricGlow)
                     Tog(Ic.Eq, "Soften the other lines", "Lines you've passed fade and blur", Cfg.lyricBlur)
                 }

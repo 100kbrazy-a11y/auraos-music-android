@@ -599,6 +599,21 @@ fun EditInfo(s: Song) {
     })
 }
 
+/** the little bubble beside the search bar: one circle for your library (four squares), one for YouTube Music (the globe) */
+@Composable
+fun SourceBubble(yt: Boolean, onPick: (Boolean) -> Unit) {
+    val a = accent
+    Row(Modifier.height(48.dp).clip(RoundedCornerShape(24.dp)).background(C.surface2).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+        listOf(false to Ic.Apps, true to Ic.Globe).forEach { (isYt, ic) ->
+            val on = yt == isYt
+            val bg by androidx.compose.animation.animateColorAsState(if (on) mix(a, 0.30f, C.surface2) else Color.Transparent, tween(220), label = "srcBg")
+            Box(Modifier.size(40.dp).clip(CircleShape).background(bg).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { if (!on) Hap.tap(); onPick(isYt) }, contentAlignment = Alignment.Center) {
+                Icon(ic, size = 22.dp, tint = if (on) a else C.sub)
+            }
+        }
+    }
+}
+
 @Composable
 fun SearchBox(q: String, onChange: (String) -> Unit, hint: String, onGo: () -> Unit = {}, modifier: Modifier = Modifier, focus: androidx.compose.ui.focus.FocusRequester? = null) {
     Row(modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(24.dp)).background(C.surface2).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

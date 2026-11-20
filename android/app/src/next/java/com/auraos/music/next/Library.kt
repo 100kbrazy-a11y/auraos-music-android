@@ -4,6 +4,7 @@ package com.auraos.music.next
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -391,7 +392,15 @@ fun SearchPage() {
             item {
                 val focus = remember { androidx.compose.ui.focus.FocusRequester() }
                 LaunchedEffect(Unit) { kotlinx.coroutines.delay(250); try { focus.requestFocus() } catch (_: Exception) { } }
-                SearchBox(if (yt) Yt.q.value else q, { if (yt) Yt.q.value = it else q = it }, if (yt) "Search YouTube Music, or paste a link" else "Songs, albums, artists, genres", { if (yt) Yt.run() }, Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp), focus)
+                // the search bubble, and beside it a small bubble to pick where to search; the search bubble makes room for it
+                Row(Modifier.padding(start = 18.dp, end = 18.dp, bottom = 10.dp).animateContentSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SearchBox(if (yt) Yt.q.value else q, { if (yt) Yt.q.value = it else q = it }, if (yt) "Search YouTube Music or paste a link" else "Songs, albums, artists…", { if (yt) Yt.run() }, Modifier.weight(1f), focus)
+                    SourceBubble(yt) { toYt ->
+                        if (toYt == yt) return@SourceBubble
+                        if (toYt) { if (q.isNotBlank()) Yt.q.value = q; Yt.mode.value = true; if (Yt.q.value.isNotBlank()) Yt.run() }     // switching searches again straight away
+                        else { if (!Yt.q.value.startsWith("http")) q = Yt.q.value; Yt.mode.value = false }
+                    }
+                }
 
             }
             if (yt) { ytResults(this); return@LazyColumn }
@@ -430,17 +439,7 @@ fun SearchPage() {
             if (hitAlbums.isNotEmpty()) item { AlbumShelf("Albums", hitAlbums) }
             if (hitPls.isNotEmpty()) item { Shelf("Playlists") { hitPls.forEach { p -> PlRow({ Art("", 56.dp, shape = RoundedCornerShape(10.dp), ph = Ic.List, phName = p) }, p, null) { Nav.open(Page.PlaylistP(p)) } } } }
         }
-        Head(if (yt) "YouTube Music" else "Search", false, back = true) {
-            IB(Ic.Gear, modifier = Modifier.padding(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.08f))) {
-                Dialogs.sheet {
-                    SheetScroll {
-                        T("Search In", 22.sp, W700, modifier = Modifier.padding(start = 24.dp, bottom = 8.dp))
-                        Act(Ic.Note, "Your Library", if (!yt) "Searching here now" else "") { Yt.mode.value = false }
-                        Act(Ic.Globe, "YouTube Music", if (yt) "Searching here now" else "Find songs, albums and artists to add") { Yt.mode.value = true; if (Yt.q.value.isEmpty()) Yt.q.value = q }
-                    }
-                }
-            }
-        }
+        Head(if (yt) "YouTube Music" else "Search", false, back = true) { }
     }
 }
 

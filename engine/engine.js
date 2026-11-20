@@ -54,7 +54,7 @@ function client() {
 }
 
 const txt = (x) => (x == null ? "" : typeof x === "string" ? x : x.text ?? x.toString?.() ?? "");
-const thumbOf = (t) => { const a = Array.isArray(t) ? t : t ? [t] : []; return a.at(-1)?.url || ""; };
+const thumbOf = (t) => { const a = Array.isArray(t) ? t : Array.isArray(t?.contents) ? t.contents : t ? [t] : []; return a.at(-1)?.url || ""; };
 const names = (xs) => (xs || []).map((a) => a?.name).filter(Boolean).join(", ");
 
 async function token(id) {
