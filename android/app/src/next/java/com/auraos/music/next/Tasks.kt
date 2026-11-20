@@ -17,7 +17,8 @@ import java.io.File
 
 /**
  * The background jobs, one song at a time, at background priority, and only when there is something to do:
- * cutting silence + finding the beat (for crossfades), compressing to Opus, filling in missing info, finding covers.
+ * cutting silence + finding the beat (for crossfades), compressing to Opus, filling in missing info, finding covers,
+ * and on-device forced lyrics alignment.
  * They pause in Battery Saver. Nothing runs again for a song once it's done (each song is marked).
  */
 object Tasks {
@@ -81,6 +82,12 @@ object Tasks {
                 Store.update(covAlbum.songs.map { it.id }) { put("coverTry", 2) }
                 if (r == Covers.Result.FOUND) Accents.forget()
                 delay(500); continue
+            }
+            val alignSong = all.firstOrNull { ForcedAligner.needsAlign(it) }
+            if (alignSong != null) {
+                status.value = "Aligning lyrics · ${alignSong.title}"
+                ForcedAligner.alignSong(alignSong)
+                delay(250); continue
             }
             status.value = ""; return
         }
