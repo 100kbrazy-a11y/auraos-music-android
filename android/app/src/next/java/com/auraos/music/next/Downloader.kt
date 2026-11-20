@@ -61,6 +61,7 @@ object Downloader {
     }
     private fun waiting() = items.value.firstOrNull { !it.done && !it.failed && it.status == "Waiting" }
     private fun kick() {
+        DownloadService.start(Store.app)
         if (worker?.isActive == true) { extra() ; return }
         worker = scope.launch {
             try {

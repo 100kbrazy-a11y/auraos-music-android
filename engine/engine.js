@@ -153,11 +153,21 @@ async function tracks(a) {
     }
     return { title: album, tracks: out };
   }
-  const pl = await timed(yt.getPlaylist(id), 30000, "Reading the playlist");
-  const out = (pl.items || []).filter((t) => /^[\w-]{11}$/.test(t.id || "")).map((t) => ({
+  let pl = await timed(yt.getPlaylist(id), 30000, "Reading the playlist");
+  const title = txt(pl.info?.title);
+  // YouTube hands a playlist over 100 songs at a time: keep asking for the next page until there isn't one
+  let items = [...(pl.items || [])];
+  for (let page = 0; pl.has_continuation && page < 80; page++) {
+    try { pl = await timed(pl.getContinuation(), 30000, "Reading more of the playlist"); } catch (e) { break; }
+    const more = pl.items || [];
+    if (!more.length) break;
+    items = items.concat([...more]);
+  }
+  const seen = new Set();
+  const out = items.filter((t) => /^[\w-]{11}$/.test(t.id || "") && !seen.has(t.id) && seen.add(t.id)).map((t) => ({
     id: t.id, title: txt(t.title), artist: t.author?.name || "", album: "", thumb: thumbOf(t.thumbnails ?? t.thumbnail),
   }));
-  return { title: txt(pl.info?.title), tracks: out };
+  return { title, tracks: out };
 }
 
 /** An artist's page: name, photo, albums + singles/EPs, top songs */
