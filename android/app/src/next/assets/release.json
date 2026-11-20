@@ -2,6 +2,16 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.12.1",
+   "name": "The Connectivity Update",
+   "date": "2026-11-20",
+   "notes": [
+    "Discord Rich Presence: show the song, artist, and live playback timeline on Strata Music (toggle it in Settings › Appearance)",
+    "Sharper automatic covers: upgrades Apple/iTunes album art to 1200x1200, skips low-res thumbnails, and grabs max-res YouTube covers when downloading",
+    "Settings polish: added the Concurrent Downloads subtitle and search entry for Discord Rich Presence"
+   ]
+  },
+  {
    "version": "2.12.0",
    "name": "The Studio Update",
    "date": "2026-11-20",
