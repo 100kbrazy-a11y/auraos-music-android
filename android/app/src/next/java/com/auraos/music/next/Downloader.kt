@@ -85,6 +85,26 @@ object Downloader {
 
     private fun upd(id: String, f: (Dl) -> Dl) { items.value = items.value.map { if (it.track.id == id && !it.done && !it.failed) f(it) else it } }
 
+    private fun fetchSharpThumb(thumb: String): ByteArray? {
+        if (thumb.isBlank()) return null
+        val urls = LinkedHashSet<String>()
+        if (thumb.contains("ytimg.com")) {
+            urls.add(thumb.replace(Regex("/(default|mqdefault|hqdefault|sddefault)\\.jpg"), "/maxresdefault.jpg"))
+            urls.add(thumb.replace(Regex("/(default|mqdefault|hqdefault)\\.jpg"), "/sddefault.jpg"))
+        }
+        urls.add(thumb.replace(Regex("=w\\d+-h\\d+[^&]*"), "=w1200-h1200-l90-rj"))
+        urls.add(thumb)
+        for (u in urls) {
+            try {
+                val b = Net.get(u)
+                val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeByteArray(b, 0, b.size, o)
+                if (o.outWidth >= 480 && o.outHeight >= 360) return b
+            } catch (_: Exception) { }
+        }
+        return null
+    }
+
     private suspend fun process(e: YtEngine, d: Dl) = kotlinx.coroutines.coroutineScope {
         val t = d.track
         // already in the library (same YouTube song): nothing to download
@@ -94,7 +114,7 @@ object Downloader {
             return@coroutineScope
         }
         // the cover is fetched at the same time as the audio, not after it
-        val coverJob = if (t.thumb.isNotBlank()) async(Dispatchers.IO) { try { Net.get(t.thumb.replace(Regex("=w\\d+-h\\d+"), "=w1200-h1200")) } catch (_: Exception) { null } } else null
+        val coverJob = if (t.thumb.isNotBlank()) async(Dispatchers.IO) { fetchSharpThumb(t.thumb) } else null
         var last = ""
         for (attempt in 1..2) {
             try {
