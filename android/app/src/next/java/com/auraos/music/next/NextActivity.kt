@@ -67,6 +67,7 @@ class NextActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Store.init(this)
         Prefs.init(this)
+        DiscordRpc.init(this)
         if (savedInstanceState == null) Cfg.startTab.v.value.let { st -> if (st >= 0) Nav.tab.value = TabsCfg.order.value.indexOf(st).coerceAtLeast(0) }
         if (intent?.getBooleanExtra("seedDemo", false) == true) Demo.seed()
         if (intent?.hasExtra("liquid") == true) Prefs.setLiquid(intent.getBooleanExtra("liquid", true))
@@ -186,6 +187,9 @@ fun FgApp() {
     val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
     var full by NpState.open
     val cur = q.getOrNull(st.index)?.let { s -> songs.firstOrNull { it.id == s.id } ?: s }
+    LaunchedEffect(cur?.id, st.playing, st.pos, st.dur) {
+        DiscordRpc.onPlayback(cur, st.playing, st.pos, st.dur)
+    }
     val acc = accent
     val liquid by Prefs.liquid.collectAsState()
     val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
