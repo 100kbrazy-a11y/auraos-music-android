@@ -50,6 +50,10 @@ object Prefs {
     val autofill = MutableStateFlow(true)
     val npLyrics = MutableStateFlow(false)
     val discordRpc = MutableStateFlow(true)
+    val discordAppName = MutableStateFlow("Strata Music")
+    val discordFormat = MutableStateFlow(0)
+    val discordShowTimeline = MutableStateFlow(true)
+    val discordHidePaused = MutableStateFlow(true)
     val sort = MutableStateFlow(0)
     val shuffle = MutableStateFlow(false)
     val repeat = MutableStateFlow(0)
@@ -69,6 +73,10 @@ object Prefs {
         compress.value = s.optBoolean("compress", true); autofill.value = s.optBoolean("autofill", true)
         npLyrics.value = s.optBoolean("npLyrics", false)
         discordRpc.value = s.optBoolean("discordRpc", true)
+        discordAppName.value = s.optString("discordAppName", "Strata Music").ifBlank { "Strata Music" }
+        discordFormat.value = s.optInt("discordFormat", 0).coerceIn(0, 2)
+        discordShowTimeline.value = s.optBoolean("discordShowTimeline", true)
+        discordHidePaused.value = s.optBoolean("discordHidePaused", true)
         sort.value = s.optInt("nativeSort", 0)
         applyAudio()
         Cfg.load()
@@ -96,7 +104,11 @@ object Prefs {
     fun setCompress(v: Boolean) { compress.value = v; put("compress", v); if (v) Tasks.poke() }
     fun setAutofill(v: Boolean) { autofill.value = v; put("autofill", v); if (v) Tasks.poke() }
     fun setNpLyrics(v: Boolean) { npLyrics.value = v; put("npLyrics", v) }
-    fun setDiscordRpc(v: Boolean) { discordRpc.value = v; put("discordRpc", v); Ctl.refreshQueue() }
+    fun setDiscordRpc(v: Boolean) { discordRpc.value = v; put("discordRpc", v); DiscordRpc.onToggle(v) }
+    fun setDiscordAppName(v: String) { val n = v.trim().ifBlank { "Strata Music" }; discordAppName.value = n; put("discordAppName", n); DiscordRpc.onSettingsChanged() }
+    fun setDiscordFormat(v: Int) { discordFormat.value = v.coerceIn(0, 2); put("discordFormat", discordFormat.value); DiscordRpc.onSettingsChanged() }
+    fun setDiscordShowTimeline(v: Boolean) { discordShowTimeline.value = v; put("discordShowTimeline", v); DiscordRpc.onSettingsChanged() }
+    fun setDiscordHidePaused(v: Boolean) { discordHidePaused.value = v; put("discordHidePaused", v); DiscordRpc.onSettingsChanged() }
     fun setSort(v: Int) { sort.value = v; put("nativeSort", v) }
 
     fun eqGains(): List<Float> = if (eqName.value == "Custom") eqCustom.value else EQ_PRESETS[eqName.value] ?: EQ_PRESETS.getValue("Flat")
@@ -121,9 +133,7 @@ object Ctl {
 
     private fun itemOf(s: Song): JSObject {
         val o = JSObject()
-        val artistLabel = if (Prefs.discordRpc.value && s.artist.isNotBlank()) "${s.artist} · on Strata Music" else s.artist
-        val albumLabel = if (Prefs.discordRpc.value) s.album.ifBlank { "Strata Music" } else s.album
-        o.put("id", s.id); o.put("path", s.path); o.put("title", s.title); o.put("artist", artistLabel); o.put("album", albumLabel)
+        o.put("id", s.id); o.put("path", s.path); o.put("title", s.title); o.put("artist", s.artist); o.put("album", s.album)
         if (Prefs.trimSilence.value && s.trimStart > 0) o.put("start", Math.round(s.trimStart * 1000))
         if (Prefs.trimSilence.value && s.trimEnd > 0) o.put("end", Math.round(s.trimEnd * 1000))
         val t = s.j.optJSONObject("tempo")
