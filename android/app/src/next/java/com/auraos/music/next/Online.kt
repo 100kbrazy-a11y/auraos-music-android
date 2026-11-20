@@ -209,6 +209,7 @@ object Online {
         val synced = parseLrc(text).size >= 2
         val rec = JSONObject().put("synced", if (synced) text else "").put("plain", if (synced) "" else text).put("instrumental", false).put("source", "Your file").put("own", true)
         Store.meta.getJSONObject("lyrics").put(id, rec); Store.save()
+        Tasks.poke()
         return Lyrics(parseLrc(rec.optString("synced")), rec.optString("plain"), false, false)
     }
 
@@ -219,6 +220,7 @@ object Online {
             .put("instrumental", got.optBoolean("instrumental")).put("source", got.optString("source").ifBlank { "LRCLIB" })
         else JSONObject().put("none", true).put("at", System.currentTimeMillis())
         Store.meta.getJSONObject("lyrics").put(id, rec); Store.save()
+        Tasks.poke()
         return Lyrics(parseLrc(rec.optString("synced")), rec.optString("plain"), rec.optBoolean("instrumental"), rec.optBoolean("none"))
     }
 }
