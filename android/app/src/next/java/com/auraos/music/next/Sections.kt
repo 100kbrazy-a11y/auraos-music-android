@@ -2,6 +2,7 @@ package com.auraos.music.next
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,6 +54,11 @@ enum class SG(val g: Glyph) {
     Shapes(Glyph("M8 3.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM13 12h8v8h-8zM3.5 21l4-7 4 7z", "M8 3.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z")),
     Colour(Glyph("M12 3c-4 5-6.5 8-6.5 11.5a6.5 6.5 0 0 0 13 0C18.5 11 16 8 12 3zM9 15a3 3 0 0 0 3 3", "M12 3c-4 5-6.5 8-6.5 11.5a6.5 6.5 0 0 0 13 0C18.5 11 16 8 12 3z")),
     Feel(Glyph("M10 5.5h4a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1zM6.2 8c-1.6 2.3-1.6 5.7 0 8M17.8 8c1.6 2.3 1.6 5.7 0 8M3.2 10c-.9 1.3-.9 2.7 0 4M20.8 10c.9 1.3.9 2.7 0 4", "M10 5.5h4a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z")),
+    Folder(Glyph("M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z")),
+    Info(Glyph("M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v5.5", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z", listOf(Offset(12f, 7.9f)))),
+    Motion(Glyph("M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z", "M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z")),
+    Download(Glyph("M12 4v11M7.5 10.5 12 15l4.5-4.5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3", "M5 15h14v3a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z")),
+    Upload(Glyph("M12 15V4M7.5 8.5 12 4l4.5 4.5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3", "M5 15h14v3a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z")),
     Reset(Glyph("M4 12a8 8 0 1 0 2.6-5.9M3.8 4.2v4.4h4.4M12 8v4.2l2.8 1.6", "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z"))
 }
 
@@ -81,11 +87,12 @@ fun SIconTile(sg: SG, tile: Dp = 46.dp, size: Dp = 28.dp) {
 /** one section of Settings: its own button with its own icon */
 @Composable
 fun HubRow(sg: SG, title: String, sub: String, onClick: () -> Unit) {
-    Row(Modifier.padding(horizontal = 14.dp, vertical = 4.dp).fillMaxWidth().clip(RoundedCornerShape(Cfg.cardRadius.use().dp)).background(C.surface)
-        .clickable { Hap.tap(); onClick() }.padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        SIconTile(sg)
-        Column(Modifier.weight(1f)) { T(title, 16.5.sp, W700); if (sub.isNotEmpty()) T(sub, 13.sp, color = C.sub, lines = 2) }
+    val r = RoundedCornerShape(Cfg.cardRadius.use().dp)
+    Row(Modifier.padding(horizontal = 14.dp, vertical = 5.dp).fillMaxWidth().clip(r).background(C.surface).border(1.dp, Color.White.copy(alpha = 0.06f), r)
+        .clickable { Hap.tap(); onClick() }.padding(horizontal = 18.dp, vertical = 18.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+        SIcon(sg, 30.dp)
+        Column(Modifier.weight(1f)) { T(title, 17.sp, W700); if (sub.isNotEmpty()) T(sub, 13.5.sp, color = C.sub, lines = 2) }
         Icon(Ic.Chevron, Modifier.rotate(-90f), 20.dp, C.sub)
     }
 }

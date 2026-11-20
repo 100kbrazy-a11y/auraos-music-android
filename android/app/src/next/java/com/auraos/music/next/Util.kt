@@ -47,7 +47,7 @@ object Net {
         if (code !in 200..299) throw RuntimeException("HTTP $code")
         return c.inputStream.use { it.readBytes() }
     }
-    fun json(url: String): Any { val t = get(url).toString(Charsets.UTF_8).trim(); return if (t.startsWith("[")) JSONArray(t) else JSONObject(t) }
+    fun json(url: String, headers: Map<String, String> = emptyMap(), timeout: Int = 20000): Any { val t = get(url, headers, timeout).toString(Charsets.UTF_8).trim(); return if (t.startsWith("[")) JSONArray(t) else JSONObject(t) }
     fun q(s: String): String = URLEncoder.encode(s, "UTF-8")
 }
 

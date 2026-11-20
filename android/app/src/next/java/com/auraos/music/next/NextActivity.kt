@@ -156,8 +156,8 @@ fun BgApp() {
                     Box(Modifier.fillMaxSize().background(C.bg)) { CompositionLocalProvider(LocalPageIndex provides i) {
                         when (p) {
                             is Page.AlbumP -> AlbumPage(p.key); is Page.ArtistP -> ArtistPage(p.name); is Page.PlaylistP -> PlaylistPage(p.name)
-                            Page.Favorites -> FavoritesPage(); Page.Search -> SearchPage(); Page.Settings -> SettingsPage(); Page.Customize -> CustomizePage(); Page.Scanner -> ScannerPage()
-                            is Page.SettingsSection -> SettingsSectionPage(p.id); is Page.CustomizeSection -> CustomizeSectionPage(p.id)
+                            Page.Favorites -> FavoritesPage(); Page.Search -> SearchPage(); Page.Settings -> SettingsPage(); Page.Scanner -> ScannerPage()
+                            is Page.SettingsSection -> SettingsSectionPage(p.id)
                         }
                     } }
                 }

@@ -75,7 +75,7 @@ fun OnboardingOverlay() {
                         }
                         4 -> {
                             SIconTile(SG.Customize, 96.dp, 60.dp); Spacer(Modifier.height(24.dp))
-                            Head2("Make it yours"); Body("Pick an accent colour now. Everything else is in Settings › Customize: move the parts of the player, change shapes, tabs, lyrics and more.")
+                            Head2("Make it yours"); Body("Pick an accent colour now. Everything else is in Settings: move the parts of the player, change shapes, tabs, lyrics and more.")
                             Spacer(Modifier.height(18.dp))
                             val follow by Prefs.coverAccent.collectAsState(); val cur by Prefs.accent.collectAsState()
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(12.dp)) {

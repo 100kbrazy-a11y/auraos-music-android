@@ -138,10 +138,9 @@ object Online {
             .minByOrNull { (if (it.optString("syncedLyrics").isBlank()) 30.0 else 0.0) + (if (d > 0) Math.abs(it.optDouble("duration", d) - d) else 0.0) }
     }
 
-    fun fetchLyrics(s: Song, force: Boolean = false): Lyrics {
-        if (!force) cachedLyrics(s.id)?.let { return it }
+    /** LRCLIB: the first record (synced, plain or instrumental) found by the usual set of lookups */
+    private fun lrclib(s: Song): JSONObject? {
         val artist = s.artist.split(",")[0].trim(); val title = s.title; val c = clean(title); val d = Math.round(s.durMs / 1000.0).toString()
-        var got: JSONObject? = null
         val tries = ArrayList<() -> JSONObject?>()
         if (s.album.isNotBlank() && s.durMs > 0) tries.add { lrc("get", mapOf("track_name" to title, "artist_name" to artist, "album_name" to s.album, "duration" to d)) as? JSONObject }
         if (s.durMs > 0) tries.add { lrc("get", mapOf("track_name" to title, "artist_name" to artist, "duration" to d)) as? JSONObject }
@@ -149,17 +148,88 @@ object Online {
         tries.add { best(lrc("search", mapOf("track_name" to title, "artist_name" to artist)), s) }
         if (c != title) tries.add { best(lrc("search", mapOf("track_name" to c, "artist_name" to artist)), s) }
         tries.add { best(lrc("search", mapOf("q" to "$c $artist".trim())), s) }
-        for (t in tries) { val r = t(); if (r != null && (r.optString("syncedLyrics").isNotBlank() || r.optString("plainLyrics").isNotBlank() || r.optBoolean("instrumental"))) { got = r; break } }
-        return save(s.id, got)
+        for (t in tries) { val r = t(); if (r != null && (r.optString("syncedLyrics").isNotBlank() || r.optString("plainLyrics").isNotBlank() || r.optBoolean("instrumental"))) return r.put("source", "LRCLIB") }
+        return null
+    }
+
+    // ---- more lyric sources. Each searches by title + artist and only accepts a result whose title, artist and length fit the song.
+    private class Cand(val id: String, val title: String, val artist: String, val ms: Long)
+    private fun choose(cs: List<Cand>, s: Song): Cand? {
+        val t = clean(s.title); val a = primaryArtist(s.artist)
+        return cs.filter { same(clean(it.title), t) && (a.isBlank() || it.artist.isBlank() || same(primaryArtist(it.artist), a) || same(it.artist, a)) && (s.durMs <= 0 || it.ms <= 0 || Math.abs(it.ms - s.durMs) <= 8000) }
+            .minByOrNull { if (s.durMs > 0 && it.ms > 0) Math.abs(it.ms - s.durMs) else 4000L }
+    }
+    private fun names(a: JSONArray?, key: String = "name") = if (a == null) "" else (0 until a.length()).joinToString(", ") { a.optJSONObject(it)?.optString(key) ?: "" }
+    private fun hdr(ref: String) = mapOf("Referer" to ref, "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36")
+    private fun query(s: Song) = "${clean(s.title)} ${primaryArtist(s.artist)}".trim()
+    private fun unescape(t: String) = t.replace(Regex("&#(\\d+);")) { it.groupValues[1].toInt().toChar().toString() }.replace("&apos;", "'").replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+
+    private fun netease(s: Song): String? {
+        val h = hdr("https://music.163.com/")
+        val songs = (Net.json("https://music.163.com/api/search/get?type=1&limit=10&s=${Net.q(query(s))}", h, 9000) as? JSONObject)?.optJSONObject("result")?.optJSONArray("songs") ?: return null
+        val c = choose((0 until songs.length()).map { val o = songs.getJSONObject(it); Cand(o.optLong("id").toString(), o.optString("name"), names(o.optJSONArray("artists")), o.optLong("duration")) }, s) ?: return null
+        return (Net.json("https://music.163.com/api/song/lyric?id=${c.id}&lv=1&kv=1&tv=-1", h, 9000) as? JSONObject)?.optJSONObject("lrc")?.optString("lyric")?.takeIf { it.isNotBlank() }
+    }
+    private fun qq(s: Song): String? {
+        val list = (Net.json("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&n=10&p=1&cr=1&t=0&w=${Net.q(query(s))}", hdr("https://y.qq.com/"), 9000) as? JSONObject)
+            ?.optJSONObject("data")?.optJSONObject("song")?.optJSONArray("list") ?: return null
+        val c = choose((0 until list.length()).map { val o = list.getJSONObject(it); Cand(o.optString("songmid"), o.optString("songname"), names(o.optJSONArray("singer")), o.optLong("interval") * 1000) }, s) ?: return null
+        val t = (Net.json("https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?format=json&nobase64=1&songmid=${c.id}", hdr("https://y.qq.com/portal/player.html"), 9000) as? JSONObject)?.optString("lyric") ?: return null
+        return unescape(t).takeIf { it.isNotBlank() }
+    }
+    private fun kugou(s: Song): String? {
+        val info = (Net.json("https://mobileservice.kugou.com/api/v3/search/song?format=json&page=1&pagesize=10&keyword=${Net.q(query(s))}", emptyMap(), 9000) as? JSONObject)?.optJSONObject("data")?.optJSONArray("info") ?: return null
+        val c = choose((0 until info.length()).map { val o = info.getJSONObject(it); Cand(o.optString("hash"), o.optString("songname"), o.optString("singername"), o.optLong("duration") * 1000) }, s) ?: return null
+        val cand = (Net.json("https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=${Net.q(query(s))}&duration=${c.ms}&hash=${c.id}", emptyMap(), 9000) as? JSONObject)?.optJSONArray("candidates")?.optJSONObject(0) ?: return null
+        val b64 = (Net.json("https://lyrics.kugou.com/download?ver=1&client=pc&fmt=lrc&charset=utf8&id=${cand.optString("id")}&accesskey=${cand.optString("accesskey")}", emptyMap(), 9000) as? JSONObject)?.optString("content") ?: return null
+        return String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), Charsets.UTF_8).removePrefix("\uFEFF").takeIf { it.isNotBlank() }
+    }
+    private fun fromLrc(text: String?, src: String): JSONObject? {
+        if (text.isNullOrBlank()) return null
+        return if (parseLrc(text).size >= 2) JSONObject().put("syncedLyrics", text).put("source", src) else JSONObject().put("plainLyrics", text).put("source", src)
+    }
+
+    fun fetchLyrics(s: Song, force: Boolean = false): Lyrics {
+        if (Store.meta.optJSONObject("lyrics")?.optJSONObject(s.id)?.optBoolean("own") == true) cachedLyrics(s.id)?.let { return it }   // a file you added stays
+        if (!force) cachedLyrics(s.id)?.let { return it }
+        var got: JSONObject? = null; var plainOnly: JSONObject? = null
+        for (p in LrcProviders.order.value.ifEmpty { listOf("LRCLIB") }) {
+            val r: JSONObject? = try {
+                when (p) { "LRCLIB" -> lrclib(s); "NetEase" -> fromLrc(netease(s), "NetEase"); "QQ Music" -> fromLrc(qq(s), "QQ Music"); "Kugou" -> fromLrc(kugou(s), "Kugou"); else -> null }
+            } catch (e: Exception) { Diag.log("lyrics $p: ${e.message}"); null }
+            if (r == null) continue
+            if (r.optBoolean("instrumental") || r.optString("syncedLyrics").let { it.isNotBlank() && it != "null" }) { got = r; break }
+            if (plainOnly == null && r.optString("plainLyrics").let { it.isNotBlank() && it != "null" }) plainOnly = r      // keep looking for a synced one elsewhere
+        }
+        return save(s.id, got ?: plainOnly)
+    }
+
+    /** lyrics from a file you picked (an .lrc with timestamps, or plain text); it stays for that song */
+    fun saveOwn(id: String, text: String): Lyrics {
+        val synced = parseLrc(text).size >= 2
+        val rec = JSONObject().put("synced", if (synced) text else "").put("plain", if (synced) "" else text).put("instrumental", false).put("source", "Your file").put("own", true)
+        Store.meta.getJSONObject("lyrics").put(id, rec); Store.save()
+        return Lyrics(parseLrc(rec.optString("synced")), rec.optString("plain"), false, false)
     }
 
     fun searchLyrics(q: String): List<JSONObject> { val a = lrc("search", mapOf("q" to q)) as? JSONArray ?: return emptyList(); return (0 until a.length()).map { a.getJSONObject(it) } }
 
     fun save(id: String, got: JSONObject?): Lyrics {
         val rec = if (got != null) JSONObject().put("synced", got.optString("syncedLyrics").let { if (it == "null") "" else it }).put("plain", got.optString("plainLyrics").let { if (it == "null") "" else it })
-            .put("instrumental", got.optBoolean("instrumental")).put("source", "LRCLIB")
+            .put("instrumental", got.optBoolean("instrumental")).put("source", got.optString("source").ifBlank { "LRCLIB" })
         else JSONObject().put("none", true).put("at", System.currentTimeMillis())
         Store.meta.getJSONObject("lyrics").put(id, rec); Store.save()
         return Lyrics(parseLrc(rec.optString("synced")), rec.optString("plain"), rec.optBoolean("instrumental"), rec.optBoolean("none"))
     }
+}
+
+/** which lyric sources are used, and in what order */
+object LrcProviders {
+    val ALL = listOf("LRCLIB", "NetEase", "QQ Music", "Kugou")
+    val order = kotlinx.coroutines.flow.MutableStateFlow(ALL)
+    fun load() {
+        val a = Store.settings().optJSONArray("lrcProviders")
+        order.value = if (a == null) ALL else (0 until a.length()).map { a.optString(it) }.filter { it in ALL }.distinct().ifEmpty { ALL }
+    }
+    fun set(l: List<String>) { if (l.isEmpty()) return; order.value = l; Store.settings().put("lrcProviders", org.json.JSONArray(l)); Store.save() }
 }

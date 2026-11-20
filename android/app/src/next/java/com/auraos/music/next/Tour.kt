@@ -16,7 +16,6 @@ object Tour {
             "settings" -> Nav.open(Page.Settings)
             "search" -> Nav.open(Page.Search)
             "scanner" -> Nav.open(Page.Scanner)
-            "customize" -> { Nav.open(Page.Customize); if (v.isNotEmpty()) Nav.open(Page.CustomizeSection(v)) }
             "section" -> { Nav.open(Page.Settings); Nav.open(Page.SettingsSection(v)) }
             "intro" -> Onboard.start()
             "filter" -> Dialogs.sheet { FilterSheet() }

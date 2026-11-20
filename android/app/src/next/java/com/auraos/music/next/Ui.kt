@@ -95,13 +95,11 @@ sealed class Page {
     object Favorites : Page()
     object Search : Page()
     object Settings : Page()
-    object Customize : Page()
     object Scanner : Page()
     data class SettingsSection(val id: String) : Page()
-    data class CustomizeSection(val id: String) : Page()
 }
 /** pages that cover the whole screen, so the tab bar and media bar step aside */
-val Page?.hidesDock: Boolean get() = this is Page.Settings || this is Page.Customize || this is Page.Scanner || this is Page.SettingsSection || this is Page.CustomizeSection
+val Page?.hidesDock: Boolean get() = this is Page.Settings || this is Page.Scanner || this is Page.SettingsSection
 object Nav {
     val stack = mutableStateListOf<Page>()
     val tab = mutableStateOf(0)
@@ -708,12 +706,14 @@ fun LyricsSearch(s: Song) {
     val scope = rememberCoroutineScope()
     fun go() { hits = null; scope.launch { hits = withContext(Dispatchers.IO) { Online.searchLyrics(q) } } }
     LaunchedEffect(Unit) { go() }
+    val importLrc = rememberLrcPicker(s)
     Column(Modifier.padding(horizontal = 20.dp)) {
         T("Wrong Lyrics?", 22.sp, W700, modifier = Modifier.padding(bottom = 10.dp))
         SearchBox(q, { q = it }, "Song and artist", { go() })
-        T(if (hits == null) "Searching LRCLIB…" else if (hits!!.isEmpty()) "Nothing found" else "Pick the right ones", 13.sp, color = C.sub, modifier = Modifier.padding(vertical = 10.dp))
+        T(if (hits == null) "Searching…" else if (hits!!.isEmpty()) "Nothing found" else "Pick the right ones", 13.sp, color = C.sub, modifier = Modifier.padding(vertical = 10.dp))
     }
     LazyColumn(Modifier.heightIn(max = 440.dp)) {
+        item { Act(Ic.Up, "Import your own .lrc file", "Pick a lyrics file from your phone for this song") { importLrc() } }
         item { Act(Ic.Close, "This song has no lyrics") { Online.save(s.id, null); Lyr.bump() } }
         items(hits ?: emptyList()) { h ->
             val synced = h.optString("syncedLyrics").let { it.isNotBlank() && it != "null" }

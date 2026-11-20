@@ -685,8 +685,9 @@ private fun NpControls(playSize: Dp, modifier: Modifier) {
         val pps by animateFloatAsState(if (pressed) 0.9f else 1f, tween(200, easing = Spring), label = "pp")
         val bg = if (style == 1) a else if (style == 2) Color.Transparent else Color.White
         val fg = if (style == 1) C.onAccent else if (style == 2) Color.White else Color(0xFF111111)
-        Box(Modifier.size(playSize).scale(pps).then(if (style == 2) Modifier else Modifier.shadow(30.dp, CircleShape, ambientColor = a, spotColor = a)).clip(CircleShape).background(bg)
-            .then(if (style == 2) Modifier.border(2.5.dp, Color.White, CircleShape) else Modifier).clickable(ppSrc, null) { Hap.press(); NativePlayer.toggle() }, contentAlignment = Alignment.Center) {
+        val shp = btnShapeOf(Cfg.btnShape.use(), playSize)
+        Box(Modifier.size(playSize).scale(pps).then(if (style == 2) Modifier else Modifier.shadow(30.dp, shp, ambientColor = a, spotColor = a)).clip(shp).background(bg)
+            .then(if (style == 2) Modifier.border(2.5.dp, Color.White, shp) else Modifier).clickable(ppSrc, null) { Hap.press(); NativePlayer.toggle() }, contentAlignment = Alignment.Center) {
             Icon(if (st.playing) Ic.Pause else Ic.Play, size = playSize * 0.45f, tint = fg)
         }
         IB(Ic.Next, size = 28.dp) { NativePlayer.next() }
@@ -728,12 +729,14 @@ private fun NpPortrait(s: Song, hideCover: Boolean, onClose: () -> Unit, go: (In
     val favs by Store.favs.collectAsState()
     val order by PlayerLayout.order.collectAsState(); val hidden by PlayerLayout.hidden.collectAsState()
     val center = Cfg.titleAlign.use() == 1; val tSize = Cfg.titleSize.use(); val cs = Cfg.ctlScale.use(); val heart = Cfg.btnHeart.use()
+    val sp = when (Cfg.npSpacing.use()) { 0 -> 0.45f; 2 -> 1.7f; else -> 1f }
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 18.dp)) {
         NpTopBar(s, onClose, false, false) { go(0) }
+        if (0 in hidden) Spacer(Modifier.weight(1f))        // no cover: the other parts settle at the bottom
         order.forEach { id ->
             if (id !in hidden) when (id) {
                 0 -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { NpCover(s, hideCover, 420.dp, true) }
-                1 -> Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 4.dp).heightIn(min = 58.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                1 -> Row(Modifier.fillMaxWidth().padding(top = (16 * sp).dp, bottom = 4.dp).heightIn(min = 58.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f), horizontalAlignment = if (center) Alignment.CenterHorizontally else Alignment.Start) {
                         T(s.title, tSize.sp, W800, spacing = (-0.22).sp, align = if (center) TextAlign.Center else TextAlign.Start)
                         T(s.artist.ifBlank { "Unknown Artist" }, (tSize * 0.73f).sp, color = Color.White.copy(alpha = 0.7f), align = if (center) TextAlign.Center else TextAlign.Start, modifier = Modifier.clickable { go(2) })
@@ -741,8 +744,8 @@ private fun NpPortrait(s: Song, hideCover: Boolean, onClose: () -> Unit, go: (In
                     if (heart) IB(if (s.id in favs) Ic.HeartFill else Ic.Heart, if (s.id in favs) a else C.text) { if (Store.toggleFav(s.id)) Hap.success() else Hap.soft() }
                 }
                 2 -> NpSeek(false)
-                3 -> NpControls((76 * cs).dp, Modifier.fillMaxWidth().padding(top = 8.dp).height((84 * cs).dp))
-                4 -> Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) { npExtras(false) { go(0) }.forEach { it() } }
+                3 -> NpControls((76 * cs).dp, Modifier.fillMaxWidth().padding(top = (8 * sp).dp).height((84 * cs).dp))
+                4 -> Row(Modifier.fillMaxWidth().padding(top = (8 * sp).dp), horizontalArrangement = Arrangement.SpaceBetween) { npExtras(false) { go(0) }.forEach { it() } }
             }
         }
     }
@@ -913,9 +916,10 @@ fun LyricsPane(s: Song) {
         if (off == 0.0) o.remove(s.id) else o.put(s.id, off); Store.save()
     }
     val l = ly
+    val syncOn = Cfg.lyricSync.use()
     var pos by remember { mutableStateOf(0L) }
     val shift = if (Prefs.trimSilence.value) (s.trimStart * 1000).toLong() else 0L
-    LaunchedEffect(s.id, l) { while (l != null && l.synced.isNotEmpty()) { pos = NativePlayer.livePos() + shift; delay(100) } }
+    LaunchedEffect(s.id, l, syncOn) { while (l != null && l.synced.isNotEmpty() && syncOn) { pos = NativePlayer.livePos() + shift; delay(100) } }
     val ls = rememberLazyListState()
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -923,12 +927,12 @@ fun LyricsPane(s: Song) {
                 loading -> T("Finding the lyrics…", 18.sp, W700, Color.White.copy(alpha = 0.6f))
                 failed || l == null -> T("Couldn't look up lyrics — check your internet connection.", 20.sp, W800, Color.White.copy(alpha = 0.7f), lines = 3, align = TextAlign.Center)
                 l.instrumental -> T("♪ Instrumental", 22.sp, W800, Color.White.copy(alpha = 0.7f))
-                l.synced.isNotEmpty() -> {
+                l.synced.isNotEmpty() && syncOn -> {
                     val offMs = (off * 1000).toLong()
                     val cur = l.synced.indexOfLast { it.ms + offMs <= pos }.coerceAtLeast(0)
                     SyncedLyrics(l.synced, cur, { NativePlayer.livePos() + shift - offMs }) { i -> NativePlayer.seek((l.synced[i].ms + offMs - shift).coerceAtLeast(0)) }
                 }
-                l.plain.isNotBlank() -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 24.dp)) { T(l.plain, 22.sp, W800, Color.White.copy(alpha = 0.85f), lines = 1000, lh = 32.sp) }
+                l.plain.isNotBlank() || l.synced.isNotEmpty() -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 24.dp)) { T(l.plain.ifBlank { l.synced.joinToString("\n") { it.text } }, 22.sp, W800, Color.White.copy(alpha = 0.85f), lines = 1000, lh = 32.sp) }
                 else -> T("No lyrics for this song", 20.sp, W800, Color.White.copy(alpha = 0.7f))
             }
         }
@@ -1202,6 +1206,7 @@ private fun SyncedLyrics(lines: List<Online.Line>, cur: Int, now: () -> Long, on
     val sweep = Cfg.lyricSweep.use()
     val lySize = Cfg.lyricSize.use(); val center = Cfg.lyricAlign.use() == 1; val glow = Cfg.lyricGlow.use(); val soft = Cfg.lyricBlur.use()
     val gutter = with(LocalDensity.current) { 18.dp.roundToPx() }
+    val posF = when (Cfg.lyricPos.use()) { 0 -> 0.27f; 2 -> 0.62f; else -> 0.42f }
     androidx.compose.ui.layout.Layout(content = {
         lines.forEachIndexed { i, ln ->
             Box(Modifier.fillMaxWidth()
@@ -1252,7 +1257,7 @@ private fun SyncedLyrics(lines: List<Online.Line>, cur: Int, now: () -> Long, on
             if (ps.isEmpty()) return@layout
             val sv = scroll.value.coerceIn(0f, (ps.size - 1).toFloat())
             val lo = sv.toInt(); val hi = minOf(ps.size - 1, lo + 1); val fr = sv - lo
-            fun anchor(k: Int) = H * 0.42f - ps[k].height / 2f - tops[k]
+            fun anchor(k: Int) = H * posF - ps[k].height / 2f - tops[k]
             val shift = anchor(lo) + (anchor(hi) - anchor(lo)) * fr        // continuous: never jumps mid-move
             ps.forEachIndexed { i, p -> val y = shift + tops[i]; if (y < H && y + p.height > 0) p.placeRelative(-gutter, y.roundToInt()) }
         }

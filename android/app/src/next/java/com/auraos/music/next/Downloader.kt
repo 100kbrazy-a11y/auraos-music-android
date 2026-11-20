@@ -50,8 +50,8 @@ object Downloader {
     fun stop() { stopAll = true; items.value = items.value.map { if (!it.done && !it.failed) it.copy(failed = true, status = "Stopped") else it } }
     fun retryFailed() { items.value = items.value.map { if (it.failed) it.copy(failed = false, status = "Waiting", frac = 0f) else it }; stopAll = false; kick() }
 
-    /** three songs at a time: while one is being fetched, the next is already asking YouTube for its address */
-    private const val WORKERS = 3
+    /** several songs at a time (Settings › Library & Tabs › Concurrent Downloads): while one is being fetched, the next is already asking YouTube for its address */
+    private const val MAX_WORKERS = 8
     private val claimLock = Any()
     private val registerLock = Any()
     private fun claim(): Dl? = synchronized(claimLock) {
@@ -67,7 +67,11 @@ object Downloader {
             try {
                 Engine.use { e ->
                     kotlinx.coroutines.coroutineScope {
-                        repeat(WORKERS) { launch { while (!stopAll) { val next = claim() ?: break; process(e, next) } } }
+                        // up to MAX_WORKERS helpers; the "Concurrent Downloads" setting says how many may work at once (changing it takes effect straight away)
+                        repeat(MAX_WORKERS) { k -> launch { while (!stopAll) {
+                            if (k >= Cfg.dlWorkers.v.value) { if (waiting() == null) break; delay(400); continue }
+                            val next = claim() ?: break; process(e, next)
+                        } } }
                     }
                 }
             } catch (x: Exception) {
