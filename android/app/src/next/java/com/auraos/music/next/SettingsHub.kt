@@ -99,8 +99,8 @@ private fun PickSheet(title: String, options: List<String>, sel: Int, set: (Int)
 }
 /** a row showing the current choice; tapping it lists the others */
 @Composable
-fun SPick(sg: SG, title: String, options: List<String>, sel: Int, set: (Int) -> Unit) =
-    SRow(sg, title, value = options.getOrElse(sel) { "" }, chevron = true, onClick = { Dialogs.sheet { PickSheet(title, options, sel, set) } })
+fun SPick(sg: SG, title: String, options: List<String>, sel: Int, sub: String = "", set: (Int) -> Unit) =
+    SRow(sg, title, sub = sub, value = options.getOrElse(sel) { "" }, chevron = true, onClick = { Dialogs.sheet { PickSheet(title, options, sel, set) } })
 
 @Composable
 private fun SMove(sg: SG, name: String, i: Int, n: Int, shown: Boolean, canHide: Boolean, onMove: (Int) -> Unit, onShow: (Boolean) -> Unit) {
@@ -127,6 +127,7 @@ private fun searchIndex(): List<Found> = listOf(
     Found(SG.Scan, "Scan folders", "Library & Tabs", "add music import folder permission") { Nav.open(Page.Scanner) },
     Found(SG.Music, "Add music", "Library & Tabs", "songs folder pack youtube link") { Dialogs.sheet { AddMusicSheet() } },
     Found(SG.Download, "Concurrent downloads", "Library & Tabs", "download songs at once workers speed") { open("library") },
+    Found(SG.Pulse, "Discord Rich Presence", "Appearance", "discord rpc listening status presence") { open("appearance") },
     Found(SG.Layout, "Player layout", "Player", "order move hide spacing compact roomy") { open("player") },
     Found(SG.Cover, "Cover shape and size", "Player", "album art circle rounded sharp swipe") { open("player") },
     Found(SG.Cover, "Player background", "Player", "fog blur glow black") { open("player") },
@@ -265,7 +266,7 @@ private fun libraryBlocks(): List<@Composable () -> Unit> = listOf(
             SRow(SG.Customize, "Sorting", "Every tab has its own sort. Tap the sort button at the top of a tab.")
         }
     },
-    { Group("Downloads") { SPick(SG.Download, "Concurrent Downloads", (1..8).map { "$it" }, Cfg.dlWorkers.use() - 1) { Cfg.dlWorkers.set(it + 1) } } }
+    { Group("Downloads") { SPick(SG.Download, "Concurrent Downloads", (1..8).map { "$it" }, Cfg.dlWorkers.use() - 1, sub = "How many songs to download at once") { Cfg.dlWorkers.set(it + 1) } } }
 )
 
 @Composable
@@ -445,7 +446,14 @@ private fun appearanceBlocks(): List<@Composable () -> Unit> = listOf(
             SRow(SG.Feel, "Touch", "Haptics and interactions", chevron = true, onClick = { open("touch") })
         }
     },
-    { Group("Downloads") { SPick(SG.Download, "Concurrent Downloads", (1..8).map { "$it" }, Cfg.dlWorkers.use() - 1) { Cfg.dlWorkers.set(it + 1) } } }
+    {
+        val rpc by Prefs.discordRpc.collectAsState()
+        Group("Downloads") {
+            SPick(SG.Download, "Concurrent Downloads", (1..8).map { "$it" }, Cfg.dlWorkers.use() - 1, sub = "How many songs to download at once") { Cfg.dlWorkers.set(it + 1) }
+            Div()
+            SSwitch(SG.Pulse, "Discord Rich Presence", "Show what you're listening to on Discord", rpc) { Prefs.setDiscordRpc(it) }
+        }
+    }
 )
 
 private fun buttonsBlocks(): List<@Composable () -> Unit> = listOf(
