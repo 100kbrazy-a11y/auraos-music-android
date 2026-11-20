@@ -24,7 +24,7 @@ object Covers {
 
     // ---------------------------------------------------------------- matching
     private fun fold(s: String) = Normalizer.normalize(s, Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").lowercase().replace("&", " and ").replace("’", "'")
-    private val EDITION = "deluxe|edition|remaster(ed)?|explicit|clean|bonus|single|ep|anniversary|version|expanded|extended|official|lyrics?|video|audio|visuali[sz]er|hd|hq|4k|mono|stereo|soundtrack|ost|live|radio|mix|remix|feat\\.?|ft\\.?|featuring|with|prod\\.?"
+    private val EDITION = "deluxe|edition|remaster(ed)?|explicit|clean|bonus|single|ep|anniversary|version|expanded|extended|official|lyrics?|video|audio|visuali[sz]er|hd|hq|4k|mono|stereo|soundtr[..."
     /** a title boiled down to what identifies it */
     fun norm(t: String): String {
         var s = fold(t)
@@ -68,7 +68,7 @@ object Covers {
             return if (t.startsWith("[")) JSONArray(t) else JSONObject(t)
         } catch (e: Exception) {
             val m = e.message ?: ""
-            if (i == 0 && (m.contains("429") || m.contains("403") || m.contains("5") && m.startsWith("HTTP 5"))) Thread.sleep(900) else if (i == 1) throw e else if (!m.startsWith("HTTP")) throw e else return null
+            if (i == 0 && (m.contains("429") || m.contains("403") || m.contains("5") && m.startsWith("HTTP 5"))) Thread.sleep(900) else if (i == 1) throw e else if (!m.startsWith("HTTP")) throw e
         }
         return null
     }
@@ -103,7 +103,7 @@ object Covers {
     private fun musicBrainz(album: String, artist: String): List<Cand> = try {
         val wait = 1100 - (System.currentTimeMillis() - lastMb); if (wait > 0) Thread.sleep(wait)
         lastMb = System.currentTimeMillis()
-        val q = "release:\"${album.replace("\"", "")}\"" + if (artist.isNotBlank()) " AND artist:\"${artist.replace("\"", "")}\"" else ""
+        val q = "release:\"${album.replace("\"", "")}" + if (artist.isNotBlank()) " AND artist:\"${artist.replace("\"", "")}" else ""
         val r = jsonRetry("https://musicbrainz.org/ws/2/release/?fmt=json&limit=8&query=${Net.q(q)}", mapOf("Accept" to "application/json")) as? JSONObject
         offline = false
         val a = r?.optJSONArray("releases") ?: JSONArray()
@@ -120,20 +120,26 @@ object Covers {
         cands.map { Scored(it, score(it) + if (it.src == "iTunes") 0.02 else 0.0) }.filter { it.score >= min }.sortedByDescending { it.score }
 
     /** a sharp image (>= minPx and not over-compressed), or null */
-    private fun download(c: Cand, minPx: Int = 500): ByteArray? = try {
-        val b = Net.get(c.cover, timeout = 25000)
-        if (b.size < 12_000) return null
-        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(b, 0, b.size, o)
-        if (o.outWidth >= minPx && o.outHeight >= minPx) b else null
-    } catch (_: Exception) { null }
+    private fun download(c: Cand, minPx: Int = 500): ByteArray? {
+        return try {
+            val b = Net.get(c.cover, timeout = 25000)
+            if (b.size < 12_000) null
+            else {
+                val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(b, 0, b.size, o)
+                if (o.outWidth >= minPx && o.outHeight >= minPx) b else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     /** tidy a messy song title ("Artist - Title (Official Video)") into possible (title, artist) pairs */
     private fun titleVariants(s: Song): List<Pair<String, String>> {
         val artist = primaryArtist(s.artist).ifBlank { s.albumArtist.takeIf { it != "Unknown Artist" } ?: "" }
         val out = LinkedHashSet<Pair<String, String>>()
         out.add(norm(s.title) to artist)
-        val parts = s.title.split(Regex("\\s[-–—|]\\s"), 2)
+        val parts = s.title.split(Regex("\\s[-–—|]\u005cs"), 2)
         if (parts.size == 2) { out.add(norm(parts[1]) to norm(parts[0])); out.add(norm(parts[1]) to artist) }
         return out.filter { it.first.isNotBlank() }
     }
