@@ -1115,24 +1115,68 @@ fun CoverBack(s: Song) {
  * spring (never jumps). Lines you've passed dim and blur away above it; the next ones wait below. Drag to look around (every
  * line sharp, a tick per line); a moment after you let go it glides back to the song. Tap a line to jump there.
  */
-/** the line being sung: its words fill in as they come, like the singer is reading them out */
-@Composable
-private fun KaraokeLine(text: String, from: Long, to: Long, now: () -> Long, size: Float, center: Boolean) {
-    var p by remember(text) { mutableFloatStateOf(0f) }
-    LaunchedEffect(text, from, to) {
-        var last = 0L
-        while (true) withFrameNanos { n -> if (n - last > 30_000_000L) { last = n; p = ((now() - from).toFloat() / ((to - from).coerceIn(600L, 9000L) * 0.82f)).coerceIn(0f, 1f) } }
+/**
+ * Estimated syllables in a word. Lyrics only carry a time for each LINE, so inside a line we have to guess when each word
+ * lands; a singer spends time per syllable, not per letter, so this is a far better yardstick than the word's length.
+ */
+private fun syllables(w: String): Int {
+    val s = w.lowercase().filter { it.isLetter() }
+    if (s.isEmpty()) return 1
+    var n = 0; var prev = false
+    for (c in s) { val v = c in "aeiouyáàâäãéèêëíìîïóòôöõúùûü"; if (v && !prev) n++; prev = v }
+    if (n > 1 && s.endsWith("e") && !s.endsWith("le") && !s.endsWith("ee")) n--
+    return n.coerceAtLeast(1)
+}
+
+/** where each word of a line falls (0..1 of the time it is sung): by syllables, with a beat of rest after commas and full stops */
+private class WordPlan(val words: List<String>, val a: FloatArray, val b: FloatArray, val syl: Int)
+private fun planOf(text: String): WordPlan {
+    val words = text.split(" ")
+    val n = words.size
+    val wt = FloatArray(n); val rest = FloatArray(n)
+    var syl = 0
+    words.forEachIndexed { k, w ->
+        val s = syllables(w); syl += s
+        wt[k] = s + 0.3f
+        if (k < n - 1) rest[k] = when {
+            w.endsWith("...") || w.endsWith("…") || w.endsWith("—") -> 0.9f
+            w.lastOrNull() in listOf('.', '!', '?', ';', ':') -> 0.8f
+            w.endsWith(",") -> 0.45f
+            else -> 0f
+        }
     }
-    val words = remember(text) { text.split(" ") }
-    val total = text.length.coerceAtLeast(1)
+    val total = (wt.sum() + rest.sum()).coerceAtLeast(0.01f)
+    val a = FloatArray(n); val b = FloatArray(n)
+    var acc = 0f
+    for (k in 0 until n) { a[k] = acc / total; acc += wt[k]; b[k] = acc / total; acc += rest[k] }
+    return WordPlan(words, a, b, syl)
+}
+
+/** the line being sung: its words fill in as the singer reaches them */
+@Composable
+private fun KaraokeLine(text: String, from: Long, to: Long, now: () -> Long, size: Float, center: Boolean, wordMs: LongArray? = null) {
+    var t by remember(text) { mutableLongStateOf(0L) }
+    val shift = Cfg.lyricShift.use().toLong()
+    LaunchedEffect(text, from, shift) {
+        var last = 0L
+        while (true) withFrameNanos { n -> if (n - last > 30_000_000L) { last = n; t = now() - from + shift + 70L } }   // a hair early: late always looks worse than early
+    }
+    val plan = remember(text) { planOf(text) }
+    val lineLen = (to - from).coerceIn(400L, 12000L).toFloat()
+    // a line followed by a long gap isn't sung for the whole gap: nobody takes a second a syllable, so the fill finishes by then
+    val sung = minOf(lineLen * 0.96f, plan.syl * 900f + 400f)
+    val exact = wordMs != null && wordMs.size == plan.words.size
     val str = androidx.compose.ui.text.buildAnnotatedString {
-        var before = 0
-        words.forEachIndexed { k, w ->
-            val f0 = before.toFloat() / total; val f1 = (before + w.length).toFloat() / total
-            val wp = ((p - f0) / (f1 - f0).coerceAtLeast(0.01f)).coerceIn(0f, 1f)
+        plan.words.forEachIndexed { k, w ->
+            val s0: Float; val s1: Float
+            if (exact) {
+                s0 = (wordMs!![k] - from).toFloat()
+                s1 = if (k + 1 < wordMs.size) (wordMs[k + 1] - from).toFloat() else minOf(lineLen, s0 + 350f + 300f * syllables(w))
+            } else { s0 = plan.a[k] * sung; s1 = plan.b[k] * sung }
+            val x = ((t - s0) / (s1 - s0).coerceAtLeast(70f)).coerceIn(0f, 1f)
+            val wp = x * x * (3f - 2f * x)
             withStyle(androidx.compose.ui.text.SpanStyle(color = Color.White.copy(alpha = 0.5f + 0.5f * wp))) { append(w) }
-            if (k < words.size - 1) append(" ")
-            before += w.length + 1
+            if (k < plan.words.size - 1) append(" ")
         }
     }
     androidx.compose.material3.Text(str, Modifier.fillMaxWidth(), fontSize = size.sp, fontWeight = W800, lineHeight = (size * 1.22f).sp, letterSpacing = (-0.4).sp, textAlign = if (center) TextAlign.Center else TextAlign.Start, maxLines = 6)
@@ -1181,7 +1225,7 @@ private fun SyncedLyrics(lines: List<Online.Line>, cur: Int, now: () -> Long, on
                 }
                 .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.tick(); onSeek(i) }
                 .padding(horizontal = 22.dp, vertical = 16.dp)) {
-                if (sweep && i == cur && ln.text.isNotBlank()) KaraokeLine(ln.text, ln.ms, lines.getOrNull(i + 1)?.ms ?: (ln.ms + 5000), now, lySize, center)
+                if (sweep && i == cur && ln.text.isNotBlank()) KaraokeLine(ln.text, ln.ms, lines.getOrNull(i + 1)?.ms ?: (ln.ms + 5000), now, lySize, center, ln.wordMs)
                 else T(ln.text.ifBlank { "♪" }, lySize.sp, W800, Color.White, lines = 6, lh = (lySize * 1.22f).sp, align = if (center) TextAlign.Center else TextAlign.Start, spacing = (-0.4).sp, modifier = Modifier.fillMaxWidth())
             }
         }

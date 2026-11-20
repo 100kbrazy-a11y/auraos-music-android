@@ -82,7 +82,7 @@ object Online {
     }
 
     // ---------------------------------------------------------------- lyrics
-    class Line(val ms: Long, val text: String)
+    class Line(val ms: Long, val text: String, val wordMs: LongArray? = null)
     class Lyrics(val synced: List<Line>, val plain: String, val instrumental: Boolean, val none: Boolean)
 
     fun parseLrc(t: String): List<Line> {
@@ -91,8 +91,30 @@ object Online {
             Regex("^\\[offset:\\s*([+-]?\\d+)]", RegexOption.IGNORE_CASE).find(raw)?.let { offset = it.groupValues[1].toLong() }
             val stamps = Regex("\\[(\\d+):(\\d+(?:\\.\\d+)?)]").findAll(raw).toList()
             if (stamps.isEmpty()) continue
-            val text = raw.substring(stamps.last().range.last + 1).trim()
-            for (m in stamps) out.add(Line((m.groupValues[1].toLong() * 60000 + (m.groupValues[2].toDouble() * 1000).toLong() - offset).coerceAtLeast(0), text))
+            val rawText = raw.substring(stamps.last().range.last + 1)
+            val tags = Regex("<(\\d+):(\\d+(?:\\.\\d+)?)>").findAll(rawText).toList()
+            var text = rawText.trim(); var wordAt: LongArray? = null
+            if (tags.isNotEmpty()) {           // "enhanced" lyrics carry a time for every word: use them exactly
+                val sb = StringBuilder(); val marks = ArrayList<Pair<Int, Long>>()
+                val first = rawText.substring(0, tags[0].range.first)
+                if (first.isNotBlank()) sb.append(first)
+                tags.forEachIndexed { i, m ->
+                    val seg = rawText.substring(m.range.last + 1, if (i + 1 < tags.size) tags[i + 1].range.first else rawText.length)
+                    marks.add(sb.length to (m.groupValues[1].toLong() * 60000 + (m.groupValues[2].toDouble() * 1000).toLong() - offset).coerceAtLeast(0))
+                    sb.append(seg)
+                }
+                val lead = sb.length - sb.toString().trimStart().length
+                text = sb.toString().trim()
+                val starts = ArrayList<Long>(); var at = 0
+                val base = (stamps.first().groupValues[1].toLong() * 60000 + (stamps.first().groupValues[2].toDouble() * 1000).toLong() - offset).coerceAtLeast(0)
+                for (w in text.split(" ")) {
+                    val ci = at + lead
+                    starts.add(marks.lastOrNull { it.first <= ci }?.second ?: base)
+                    at += w.length + 1
+                }
+                wordAt = starts.toLongArray()
+            }
+            for (m in stamps) out.add(Line((m.groupValues[1].toLong() * 60000 + (m.groupValues[2].toDouble() * 1000).toLong() - offset).coerceAtLeast(0), text, wordAt))
         }
         return out.sortedBy { it.ms }
     }

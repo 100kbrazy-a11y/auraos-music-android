@@ -2,6 +2,16 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.11.1",
+   "name": "The Studio Update",
+   "date": "2026-11-19",
+   "notes": [
+    "Lyric highlighting keeps up with fast and slow parts: each word's share of the line is now worked out from its syllables (not its letters), with a beat of rest after commas and full stops, and the fill stops when a rapper's line ends instead of crawling across the gap",
+    "New Customize › Lyrics › Highlight timing slider to nudge the highlight earlier or later",
+    "Lyrics that carry a time for every word are used exactly"
+   ]
+  },
+  {
    "version": "2.11.0",
    "name": "The Studio Update",
    "date": "2026-11-19",

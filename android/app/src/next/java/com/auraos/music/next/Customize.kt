@@ -63,6 +63,7 @@ object Cfg {
     val coverSize = F("cfgCoverSz", 1f)
     val lyricSize = F("cfgLySize", 27f)
     val lyricAlign = I("cfgLyAlign", 0)        // left · centre
+    val lyricShift = F("cfgLyShift", 0f)       // milliseconds: nudges the word highlight earlier (+) or later (-)
     val lyricSweep = B("cfgLySweep", true)     // words fill in as they are sung
     val lyricGlow = B("cfgLyGlow", true)
     val lyricBlur = B("cfgLyBlur", true)
@@ -400,6 +401,8 @@ fun CustomizeSectionPage(id: String) {
                         Sl("Text size", "", "${ls2.toInt()}", ls2, 18f..38f, 1f) { Cfg.lyricSize.set(it) }
                         Choice("Alignment", listOf("Left", "Centre"), Cfg.lyricAlign.use()) { Cfg.lyricAlign.set(it) }
                         Tog(Ic.Lyrics, "Words fill in as they are sung", "Each word lights up as the singer reaches it", Cfg.lyricSweep)
+                        val sh = Cfg.lyricShift.use()
+                        Sl("Highlight timing", "Slide right if the words light up too late, left if too early", if (sh == 0f) "On time" else "%+d ms".format(sh.toInt()), sh, -600f..600f, 20f) { Cfg.lyricShift.set(it) }
                         Tog(Ic.Spark, "Glow behind the current line", "A soft light in the song's colour", Cfg.lyricGlow)
                         Tog(Ic.Eq, "Soften the other lines", "Lines you've passed fade and blur", Cfg.lyricBlur)
                     }
