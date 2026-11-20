@@ -127,7 +127,8 @@ private fun searchIndex(): List<Found> = listOf(
     Found(SG.Scan, "Scan folders", "Library & Tabs", "add music import folder permission") { Nav.open(Page.Scanner) },
     Found(SG.Music, "Add music", "Library & Tabs", "songs folder pack youtube link") { Dialogs.sheet { AddMusicSheet() } },
     Found(SG.Download, "Concurrent downloads", "Library & Tabs", "download songs at once workers speed") { open("library") },
-    Found(SG.Pulse, "Discord Rich Presence", "Appearance", "discord rpc listening status presence") { open("appearance") },
+    Found(SG.Pulse, "Discord Rich Presence", "Appearance", "discord rpc listening status presence customize") { open("appearance") },
+    Found(SG.Account, "Discord Account", "About", "discord login sign in token account") { open("about") },
     Found(SG.Layout, "Player layout", "Player", "order move hide spacing compact roomy") { open("player") },
     Found(SG.Cover, "Cover shape and size", "Player", "album art circle rounded sharp swipe") { open("player") },
     Found(SG.Cover, "Player background", "Player", "fog blur glow black") { open("player") },
@@ -448,10 +449,14 @@ private fun appearanceBlocks(): List<@Composable () -> Unit> = listOf(
     },
     {
         val rpc by Prefs.discordRpc.collectAsState()
+        val loggedIn by DiscordRpc.loggedIn.collectAsState()
+        val status by DiscordRpc.status.collectAsState()
         Group("Downloads") {
             SPick(SG.Download, "Concurrent Downloads", (1..8).map { "$it" }, Cfg.dlWorkers.use() - 1, sub = "How many songs to download at once") { Cfg.dlWorkers.set(it + 1) }
             Div()
-            SSwitch(SG.Pulse, "Discord Rich Presence", "Show what you're listening to on Discord", rpc) { Prefs.setDiscordRpc(it) }
+            SSwitch(SG.Pulse, "Discord Rich Presence", if (loggedIn) status else "Sign in under Settings › About › Discord Account", rpc) { Prefs.setDiscordRpc(it) }
+            Div()
+            SRow(SG.Customize, "Customize Discord Status", "Activity name, format, live timeline and pause behavior", chevron = true, onClick = { Dialogs.sheet { DiscordCustomizeSheet() } })
         }
     }
 )
@@ -560,10 +565,20 @@ private fun aboutBlocks(): List<@Composable () -> Unit> = listOf(
     { UpdatesGroup() },
     {
         val ctx = LocalContext.current
+        val dLoggedIn by DiscordRpc.loggedIn.collectAsState()
+        val dUser by DiscordRpc.username.collectAsState()
+        val dStatus by DiscordRpc.status.collectAsState()
         Group("More") {
             SRow(SG.Account, "YouTube Account", "Sign in if YouTube asks you to (for Add from Link)", chevron = true, onClick = {
                 Dialogs.show { DTitle("YouTube Account"); DText("Signing in isn't built into the native app yet. Downloads work without it."); DButtons("OK" to { Dialogs.close() }) }
             }); Div()
+            SRow(
+                SG.Account,
+                "Discord Account",
+                if (dLoggedIn) "Signed in as ${dUser.ifBlank { "Discord User" }} · $dStatus" else "Sign in to show what you're listening to on Discord",
+                chevron = true,
+                onClick = { Dialogs.sheet { DiscordAccountSheet() } }
+            ); Div()
             SRow(SG.Pulse, "Diagnostics", "What the app did recently. Share it when something goes wrong", chevron = true, onClick = { Dialogs.sheet { DiagSheet(ctx) } }); Div()
             SRow(SG.Star, "Replay the intro", "The quick tour you get when you first open Strata Music", chevron = true, onClick = { Onboard.start() }); Div()
             SRow(SG.Reset, "Reset customization", "Back to how it looked at the start", onClick = { Dialogs.show { Confirm("Reset customization?", "Tabs, sorting, player and library looks go back to the defaults. Your music is not touched.", "Reset") { Cfg.resetAll(); Dialogs.close() } } })
