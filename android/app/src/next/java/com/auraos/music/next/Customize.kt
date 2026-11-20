@@ -83,9 +83,23 @@ object Cfg {
     val rowDur = B("cfgRowDur", true)
     val rowAlbum = B("cfgRowAlbum", true)
     val startTab = I("cfgStart", -1)           // -1 = the first tab, else a tab id
+    // ---- shapes everywhere
+    val cardRadius = F("cfgCardR", 22f)        // the rounded cards in Settings and Customize
+    val artShape = I("cfgArtShape", 0)         // album art in lists: rounded · circle · square
+    val artRadius = F("cfgArtR", 9f)
+    val dockRadius = F("cfgDockR", 26f)        // the media bar and the tab bar
+    val miniArt = I("cfgMiniArt", 0)           // the cover in the media bar: rounded · circle · square
+    val miniArtist = B("cfgMiniArtist", true)
+    val tabLabels = B("cfgTabLabels", true)
+    // ---- the full player, laid out your way
+    val titleAlign = I("cfgTitleAlign", 0)     // left · centre
+    val titleSize = F("cfgTitleSize", 22f)
+    val btnHeart = B("cfgBtnHeart", true)
+    val ctlScale = F("cfgCtlScale", 1f)        // how big the transport buttons are
+    val haptics = B("cfgHaptics", true)
 
-    fun load() { for (l in loaders) l(); TabsCfg.load(); Sorting.load() }
-    fun resetAll() { for (r in resets) r(); TabsCfg.set(listOf(0, 1, 2, 3)); Sorting.reset() }
+    fun load() { for (l in loaders) l(); TabsCfg.load(); Sorting.load(); PlayerLayout.load() }
+    fun resetAll() { for (r in resets) r(); TabsCfg.set(listOf(0, 1, 2, 3)); Sorting.reset(); PlayerLayout.reset() }
 }
 
 /** which tabs show, and in which order (ids: 0 Albums · 1 Artists · 2 Songs · 3 Playlists) */
@@ -102,6 +116,38 @@ object TabsCfg {
         if (l.isEmpty()) return
         order.value = l; Store.settings().put("cfgTabs", JSONArray(l)); Store.save()
     }
+}
+
+/** the full player's blocks, in the order you want them (ids: 0 cover · 1 title · 2 seek bar · 3 buttons · 4 extras) */
+object PlayerLayout {
+    val NAMES = listOf("Cover", "Title and artist", "Seek bar", "Play buttons", "Extra buttons")
+    val ICONS = listOf(Ic.Image, Ic.Note, Ic.Timer, Ic.Play, Ic.Queue)
+    val order = MutableStateFlow(listOf(0, 1, 2, 3, 4))
+    val hidden = MutableStateFlow(setOf<Int>())
+    fun load() {
+        val s = Store.settings()
+        val a = s.optJSONArray("cfgNpOrder")
+        val l = if (a == null) emptyList() else (0 until a.length()).map { a.optInt(it) }.filter { it in 0..4 }.distinct()
+        order.value = l + (0..4).filter { it !in l }
+        val h = s.optJSONArray("cfgNpHide")
+        hidden.value = if (h == null) emptySet() else (0 until h.length()).map { h.optInt(it) }.filter { it in 1..2 || it == 4 }.toSet()
+    }
+    private fun save() { val s = Store.settings(); s.put("cfgNpOrder", JSONArray(order.value)); s.put("cfgNpHide", JSONArray(hidden.value.toList())); Store.save() }
+    fun move(id: Int, by: Int) {
+        val l = order.value.toMutableList(); val i = l.indexOf(id); val j = i + by
+        if (i < 0 || j !in l.indices) return
+        l.removeAt(i); l.add(j, id); order.value = l; Hap.tick(); save()
+    }
+    fun show(id: Int, on: Boolean) { hidden.value = if (on) hidden.value - id else hidden.value + id; Hap.tick(); save() }
+    fun reset() { order.value = listOf(0, 1, 2, 3, 4); hidden.value = emptySet(); save() }
+}
+
+/** the shape album art takes in lists, from the shapes you picked */
+@Composable
+fun artShapeDefault(): androidx.compose.ui.graphics.Shape = when (Cfg.artShape.use()) {
+    1 -> CircleShape
+    2 -> androidx.compose.ui.graphics.RectangleShape
+    else -> RoundedCornerShape(Cfg.artRadius.use().dp)
 }
 
 /** per-tab sorting, ascending or descending, like Musicolet's sort menu */
@@ -222,107 +268,203 @@ private fun Sl(title: String, sub: String, value: String, v: Float, range: Close
 @Composable
 private fun Tog(ic: Ic, title: String, sub: String, p: Cfg.B) = SwitchItem(ic, title, sub, p.use()) { p.set(it) }
 
+private data class Sec(val id: String, val sg: SG, val title: String, val sub: String)
+private val SECTIONS = listOf(
+    Sec("tabs", SG.Tabs, "Tabs", "Which tabs, in what order, and the tab bar"),
+    Sec("library", SG.Library, "Library", "Album size, song rows, what each row shows"),
+    Sec("layout", SG.Layout, "Player layout", "Move and hide the parts of the full player"),
+    Sec("look", SG.Cover, "Player look", "Background, cover shape and size"),
+    Sec("viz", SG.Viz, "Visualizer", "Style, colour, strength, height"),
+    Sec("lyrics", SG.Lyrics, "Lyrics", "Size, alignment, fill-in, glow"),
+    Sec("buttons", SG.Buttons, "Buttons", "Play button, extra buttons, seek bar"),
+    Sec("bar", SG.Bar, "Media bar", "The little player above the tabs"),
+    Sec("shapes", SG.Shapes, "Shapes", "Corners and shapes across the app"),
+    Sec("colour", SG.Colour, "Colour", "Follow the cover, or pick an accent"),
+    Sec("feel", SG.Feel, "Motion & touch", "Haptics, motion, battery check")
+)
+
+/** the Customize centre: every area is a tile that opens its own page */
 @Composable
 fun CustomizePage() {
     val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
     val ls = rememberLazyListState()
-    val a = accent
     Box(Modifier.fillMaxSize().background(C.bg)) {
         Aurora(motion && !saving && !ls.isScrollInProgress)
         LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
             item {
-                T("Make it yours. Everything here changes live and is kept with your library.", 14.sp, color = C.sub, lines = 3, modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp))
-                MotionStatus()
-
-                // ---- tabs
-                Group("Tabs") {
-                    val order by TabsCfg.order.collectAsState()
-                    val all = order + (0..3).filter { it !in order }
-                    T("Choose which tabs show and put them in the order you like.", 13.sp, color = C.sub, lines = 2, modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 4.dp))
-                    all.forEach { id ->
-                        val idx = order.indexOf(id); val shown = idx >= 0
-                        Item(TabsCfg.ICONS[id], TabsCfg.NAMES[id], trailing = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (shown && idx > 0) IB(Ic.Up, C.sub, 20.dp, 36.dp) { val l = order.toMutableList(); l[idx] = l[idx - 1]; l[idx - 1] = id; TabsCfg.set(l) }
-                                if (shown && idx < order.size - 1) IB(Ic.Down, C.sub, 20.dp, 36.dp) { val l = order.toMutableList(); l[idx] = l[idx + 1]; l[idx + 1] = id; TabsCfg.set(l) }
-                                Spacer(Modifier.width(6.dp))
-                                Switch(shown) { on -> if (on) TabsCfg.set(order + id) else if (order.size > 1) TabsCfg.set(order - id) }
-                            }
-                        })
-                    }
-                    val st by Cfg.startTab.v.collectAsState()
-                    Choice("Open on", listOf("First tab") + TabsCfg.NAMES, st + 1) { Cfg.startTab.set(it - 1) }
-                }
-
-                // ---- library layout
-                Group("Library") {
-                    Choice("Album size", listOf("Small", "Medium", "Large"), Cfg.albumSize.use()) { Cfg.albumSize.set(it) }
-                    Choice("Song rows", listOf("Compact", "Normal", "Roomy"), Cfg.rowDensity.use()) { Cfg.rowDensity.set(it) }
-                    Tog(Ic.Image, "Album art in song rows", "Off: song rows show just text", Cfg.rowArt)
-                    Tog(Ic.Disc, "Album name in song rows", "Under the artist's name", Cfg.rowAlbum)
-                    Tog(Ic.Timer, "Song length in rows", "The time on the right", Cfg.rowDur)
-                    Item(Ic.UpDown, "Sorting", "Every tab has its own sort. Tap the sort button at the top of a tab.")
-                }
-
-                // ---- player look
-                Group("Player · background") {
-                    Choice("Background", listOf("Living fog", "Blurred cover", "Accent glow", "Black"), Cfg.bgStyle.use()) { Cfg.bgStyle.set(it) }
-                }
-                Group("Player · visualizer") {
-                    Choice("Style", listOf("Bars", "Mirror", "Wave", "Dots", "Off"), Cfg.vizStyle.use()) { Cfg.vizStyle.set(it) }
-                    Choice("Colour", listOf("Accent", "Cover colours", "Rainbow", "White"), Cfg.vizColor.use()) { Cfg.vizColor.set(it) }
-                    val op = Cfg.vizOpacity.use(); val hh = Cfg.vizHeight.use(); val nb = Cfg.vizBars.use()
-                    Sl("Strength", "How bold it is", "${(op * 100).toInt()}%", op, 0.1f..1f, 0.05f) { Cfg.vizOpacity.set(it) }
-                    Sl("Height", "How much of the screen it fills", "${(hh * 100).toInt()}%", hh, 0.2f..1f, 0.05f) { Cfg.vizHeight.set(it) }
-                    Sl("Bars", "How many bars or dots", "$nb", nb.toFloat(), 16f..96f, 4f) { Cfg.vizBars.set(it.toInt()) }
-                }
-                Group("Player · cover") {
-                    val shape = Cfg.coverShape.use()
-                    Choice("Cover shape", listOf("Rounded", "Circle", "Sharp"), shape) { Cfg.coverShape.set(it) }
-                    Choice("Swiping the cover", listOf("Skips songs", "Changes pages"), Cfg.coverSwipe.use()) { Cfg.coverSwipe.set(it) }
-                    if (shape == 0) { val r = Cfg.coverRadius.use(); Sl("Corner roundness", "", "${r.toInt()} dp", r, 0f..48f, 2f) { Cfg.coverRadius.set(it) } }
-                    val sz = Cfg.coverSize.use()
-                    Sl("Cover size", "", "${(sz * 100).toInt()}%", sz, 0.6f..1f, 0.05f) { Cfg.coverSize.set(it) }
-                }
-                Group("Player · lyrics") {
-                    val ls2 = Cfg.lyricSize.use()
-                    Sl("Text size", "", "${ls2.toInt()}", ls2, 18f..38f, 1f) { Cfg.lyricSize.set(it) }
-                    Choice("Alignment", listOf("Left", "Centre"), Cfg.lyricAlign.use()) { Cfg.lyricAlign.set(it) }
-                    Tog(Ic.Lyrics, "Words fill in as they are sung", "Each word lights up as the singer reaches it", Cfg.lyricSweep)
-                    Tog(Ic.Spark, "Glow behind the current line", "A soft light in the song's colour", Cfg.lyricGlow)
-                    Tog(Ic.Eq, "Soften the other lines", "Lines you've passed fade and blur", Cfg.lyricBlur)
-                }
-                Group("Player · controls") {
-                    Choice("Play button", listOf("White", "Accent", "Outline"), Cfg.playStyle.use()) { Cfg.playStyle.set(it) }
-                    Tog(Ic.Lyrics, "Lyrics button", "", Cfg.btnLyrics)
-                    Tog(Ic.Eq, "Equalizer button", "", Cfg.btnEq)
-                    Tog(Ic.Queue, "Queue button", "", Cfg.btnQueue)
-                    Tog(Ic.Timer, "Sleep timer button", "", Cfg.btnSleep)
-                    Tog(Ic.Play, "Time under the seek bar", "Elapsed and remaining", Cfg.showTimes)
-                    val th = Cfg.seekThick.use()
-                    Sl("Seek bar thickness", "", "${th.toInt()} dp", th, 2f..12f, 1f) { Cfg.seekThick.set(it) }
-                }
-                Group("Media bar") {
-                    Tog(Ic.Play, "Progress line", "The thin line along the bottom of the media bar", Cfg.miniProgress)
-                    Tog(Ic.Next, "Next button", "", Cfg.miniNext)
-                }
-                Group("Colour") {
-                    val follow by Prefs.coverAccent.collectAsState(); val cur by Prefs.accent.collectAsState()
-                    SwitchItem(Ic.Image, "Follow the cover", "The whole app takes the playing song's colour", follow) { Prefs.setCoverAccent(it) }
-                    if (!follow) {
-                        FlowRow(Modifier.padding(horizontal = 18.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Prefs.ACCENTS.forEach { c ->
-                                Box(Modifier.size(40.dp).clip(CircleShape).background(Color(c)).then(if (c == cur) Modifier.border(3.dp, Color.White, CircleShape) else Modifier).clickable { Hap.tick(); Prefs.setAccent(c) })
-                            }
+                T("Make it yours. Everything changes live and is kept with your library.", 14.sp, color = C.sub, lines = 3, modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp))
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SECTIONS.chunked(2).forEach { row ->
+                        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            row.forEach { sc -> HubTile(sc.sg, sc.title, sc.sub, Modifier.weight(1f).fillMaxHeight()) { Nav.open(Page.CustomizeSection(sc.id)) } }
+                            if (row.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
                 }
+                Spacer(Modifier.height(10.dp))
                 Group(null) {
                     Item(Ic.History, "Reset all customization", "Back to how it looked at the start", onClick = { Dialogs.show { Confirm("Reset customization?", "Tabs, sorting, player and library looks go back to the defaults. Your music is not touched.", "Reset") { Cfg.resetAll(); Toasts.show("Back to the defaults") } } })
                 }
             }
         }
         Head("Customize", ls.scrolled, back = true)
+    }
+}
+
+@Composable
+private fun MoveRow(ic: Ic, name: String, i: Int, n: Int, shown: Boolean, canHide: Boolean, onMove: (Int) -> Unit, onShow: (Boolean) -> Unit) {
+    Item(ic, name, trailing = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (shown && i > 0) IB(Ic.Up, C.sub, 20.dp, 36.dp) { onMove(-1) }
+            if (shown && i < n - 1) IB(Ic.Down, C.sub, 20.dp, 36.dp) { onMove(1) }
+            if (canHide) { Spacer(Modifier.width(6.dp)); Switch(shown) { onShow(it) } }
+        }
+    })
+}
+
+/** one area of Customize, on a page of its own */
+@Composable
+fun CustomizeSectionPage(id: String) {
+    val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
+    val ls = rememberLazyListState()
+    val sec = SECTIONS.firstOrNull { it.id == id } ?: SECTIONS[0]
+    Box(Modifier.fillMaxSize().background(C.bg)) {
+        Aurora(motion && !saving && !ls.isScrollInProgress)
+        LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
+            item {
+                Row(Modifier.padding(horizontal = 24.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    SIconTile(sec.sg, 44.dp, 28.dp); T(sec.sub, 14.sp, color = C.sub, lines = 2, modifier = Modifier.weight(1f))
+                }
+                when (id) {
+                    "tabs" -> {
+                        Group("Tabs") {
+                            val order by TabsCfg.order.collectAsState()
+                            val all = order + (0..3).filter { it !in order }
+                            T("Choose which tabs show and put them in the order you like.", 13.sp, color = C.sub, lines = 2, modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 4.dp))
+                            all.forEach { tid ->
+                                val idx = order.indexOf(tid); val shown = idx >= 0
+                                MoveRow(TabsCfg.ICONS[tid], TabsCfg.NAMES[tid], idx, order.size, shown, true,
+                                    onMove = { by -> val l = order.toMutableList(); l[idx] = l[idx + by]; l[idx + by] = tid; TabsCfg.set(l) },
+                                    onShow = { on -> if (on) TabsCfg.set(order + tid) else if (order.size > 1) TabsCfg.set(order - tid) })
+                            }
+                            val st by Cfg.startTab.v.collectAsState()
+                            Choice("Open on", listOf("First tab") + TabsCfg.NAMES, st + 1) { Cfg.startTab.set(it - 1) }
+                        }
+                        Group("Tab bar") { Tog(Ic.Tag, "Show tab names", "Off: just the icons", Cfg.tabLabels) }
+                    }
+                    "library" -> Group("Library") {
+                        Choice("Album size", listOf("Small", "Medium", "Large"), Cfg.albumSize.use()) { Cfg.albumSize.set(it) }
+                        Choice("Song rows", listOf("Compact", "Normal", "Roomy"), Cfg.rowDensity.use()) { Cfg.rowDensity.set(it) }
+                        Tog(Ic.Image, "Album art in song rows", "Off: song rows show just text", Cfg.rowArt)
+                        Tog(Ic.Disc, "Album name in song rows", "Under the artist's name", Cfg.rowAlbum)
+                        Tog(Ic.Timer, "Song length in rows", "The time on the right", Cfg.rowDur)
+                        Item(Ic.UpDown, "Sorting", "Every tab has its own sort. Tap the sort button at the top of a tab.")
+                    }
+                    "layout" -> {
+                        Group("Order of the player") {
+                            val order by PlayerLayout.order.collectAsState(); val hidden by PlayerLayout.hidden.collectAsState()
+                            T("Move each part up or down, and hide the ones you don't use. This is the portrait player.", 13.sp, color = C.sub, lines = 3, modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 4.dp))
+                            order.forEachIndexed { i, bid ->
+                                MoveRow(PlayerLayout.ICONS[bid], PlayerLayout.NAMES[bid], i, order.size, bid !in hidden, bid == 1 || bid == 2 || bid == 4,
+                                    onMove = { by -> PlayerLayout.move(bid, by) }, onShow = { on -> PlayerLayout.show(bid, on) })
+                            }
+                        }
+                        Group("Title and artist") {
+                            Choice("Alignment", listOf("Left", "Centre"), Cfg.titleAlign.use()) { Cfg.titleAlign.set(it) }
+                            val ts = Cfg.titleSize.use()
+                            Sl("Size", "", "${ts.toInt()}", ts, 16f..32f, 1f) { Cfg.titleSize.set(it) }
+                            Tog(Ic.Heart, "Heart button", "Next to the title", Cfg.btnHeart)
+                        }
+                    }
+                    "look" -> {
+                        Group("Background") { Choice("Behind the player", listOf("Living fog", "Blurred cover", "Accent glow", "Black"), Cfg.bgStyle.use()) { Cfg.bgStyle.set(it) } }
+                        Group("Cover") {
+                            val shape = Cfg.coverShape.use()
+                            Choice("Cover shape", listOf("Rounded", "Circle", "Sharp"), shape) { Cfg.coverShape.set(it) }
+                            Choice("Swiping the cover", listOf("Skips songs", "Changes pages"), Cfg.coverSwipe.use()) { Cfg.coverSwipe.set(it) }
+                            if (shape == 0) { val r = Cfg.coverRadius.use(); Sl("Corner roundness", "", "${r.toInt()} dp", r, 0f..48f, 2f) { Cfg.coverRadius.set(it) } }
+                            val sz = Cfg.coverSize.use()
+                            Sl("Cover size", "", "${(sz * 100).toInt()}%", sz, 0.6f..1f, 0.05f) { Cfg.coverSize.set(it) }
+                        }
+                    }
+                    "viz" -> Group("Visualizer") {
+                        Choice("Style", listOf("Bars", "Mirror", "Wave", "Dots", "Off"), Cfg.vizStyle.use()) { Cfg.vizStyle.set(it) }
+                        Choice("Colour", listOf("Accent", "Cover colours", "Rainbow", "White"), Cfg.vizColor.use()) { Cfg.vizColor.set(it) }
+                        val op = Cfg.vizOpacity.use(); val hh = Cfg.vizHeight.use(); val nb = Cfg.vizBars.use()
+                        Sl("Strength", "How bold it is", "${(op * 100).toInt()}%", op, 0.1f..1f, 0.05f) { Cfg.vizOpacity.set(it) }
+                        Sl("Height", "How much of the screen it fills", "${(hh * 100).toInt()}%", hh, 0.2f..1f, 0.05f) { Cfg.vizHeight.set(it) }
+                        Sl("Bars", "How many bars or dots", "$nb", nb.toFloat(), 16f..96f, 4f) { Cfg.vizBars.set(it.toInt()) }
+                    }
+                    "lyrics" -> Group("Lyrics") {
+                        val ls2 = Cfg.lyricSize.use()
+                        Sl("Text size", "", "${ls2.toInt()}", ls2, 18f..38f, 1f) { Cfg.lyricSize.set(it) }
+                        Choice("Alignment", listOf("Left", "Centre"), Cfg.lyricAlign.use()) { Cfg.lyricAlign.set(it) }
+                        Tog(Ic.Lyrics, "Words fill in as they are sung", "Each word lights up as the singer reaches it", Cfg.lyricSweep)
+                        Tog(Ic.Spark, "Glow behind the current line", "A soft light in the song's colour", Cfg.lyricGlow)
+                        Tog(Ic.Eq, "Soften the other lines", "Lines you've passed fade and blur", Cfg.lyricBlur)
+                    }
+                    "buttons" -> Group("Buttons") {
+                        Choice("Play button", listOf("White", "Accent", "Outline"), Cfg.playStyle.use()) { Cfg.playStyle.set(it) }
+                        val cs = Cfg.ctlScale.use()
+                        Sl("Button size", "Play, next, previous, shuffle, repeat", "${(cs * 100).toInt()}%", cs, 0.8f..1.2f, 0.05f) { Cfg.ctlScale.set(it) }
+                        Tog(Ic.Lyrics, "Lyrics button", "", Cfg.btnLyrics)
+                        Tog(Ic.Eq, "Equalizer button", "", Cfg.btnEq)
+                        Tog(Ic.Queue, "Queue button", "", Cfg.btnQueue)
+                        Tog(Ic.Timer, "Sleep timer button", "", Cfg.btnSleep)
+                        Tog(Ic.Play, "Time under the seek bar", "Elapsed and remaining", Cfg.showTimes)
+                        val th = Cfg.seekThick.use()
+                        Sl("Seek bar thickness", "", "${th.toInt()} dp", th, 2f..12f, 1f) { Cfg.seekThick.set(it) }
+                    }
+                    "bar" -> Group("Media bar") {
+                        Tog(Ic.Play, "Progress line", "The thin line along the bottom of the media bar", Cfg.miniProgress)
+                        Tog(Ic.Next, "Next button", "", Cfg.miniNext)
+                        Tog(Ic.Person, "Artist name", "Under the song title", Cfg.miniArtist)
+                        Choice("Cover shape", listOf("Rounded", "Circle", "Square"), Cfg.miniArt.use()) { Cfg.miniArt.set(it) }
+                        val dr = Cfg.dockRadius.use()
+                        Sl("Bar roundness", "The media bar and the tab bar", "${dr.toInt()} dp", dr, 8f..31f, 1f) { Cfg.dockRadius.set(it) }
+                    }
+                    "shapes" -> {
+                        Group("Preview") {
+                            Row(Modifier.padding(horizontal = 18.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Art("", 56.dp, phName = "Strata"); Art("", 56.dp, phName = "Music"); Art("", 56.dp, phName = "Mix")
+                                Box(Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(Cfg.dockRadius.use().dp)).background(mix(accent, 0.25f, C.surface2)), contentAlignment = Alignment.Center) { T("Media bar", 13.sp, W650) }
+                            }
+                        }
+                        Group("Corners") {
+                            val cr = Cfg.cardRadius.use()
+                            Sl("Cards", "Settings and Customize", "${cr.toInt()} dp", cr, 0f..36f, 2f) { Cfg.cardRadius.set(it) }
+                            val dr = Cfg.dockRadius.use()
+                            Sl("Media bar and tabs", "", "${dr.toInt()} dp", dr, 8f..31f, 1f) { Cfg.dockRadius.set(it) }
+                        }
+                        Group("Album art in lists") {
+                            val sh = Cfg.artShape.use()
+                            Choice("Shape", listOf("Rounded", "Circle", "Square"), sh) { Cfg.artShape.set(it) }
+                            if (sh == 0) { val r = Cfg.artRadius.use(); Sl("Corner roundness", "", "${r.toInt()} dp", r, 0f..24f, 1f) { Cfg.artRadius.set(it) } }
+                            Choice("Cover in the media bar", listOf("Rounded", "Circle", "Square"), Cfg.miniArt.use()) { Cfg.miniArt.set(it) }
+                        }
+                    }
+                    "colour" -> Group("Colour") {
+                        val follow by Prefs.coverAccent.collectAsState(); val cur by Prefs.accent.collectAsState()
+                        SwitchItem(Ic.Image, "Follow the cover", "The whole app takes the playing song's colour", follow) { Prefs.setCoverAccent(it) }
+                        if (!follow) {
+                            FlowRow(Modifier.padding(horizontal = 18.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Prefs.ACCENTS.forEach { c ->
+                                    Box(Modifier.size(40.dp).clip(CircleShape).background(Color(c)).then(if (c == cur) Modifier.border(3.dp, Color.White, CircleShape) else Modifier).clickable { Hap.tick(); Prefs.setAccent(c) })
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        Group("Touch") { Tog(Ic.Spark, "Haptics", "Little buzzes when you tap, drag and release", Cfg.haptics) }
+                        Group("Motion") {
+                            SwitchItem(Ic.Spark, "Motion Effects", "Sliding pages, glow, living background and the visualizer", motion) { Prefs.setMotion(it) }
+                        }
+                        MotionStatus()
+                    }
+                }
+            }
+        }
+        Head(sec.title, ls.scrolled, back = true)
     }
 }
 

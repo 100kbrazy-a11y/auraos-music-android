@@ -96,7 +96,12 @@ sealed class Page {
     object Search : Page()
     object Settings : Page()
     object Customize : Page()
+    object Scanner : Page()
+    data class SettingsSection(val id: String) : Page()
+    data class CustomizeSection(val id: String) : Page()
 }
+/** pages that cover the whole screen, so the tab bar and media bar step aside */
+val Page?.hidesDock: Boolean get() = this is Page.Settings || this is Page.Customize || this is Page.Scanner || this is Page.SettingsSection || this is Page.CustomizeSection
 object Nav {
     val stack = mutableStateListOf<Page>()
     val tab = mutableStateOf(0)
@@ -381,7 +386,7 @@ private var swN = 0
 
 /** cover art, or the placeholder: a gradient of a colour from the name with a note / disc / person */
 @Composable
-fun Art(cover: String, size: Dp?, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(9.dp), ph: Ic = Ic.Note, phName: String = "", square: Boolean = true) {
+fun Art(cover: String, size: Dp?, modifier: Modifier = Modifier, shape: Shape = artShapeDefault(), ph: Ic = Ic.Note, phName: String = "", square: Boolean = true) {
     val m = (if (size != null) modifier.size(size) else if (square) modifier.aspectRatio(1f) else modifier).clip(shape)
     val f = if (cover.isNotEmpty()) Store.coverFile(cover) else null
     if (f != null && f.exists()) AsyncImage(f, null, m.background(C.surface2), contentScale = ContentScale.Crop)

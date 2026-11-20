@@ -156,7 +156,8 @@ fun BgApp() {
                     Box(Modifier.fillMaxSize().background(C.bg)) { CompositionLocalProvider(LocalPageIndex provides i) {
                         when (p) {
                             is Page.AlbumP -> AlbumPage(p.key); is Page.ArtistP -> ArtistPage(p.name); is Page.PlaylistP -> PlaylistPage(p.name)
-                            Page.Favorites -> FavoritesPage(); Page.Search -> SearchPage(); Page.Settings -> SettingsPage(); Page.Customize -> CustomizePage()
+                            Page.Favorites -> FavoritesPage(); Page.Search -> SearchPage(); Page.Settings -> SettingsPage(); Page.Customize -> CustomizePage(); Page.Scanner -> ScannerPage()
+                            is Page.SettingsSection -> SettingsSectionPage(p.id); is Page.CustomizeSection -> CustomizeSectionPage(p.id)
                         }
                     } }
                 }
@@ -178,6 +179,7 @@ fun FgApp() {
     val st by NativePlayer.state.collectAsState()
     val vMotion by Prefs.motion.collectAsState(); val vSaving by Prefs.saving.collectAsState()
     LaunchedEffect(st.playing, vMotion, vSaving) { VizHold.refresh(st.playing, vMotion && !vSaving) }
+    LaunchedEffect(Unit) { kotlinx.coroutines.delay(1400); Onboard.check() }
     val q by Ctl.queue.collectAsState()
     val busy by Store.busy.collectAsState()
     val awake by Prefs.keepAwake.collectAsState()
@@ -250,13 +252,14 @@ fun FgApp() {
                     }
                 }
             }
-            if (!land) AnimatedVisibility(Nav.stack.lastOrNull() != Page.Settings && Nav.stack.lastOrNull() != Page.Customize, enter = slideInVertically { it }, exit = slideOutVertically { it }) {   // the bottom bar steps away in Settings
+            if (!land) AnimatedVisibility(!Nav.stack.lastOrNull().hidesDock, enter = slideInVertically { it }, exit = slideOutVertically { it }) {   // the bottom bar steps away in Settings
                 Dock(cur, Nav.tab.value, { i -> Hap.tick(); Nav.stack.clear(); Nav.tab.value = i }) { full = true }
             }
         }
         if (land) LandDock(cur, Nav.tab.value, { i -> Hap.tick(); Nav.stack.clear(); Nav.tab.value = i }) { full = true }
         if (cur != null && Morph.f.value > 0.001f) PlayerPanel(cur) { full = false }
         if (cur != null && Morph.carrying) FloatingMini(cur)
+        OnboardingOverlay()
         SheetHost()
     }
 }

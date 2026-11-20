@@ -141,7 +141,7 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
     val away = Morph.carrying || fv > 0.001f
     val landing = Morph.closing && fv < Morph.fDock + 0.12f          // the panel is nearly the bar again: the dock rejoins it
     val tint = mix(a, 0.10f, Color(0xFF1A1A20)).copy(alpha = 0.40f)
-    val r = 26.dp
+    val r = Cfg.dockRadius.use().dp
     // the corners ease (never snap) between "one bubble" and "tabs on their own"
     val joinBase by animateDpAsState(if (cur != null && (!away || landing)) 0.dp else r, tween(260, easing = FastOutSlowInEasing), label = "join")
     // the tug: only the media bar lifts (resisting), the tabs stay put, so a gap opens between them and their corners round off
@@ -282,8 +282,8 @@ fun MiniRow(s: Song, st: NativePlayer.St, swipe: Boolean = true) {
     Row(Modifier.fillMaxSize().padding(start = 10.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         val body: @Composable (Song) -> Unit = { x ->
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Art(x.cover, 44.dp, shape = RoundedCornerShape(10.dp), phName = x.album)
-                Column(Modifier.weight(1f)) { T(x.title, 15.sp, W700); T(x.artist.ifBlank { "Unknown Artist" }, 13.sp, color = C.sub) }
+                Art(x.cover, 44.dp, shape = when (Cfg.miniArt.use()) { 1 -> CircleShape; 2 -> androidx.compose.ui.graphics.RectangleShape; else -> RoundedCornerShape(10.dp) }, phName = x.album)
+                Column(Modifier.weight(1f)) { T(x.title, 15.sp, W700); if (Cfg.miniArtist.use()) T(x.artist.ifBlank { "Unknown Artist" }, 13.sp, color = C.sub) }
             }
         }
         if (swipe) SongSwiper(Modifier.weight(1f).fillMaxHeight().clipToBounds(), 24.dp) { x -> body(x) } else Box(Modifier.weight(1f).fillMaxHeight()) { body(s) }
@@ -378,7 +378,7 @@ fun PlayerPanel(cur: Song, onClose: () -> Unit) {
     var bottom = (mini.bottom + (h - mini.bottom) * m).coerceAtLeast(top + mini.height)
     var topY = top
     if (grow) { left = org.left * (1f - gp); right = org.right + (scr.width - org.right) * gp; topY = org.top * (1f - gp); bottom = org.bottom + (h - org.bottom) * gp }
-    val radius = if (grow) 22.dp * (1f - smooth(0.55f, 1f, gp)) else (26.dp + 4.dp * m) * (1f - smooth(0.82f, 1f, fv))
+    val radius = if (grow) 22.dp * (1f - smooth(0.55f, 1f, gp)) else (Cfg.dockRadius.v.value.dp + 4.dp * m) * (1f - smooth(0.82f, 1f, fv))
     val rb = if (grow) radius else 0.dp
     val solid = if (m < 1f) 0f else smooth(0.62f, 0.98f, fv)
     val tint = mix(accent, 0.14f, Color(0xFF1A1A1F))
@@ -481,7 +481,7 @@ private fun Tabs(tab: Int, onTab: (Int) -> Unit) {
                 val sc by animateFloatAsState(if (on) 1.08f else 1f, tween(350, easing = Spring), label = "t$i")
                 Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
                     Box(Modifier.height(28.dp).scale(sc), contentAlignment = Alignment.Center) { Icon(ic, tint = if (on) a else C.sub) }
-                    T(label, 10.5.sp, W650, if (on) C.text else C.sub)
+                    if (Cfg.tabLabels.use()) T(label, 10.5.sp, W650, if (on) C.text else C.sub)
                 }
             }
         }
@@ -725,19 +725,25 @@ private fun NpPages(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Uni
 private fun NpPortrait(s: Song, hideCover: Boolean, onClose: () -> Unit, go: (Int) -> Unit) {
     val a = accent
     val favs by Store.favs.collectAsState()
+    val order by PlayerLayout.order.collectAsState(); val hidden by PlayerLayout.hidden.collectAsState()
+    val center = Cfg.titleAlign.use() == 1; val tSize = Cfg.titleSize.use(); val cs = Cfg.ctlScale.use(); val heart = Cfg.btnHeart.use()
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 18.dp)) {
         NpTopBar(s, onClose, false, false) { go(0) }
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { NpCover(s, hideCover, 420.dp, true) }
-        Row(Modifier.fillMaxWidth().padding(top = 22.dp).heightIn(min = 58.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column(Modifier.weight(1f)) {
-                T(s.title, 22.sp, W800, spacing = (-0.22).sp)
-                T(s.artist.ifBlank { "Unknown Artist" }, 16.sp, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.clickable { go(2) })
+        order.forEach { id ->
+            if (id !in hidden) when (id) {
+                0 -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { NpCover(s, hideCover, 420.dp, true) }
+                1 -> Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 4.dp).heightIn(min = 58.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f), horizontalAlignment = if (center) Alignment.CenterHorizontally else Alignment.Start) {
+                        T(s.title, tSize.sp, W800, spacing = (-0.22).sp, align = if (center) TextAlign.Center else TextAlign.Start)
+                        T(s.artist.ifBlank { "Unknown Artist" }, (tSize * 0.73f).sp, color = Color.White.copy(alpha = 0.7f), align = if (center) TextAlign.Center else TextAlign.Start, modifier = Modifier.clickable { go(2) })
+                    }
+                    if (heart) IB(if (s.id in favs) Ic.HeartFill else Ic.Heart, if (s.id in favs) a else C.text) { if (Store.toggleFav(s.id)) Hap.success() else Hap.soft() }
+                }
+                2 -> NpSeek(false)
+                3 -> NpControls((76 * cs).dp, Modifier.fillMaxWidth().padding(top = 8.dp).height((84 * cs).dp))
+                4 -> Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) { npExtras(false) { go(0) }.forEach { it() } }
             }
-            IB(if (s.id in favs) Ic.HeartFill else Ic.Heart, if (s.id in favs) a else C.text) { if (Store.toggleFav(s.id)) Hap.success() else Hap.soft() }
         }
-        NpSeek(false)
-        NpControls(76.dp, Modifier.fillMaxWidth().padding(top = 12.dp).height(84.dp))
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) { npExtras(false) { go(0) }.forEach { it() } }
     }
 }
 

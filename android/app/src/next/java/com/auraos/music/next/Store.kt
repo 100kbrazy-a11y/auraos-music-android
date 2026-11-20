@@ -207,6 +207,20 @@ object Store {
     fun coverFile(id: String): File = File(app.filesDir, "covers/$id.jpg")
 
     // ------------------------------------------------------------------ adding
+    /** the id of the song [register] last turned away as a duplicate (so a scan can still put it in a playlist) */
+    @Volatile var lastDupId: String? = null
+    /** is a song with this title and artist already in the library? (the scanner greys these out) */
+    fun haveSong(title: String, artist: String): Boolean = findSame(title, artist, "") != null
+    /** one file from the scanner: copies it in and adds it. Returns its song id (added now, or already here), or null when it failed */
+    fun importUri(u: Uri, folderCover: ByteArray?): Pair<String, Boolean>? {
+        return try {
+            val name = displayName(u)
+            val tmp = copyIn(u, name)
+            lastDupId = null
+            val song = register(tmp, tmp.extension, if (folderCover != null && hasNoPicture(tmp)) Meta(cover = folderCover) else null)
+            if (song != null) song.id to true else lastDupId?.let { it to false }
+        } catch (e: Exception) { Diag.log("scan import: ${e.message}"); null }
+    }
     private fun findSame(title: String, artist: String, album: String): Song? {
         val t = norm(title); val a = norm(primaryArtist(artist)); val al = norm(album)
         if (t.isEmpty()) return null
@@ -268,7 +282,7 @@ object Store {
         val t = title?.takeIf { it.isNotBlank() } ?: fromName
         val a = artist?.takeIf { it.isNotBlank() } ?: ""
         val al = album?.takeIf { it.isNotBlank() } ?: ""
-        findSame(t, a, al)?.let { tmp.delete(); return null }
+        findSame(t, a, al)?.let { lastDupId = it.id; tmp.delete(); return null }
         val rel = uniqueFile(organizedPath(albumartist ?: "", a, al, track ?: 0, disc ?: 0, t, ext))
         val dest = File(app.filesDir, "Songs/$rel")
         dest.parentFile?.mkdirs()

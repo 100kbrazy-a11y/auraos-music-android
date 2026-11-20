@@ -2,6 +2,22 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.11.0",
+   "name": "The Studio Update",
+   "date": "2026-11-19",
+   "notes": [
+    "Scan Folders: pick the folders your music lives in (Android asks once and remembers), see every song found, tick or untick any of them, and add them with no playlist, one playlist, or one playlist per folder",
+    "Settings is now a menu of sections, each its own button with a hand-drawn icon that follows your accent colour",
+    "Customize is a hub of tiles: Tabs, Library, Player layout, Player look, Visualizer, Lyrics, Buttons, Media bar, Shapes, Colour, and Motion & touch",
+    "Move the parts of the full player up and down or hide them, centre the title, resize the buttons, and change the corners and shapes of cards, album art, the media bar and its cover",
+    "A short intro for new users, which you can replay from Settings › Updates & About",
+    "Search: the library / YouTube buttons are two round bubbles beside the search bar, and switching runs the search straight away",
+    "YouTube artist pages show their picture, with an All button; results have a play button and a ⋯ menu, and songs, albums and artists play or queue straight from there",
+    "Full player: swipe left for full-screen lyrics (words fill in as they are sung) and right for artist info",
+    "Haptics can be turned off in Customize"
+   ]
+  },
+  {
    "version": "2.10.3",
    "name": "The Customizer Update",
    "date": "2026-11-19",

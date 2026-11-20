@@ -24,6 +24,7 @@ object Hap {
     fun success() = go("success"); fun error() = go("error")
 
     fun go(kind: String) {
+        if (!Cfg.haptics.v.value) return
         val v = vib ?: return
         if (!v.hasVibrator()) return
         if (kind == "tick") { val now = System.currentTimeMillis(); if (now - lastTick < 45) return; lastTick = now }

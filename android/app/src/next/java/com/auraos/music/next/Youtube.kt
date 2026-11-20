@@ -257,7 +257,6 @@ fun Downloads() {
 @Composable
 fun AddMusicSheet() {
     val pickSongs = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { if (it.isNotEmpty()) Store.importSongs(it) { a, s -> Toasts.show("Added ${plural(a, "song")}" + if (s > 0) " · $s were already here" else "") } }
-    val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { u -> if (u != null) Store.importFolder(u) }
     val pickPack = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u -> if (u != null) Store.importPack(u) }
     SheetScroll {
         Row(Modifier.padding(start = 24.dp, end = 20.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -265,7 +264,7 @@ fun AddMusicSheet() {
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(C.line)); Spacer(Modifier.height(6.dp))
         Row(Modifier.fillMaxWidth().clickable { pickSongs.launch(arrayOf("audio/*")) }.padding(horizontal = 24.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) { Icon(Ic.Note, tint = C.sub); Column { T("Add Songs", 15.5.sp, W550); T("Pick music files from your phone", 13.sp, color = C.sub) } }
-        Row(Modifier.fillMaxWidth().clickable { pickFolder.launch(null) }.padding(horizontal = 24.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) { Icon(Ic.Folder, tint = C.sub); Column { T("Add a Folder", 15.5.sp, W550); T("Everything in a folder and its sub-folders", 13.sp, color = C.sub) } }
+        Row(Modifier.fillMaxWidth().clickable { Dialogs.close(); Nav.open(Page.Scanner) }.padding(horizontal = 24.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) { Icon(Ic.Folder, tint = C.sub); Column { T("Scan Folders", 15.5.sp, W550); T("Pick folders, then choose which songs to add and whether they become a playlist", 13.sp, color = C.sub, lines = 2) } }
         Row(Modifier.fillMaxWidth().clickable { pickPack.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) }.padding(horizontal = 24.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) { Icon(Ic.Pack, tint = C.sub); Column { T("Add Music Pack", 15.5.sp, W550); T("Add a …-musicpack.zip someone shared with you", 13.sp, color = C.sub) } }
         Act(Ic.Globe, "Add from Link", "Paste a YouTube or YouTube Music song, album, playlist or artist link") {
             Dialogs.show {

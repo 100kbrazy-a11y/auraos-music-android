@@ -74,7 +74,7 @@ fun LandDock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
     val a = accent
     val d = LocalDensity.current
     val st by NativePlayer.state.collectAsState()
-    val settings = Nav.stack.lastOrNull().let { it == Page.Settings || it == Page.Customize }
+    val settings = Nav.stack.lastOrNull().hidesDock
     val pinned by Prefs.tuck.collectAsState()
     val scope = rememberCoroutineScope()
     Tuck.scope = scope

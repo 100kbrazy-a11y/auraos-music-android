@@ -15,6 +15,10 @@ object Tour {
             "artist" -> Nav.open(Page.ArtistP(v))
             "settings" -> Nav.open(Page.Settings)
             "search" -> Nav.open(Page.Search)
+            "scanner" -> Nav.open(Page.Scanner)
+            "customize" -> { Nav.open(Page.Customize); if (v.isNotEmpty()) Nav.open(Page.CustomizeSection(v)) }
+            "section" -> { Nav.open(Page.Settings); Nav.open(Page.SettingsSection(v)) }
+            "intro" -> Onboard.start()
             "filter" -> Dialogs.sheet { FilterSheet() }
             "songmenu" -> songs.firstOrNull { it.title == v }?.let { s -> Dialogs.sheet { SongSheet(s) } }
             "play" -> songs.firstOrNull { it.title == v }?.let { s -> Ctl.play(ctx, byTitle, byTitle.indexOf(s), "Songs", false) }

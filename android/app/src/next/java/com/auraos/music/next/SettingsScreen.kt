@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
 /** .group: a rounded card with an accent caption */
 @Composable
 fun Group(title: String?, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 16.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(C.surface)) {
+    Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 16.dp).fillMaxWidth().clip(RoundedCornerShape(Cfg.cardRadius.use().dp)).background(C.surface)) {
         if (title != null) T(title.uppercase(), 13.sp, W750, accent, spacing = 0.26.sp, modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 6.dp))
         content()
     }
@@ -81,6 +81,44 @@ fun Slide(v: Float, range: ClosedFloatingPointRange<Float>, step: Float, set: (F
 fun SettingsPage() {
     val ctx = LocalContext.current
     val songs by Store.songs.collectAsState(); val pls by Store.playlists.collectAsState()
+    val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
+    val task by Tasks.status.collectAsState()
+    var bytes by remember { mutableStateOf(0L) }
+    LaunchedEffect(songs.size) { bytes = withContext(Dispatchers.IO) { Store.storageBytes() } }
+    val albums = remember(songs) { Store.albums(songs) }
+    val artists = remember(songs) { Store.artists(songs).size }
+    val eqName by Prefs.eqName.collectAsState(); val fade by Prefs.crossfade.collectAsState()
+    val ls = rememberLazyListState()
+    Box(Modifier.fillMaxSize().background(C.bg)) {
+        Aurora(motion && !saving && !ls.isScrollInProgress)
+        LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
+            item {
+                Group(null) {
+                    Row(Modifier.fillMaxWidth().padding(top = 14.dp)) {
+                        for ((n, l) in listOf(songs.size to "songs", albums.size to "albums", artists to "artists", pls.size to "playlists"))
+                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) { T("$n", 22.sp, W800); T(l, 12.sp, color = C.sub) }
+                    }
+                    T("${fmtSize(bytes)} on this phone", 12.sp, color = C.sub, align = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 14.dp))
+                }
+                HubRow(SG.Customize, "Customize", "Move things around, change shapes, colours, the player, the tabs") { Nav.open(Page.Customize) }
+                HubRow(SG.Music, "Your Music", task.ifEmpty { "Add songs, scan folders, covers and clean-up" }) { Nav.open(Page.SettingsSection("music")) }
+                HubRow(SG.Playback, "Playback", "Crossfade ${if (fade < 0.5f) "off" else "%.0f s".format(fade)} · equalizer $eqName") { Nav.open(Page.SettingsSection("playback")) }
+                HubRow(SG.Look, "Look & Feel", "Liquid Glass, motion, battery, media bar") { Nav.open(Page.SettingsSection("look")) }
+                HubRow(SG.Account, "Accounts & Sharing", "YouTube and music packs") { Nav.open(Page.SettingsSection("accounts")) }
+                HubRow(SG.Update, "Updates & About", "Check for updates, what's new, replay the intro") { Nav.open(Page.SettingsSection("about")) }
+                HubRow(SG.Pulse, "Diagnostics", "What the app did recently. Share it when something goes wrong") { Dialogs.sheet { DiagSheet(ctx) } }
+                T("Strata Music · music packs work on iPhone, Android and the desktop app", 12.sp, color = C.sub, align = TextAlign.Center, lines = 2, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 14.dp))
+            }
+        }
+        Head("Settings", ls.scrolled, back = true)
+    }
+}
+
+/** one section of Settings, on a page of its own */
+@Composable
+fun SettingsSectionPage(id: String) {
+    val ctx = LocalContext.current
+    val songs by Store.songs.collectAsState(); val pls by Store.playlists.collectAsState()
     val fade by Prefs.crossfade.collectAsState(); val match by Prefs.beatMatch.collectAsState(); val trim by Prefs.trimSilence.collectAsState()
     val awake by Prefs.keepAwake.collectAsState(); val eqName by Prefs.eqName.collectAsState()
     val motion by Prefs.motion.collectAsState(); val saver by Prefs.autoSaver.collectAsState(); val saving by Prefs.saving.collectAsState()
@@ -94,33 +132,21 @@ fun SettingsPage() {
     val noCover = albums.count { it.cover == null }; val noGenre = songs.count { it.genre.isBlank() }
     val saved = Store.meta.optLong("compressSaved")
     val ls = rememberLazyListState()
+    val title = when (id) { "music" -> "Your Music"; "playback" -> "Playback"; "look" -> "Look & Feel"; "accounts" -> "Accounts & Sharing"; else -> "Updates & About" }
     Box(Modifier.fillMaxSize().background(C.bg)) {
         Aurora(motion && !saving && !ls.isScrollInProgress)
         LazyColumn(state = ls, contentPadding = PaddingValues(top = topPad(), bottom = LocalBottom.current)) {
-            item {
-                Group(null) {
-                    Row(Modifier.fillMaxWidth().padding(top = 14.dp)) {
-                        for ((n, l) in listOf(songs.size to "songs", albums.size to "albums", artists to "artists", pls.size to "playlists"))
-                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) { T("$n", 22.sp, W800); T(l, 12.sp, color = C.sub) }
-                    }
-                    T("${fmtSize(bytes)} on this phone", 12.sp, color = C.sub, align = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 14.dp))
-                }
-            }
-            item {
-                Group("Make it yours") {
-                    Item(Ic.Spark, "Customize", "Tabs, sorting, library layout, player, visualizer, lyrics, colours", chevron = false, onClick = { Nav.open(Page.Customize) })
-                }
-            }
-            item {
+            when (id) {
+                "music" -> item {
                 Group("Your Music") {
                     Item(Ic.Plus, "Add Music", "Songs, a folder, music packs or a YouTube link", onClick = { Dialogs.sheet { AddMusicSheet() } })
+                    Item(Ic.Folder, "Scan Folders", "Pick folders, choose which songs come in, optionally as playlists", onClick = { Nav.open(Page.Scanner) })
                     Item(Ic.Folder, "Library", task.ifEmpty { listOf(if (noCover > 0) plural(noCover, "missing cover") else "", if (noGenre > 0) "$noGenre without a genre" else "").filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { "Covers, genres, compression, clean-up · all set" } },
                         onClick = { Dialogs.sheet { LibrarySheet() } })
-                    Item(Ic.Info, "Diagnostics", "What the app did recently — share it when something goes wrong", onClick = { Dialogs.sheet { DiagSheet(ctx) } })
                     if (mig.isNotEmpty()) T(mig, 13.sp, color = accent, modifier = Modifier.padding(start = 58.dp, bottom = 12.dp))
                 }
             }
-            item {
+                "playback" -> item {
                 Group("Playback") {
                     Item(Ic.PlayNext, "Crossfade", value = if (fade < 0.5f) "Off" else "%.0f s".format(fade), chevron = true, open = openFade, onClick = { openFade = !openFade })
                     AnimatedVisibility(openFade) {
@@ -133,7 +159,7 @@ fun SettingsPage() {
                     Item(Ic.Eq, "Equalizer", value = eqName, chevron = true, onClick = { Dialogs.sheet { EqSheet() } })
                 }
             }
-            item {
+                "look" -> item {
                 Group("Look & Feel") {
                     val liquid by Prefs.liquid.collectAsState()
                     val tuck by Prefs.tuck.collectAsState(); val timer by Prefs.scrollTimer.collectAsState()
@@ -155,21 +181,23 @@ fun SettingsPage() {
                     }
                 }
             }
-            item {
+                "accounts" -> item {
                 Group("Accounts & Sharing") {
                     Item(Ic.Person, "YouTube Account", "Sign in if YouTube asks you to (for Add from Link)", onClick = {
                         Dialogs.show { DTitle("YouTube Account"); DText("Signing in isn't built into the native app yet. Downloads work without it."); DButtons("OK" to { Dialogs.close() }) }
                     })
                 }
             }
-            item {
-                UpdatesGroup()
-            }
-            item {
-                T("Strata Music · music packs work on iPhone, Android and the desktop app", 12.sp, color = C.sub, align = TextAlign.Center, lines = 2, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp))
+                else -> item {
+                    UpdatesGroup()
+                    Group("Welcome") {
+                        Item(Ic.Spark, "Replay the intro", "The quick tour you get when you first open Strata Music", onClick = { Onboard.start() })
+                    }
+                    T("Strata Music · music packs work on iPhone, Android and the desktop app", 12.sp, color = C.sub, align = TextAlign.Center, lines = 2, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp))
+                }
             }
         }
-        Head("Settings", ls.scrolled, back = true)
+        Head(title, ls.scrolled, back = true)
     }
 }
 
