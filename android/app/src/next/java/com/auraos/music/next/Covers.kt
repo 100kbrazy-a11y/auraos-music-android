@@ -72,7 +72,10 @@ object Covers {
         }
         return null
     }
-    private fun big(u: String) = u.replace(Regex("/\\d+x\\d+bb\\."), "/1200x1200bb.")
+    private fun big(u: String) = u.replace(
+        Regex("/\\d+x\\d+(bb|bf|sr)?(-\\d+)?\\.(jpg|png|webp)$", RegexOption.IGNORE_CASE),
+        "/1200x1200bb.jpg"
+    )
     private var offline = true       // reset by each lookup: did anything answer at all?
 
     private fun itunes(term: String, entity: String): List<Cand> = try {
@@ -116,12 +119,13 @@ object Covers {
     private fun pick(cands: List<Cand>, score: (Cand) -> Double, min: Double): List<Scored> =
         cands.map { Scored(it, score(it) + if (it.src == "iTunes") 0.02 else 0.0) }.filter { it.score >= min }.sortedByDescending { it.score }
 
-    /** a decent image, or null */
-    private fun download(c: Cand): ByteArray? = try {
+    /** a sharp image (>= minPx and not over-compressed), or null */
+    private fun download(c: Cand, minPx: Int = 500): ByteArray? = try {
         val b = Net.get(c.cover, timeout = 25000)
+        if (b.size < 12_000) return null
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(b, 0, b.size, o)
-        if (o.outWidth >= 250 && o.outHeight >= 250) b else null
+        if (o.outWidth >= minPx && o.outHeight >= minPx) b else null
     } catch (_: Exception) { null }
 
     /** tidy a messy song title ("Artist - Title (Official Video)") into possible (title, artist) pairs */
@@ -196,13 +200,16 @@ object Covers {
                 var n = 0
                 for (s in a.songs.filter { it.cover.isEmpty() }) {
                     val c = forSong(s) ?: continue
-                    val b = withIO { download(c) } ?: continue
+                    val b = withIO { download(c, 500) ?: download(c, 300) } ?: continue
                     Store.setCover(listOf(s.id), b); n++
                 }
                 if (n > 0) Result.FOUND else if (offline) Result.OFFLINE else Result.NONE
             } else {
-                val cands = listOfNotNull(forAlbumCand(a))
-                for (c in cands) { val b = withIO { download(c) } ?: continue; Store.setCover(a.songs.map { it.id }, b); return Result.FOUND }
+                val c = forAlbumCand(a)
+                if (c != null) {
+                    val b = withIO { download(c, 500) ?: download(c, 300) }
+                    if (b != null) { Store.setCover(a.songs.map { it.id }, b); return Result.FOUND }
+                }
                 if (offline) Result.OFFLINE else Result.NONE
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e
