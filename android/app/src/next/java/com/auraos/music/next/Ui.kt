@@ -3,6 +3,7 @@
 package com.auraos.music.next
 
 import android.content.Context
+import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -69,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.auraos.music.NativePlayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -387,8 +389,19 @@ private var swN = 0
 fun Art(cover: String, size: Dp?, modifier: Modifier = Modifier, shape: Shape = artShapeDefault(), ph: Ic = Ic.Note, phName: String = "", square: Boolean = true) {
     val m = (if (size != null) modifier.size(size) else if (square) modifier.aspectRatio(1f) else modifier).clip(shape)
     val f = if (cover.isNotEmpty()) Store.coverFile(cover) else null
-    if (f != null && f.exists()) AsyncImage(f, null, m.background(C.surface2), contentScale = ContentScale.Crop)
-    else {
+    if (f != null && f.exists()) {
+        val ctx = LocalContext.current
+        val px = with(LocalDensity.current) { (size ?: 180.dp).roundToPx().coerceIn(64, 512) }
+        val req = remember(f.path, px) {
+            ImageRequest.Builder(ctx)
+                .data(f)
+                .size(px, px)
+                .bitmapConfig(Bitmap.Config.RGB_565)
+                .crossfade(false)
+                .build()
+        }
+        AsyncImage(req, null, m.background(C.surface2), contentScale = ContentScale.Crop)
+    } else {
         val c = nameColor(phName.ifEmpty { cover })
         BoxWithConstraints(m.background(Brush.linearGradient(listOf(mix(c, 0.7f, Color.Black), mix(c, 0.35f, Color.Black)))), contentAlignment = Alignment.Center) {
             Icon(ph, size = maxWidth * 0.38f, tint = Color.White.copy(alpha = 0.55f))
