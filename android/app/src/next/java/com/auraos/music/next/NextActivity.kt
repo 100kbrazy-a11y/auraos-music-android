@@ -47,6 +47,9 @@ import kotlin.math.roundToInt
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.Coil
+import coil.ImageLoader
+import coil.memory.MemoryCache
 import com.auraos.music.NativePlayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import kotlinx.coroutines.Dispatchers
@@ -66,8 +69,13 @@ class NextActivity : ComponentActivity() {
         enableEdgeToEdge(SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
         Store.init(this)
+        Coil.setImageLoader(
+            ImageLoader.Builder(this)
+                .memoryCache { MemoryCache.Builder(this).maxSizePercent(0.08).build() }
+                .allowHardware(false)
+                .build()
+        )
         Prefs.init(this)
-        DiscordRpc.init(this)
         if (savedInstanceState == null) Cfg.startTab.v.value.let { st -> if (st >= 0) Nav.tab.value = TabsCfg.order.value.indexOf(st).coerceAtLeast(0) }
         if (intent?.getBooleanExtra("seedDemo", false) == true) Demo.seed()
         if (intent?.hasExtra("liquid") == true) Prefs.setLiquid(intent.getBooleanExtra("liquid", true))
@@ -187,9 +195,6 @@ fun FgApp() {
     val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
     var full by NpState.open
     val cur = q.getOrNull(st.index)?.let { s -> songs.firstOrNull { it.id == s.id } ?: s }
-    LaunchedEffect(cur?.id, st.playing, st.pos, st.dur) {
-        DiscordRpc.onPlayback(cur, st.playing, st.pos, st.dur)
-    }
     val acc = accent
     val liquid by Prefs.liquid.collectAsState()
     val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -218,13 +223,17 @@ fun FgApp() {
         if (awake && full) w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) else w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
     var lastId by remember { mutableStateOf("") }
+    var lastCoverId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(cur?.id) {
         val c = cur ?: return@LaunchedEffect
         if (lastId.isNotEmpty() && lastId != c.id && Sleep.endOfSong.value) { Sleep.endOfSong.value = false; NativePlayer.toggle() }
         if (lastId.isNotEmpty() && lastId != c.id) Store.update(listOf(c.id)) { put("plays", optInt("plays") + 1); put("lastPlayed", System.currentTimeMillis()) }
         lastId = c.id
-        val bytes = if (c.cover.isEmpty()) null else withContext(Dispatchers.IO) { try { Store.coverFile(c.cover).readBytes() } catch (_: Exception) { null } }
-        NativePlayer.artwork(c.id, bytes)
+        if (c.cover != lastCoverId) {
+            lastCoverId = c.cover
+            val bytes = if (c.cover.isEmpty()) null else withContext(Dispatchers.IO) { try { Store.coverFile(c.cover).readBytes() } catch (_: Exception) { null } }
+            NativePlayer.artwork(c.id, bytes)
+        }
         Ctl.save()
     }
     LaunchedEffect(full) { if (full) { Morph.closing = false; Morph.f.animateTo(1f, spring(0.82f, 320f)) } else if (Morph.f.value > 0f) Morph.toDock() }
