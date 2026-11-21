@@ -6,3 +6,4 @@ android/build/
 android/.gradle/
 android/local.properties
 android/app/src/main/assets/public/
+android/app/src/next/assets/engine/engine.js

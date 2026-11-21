@@ -1,0 +1,90 @@
+# Builds "Strata Music Next" (the native Kotlin + Compose app, package com.auraos.music.next) from the native-next branch.
+# It never touches the real app: different package, different release ("next"), never runs on main.
+name: Build native Next (test app)
+on:
+  push:
+    branches: [native-next]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: native-next
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: package-lock.json }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npx vite build -c vite.engine.config.js
+      - name: Prepare the Android project
+        run: |
+          node scripts/patch-android.mjs
+          npx cap sync android
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+      - name: Compile (next flavor)
+        run: cd android && chmod +x gradlew && ./gradlew --no-daemon --stacktrace assembleNextRelease
+      - name: Sign
+        run: |
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          APK=android/app/build/outputs/apk/next/release/app-next-release-unsigned.apk
+          test -f "$APK" || { echo "::error::no APK"; find android/app/build/outputs -name '*.apk'; exit 1; }
+          "$BT/zipalign" -f -p 4 "$APK" aligned.apk
+          "$BT/apksigner" sign --ks signing/release.jks --ks-pass file:signing/keystore.pass --ks-key-alias auraos --out Strata-Music-Next.apk aligned.apk
+          "$BT/apksigner" verify Strata-Music-Next.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: Strata-Music-Next-apk, path: Strata-Music-Next.apk, retention-days: 14 }
+      - name: Name the release (version + update name from release.json)
+        id: rel
+        run: |
+          node -e '
+            const r = require("./android/app/src/next/assets/release.json").releases[0];
+            const slug = r.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
+            const fs = require("fs");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${r.version}\nname=${r.name}\nfile=Strata-Music-${r.version}-${slug}.apk\n`);
+            fs.writeFileSync("notes.md", `## ${r.version} — ${r.name}\n\n` + r.notes.map(n => "- " + n).join("\n") + "\n\nInstall it, or update from inside the app: Settings › Updates.\n");
+          '
+          cp Strata-Music-Next.apk "${{ steps.rel.outputs.file || 'x' }}" 2>/dev/null || true
+      - name: Publish the update
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          F="${{ steps.rel.outputs.file }}"; V="${{ steps.rel.outputs.version }}"; N="${{ steps.rel.outputs.name }}"
+          cp Strata-Music-Next.apk "$F"
+          T="next-v$V"
+          if gh release view "$T" >/dev/null 2>&1; then gh release upload "$T" "$F" --clobber; gh release edit "$T" --title "Strata Music $V — $N" --notes-file notes.md
+          else gh release create "$T" "$F" --title "Strata Music $V — $N" --notes-file notes.md --prerelease --latest=false; fi
+          # the old link keeps working too
+          if gh release view next >/dev/null 2>&1; then gh release upload next "$F" --clobber; gh release edit next --notes-file notes.md --title "Strata Music Next · newest: $V — $N"; fi
+
+
+  # Opens the app in an emulator and saves what Android logged (crashes included) + a screenshot.
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: Strata-Music-Next-apk }
+      - run: pip install pillow
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 4096M
+          heap-size: 576M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          disable-animations: false
+          script: bash scripts/smoke.sh
