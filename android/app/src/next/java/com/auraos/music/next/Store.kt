@@ -96,8 +96,8 @@ object Store {
     lateinit var app: Context
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val songs = MutableStateFlow<List<Song>>(emptyList())
-    val playlists = MutableStateFlow<Map<String, List<String>>>(emptyMap())
-    val favs = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val playlists = MutableStateFlow>>(emptyMap())
+    val favs = MutableStateFlow>(emptyMap())
     val favArtists = MutableStateFlow<Set<String>>(emptySet())
     /** bumps whenever something in meta changes (lyrics, artist info, settings) */
     val ver = MutableStateFlow(0)
@@ -147,7 +147,7 @@ object Store {
     fun save(now: Boolean = false) {
         saveJob?.cancel()
         saveJob = scope.launch {
-            if (!now) delay(250)
+            if (!now) delay(1500)
             synchronized(lock) {
                 try {
                     write(File(root, "songs.json"), JSONArray().also { a -> songs.value.forEach { a.put(it.j) } }.toString())
