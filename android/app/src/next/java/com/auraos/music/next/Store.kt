@@ -1,9 +1,13 @@
-```diff
-*** Update File: android/app/src/next/java/com/auraos/music/next/Store.kt
-@@
--    val playlists = MutableStateFlow>>(emptyMap())
--    val favs = MutableStateFlow>(emptyMap())
-+    val playlists = MutableStateFlow<Map<String, List<String>>>(emptyMap())
-+    val favs = MutableStateFlow<Map<String, Long>>(emptyMap())
-*** End Patch
-```
+package com.auraos.music.next
+
+import android.content.Context
+import android.util.Log
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+
