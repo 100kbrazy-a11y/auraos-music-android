@@ -13,9 +13,6 @@ import androidx.compose.ui.zIndex
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.lazy.LazyColumn
@@ -1015,8 +1012,9 @@ fun LyricsPane(s: Song) {
             }
             // "Syncing words": the same cue the Mac shows while it times the words of the song
             val showPill = syncing || justDone
-            AnimatedVisibility(showPill, Modifier.align(Alignment.TopCenter).padding(top = 6.dp), enter = fadeIn(), exit = fadeOut()) {
-                Row(Modifier.clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = 0.38f)).padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val pillA by animateFloatAsState(if (showPill) 1f else 0f, tween(220), label = "pill")
+            if (pillA > 0.01f) {
+                Row(Modifier.align(Alignment.TopCenter).padding(top = 6.dp).graphicsLayer { alpha = pillA }.clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = 0.38f)).padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (syncing) {
                         if (busy == s.id) androidx.compose.material3.CircularProgressIndicator({ progress.coerceIn(0.03f, 1f) }, Modifier.size(14.dp), color = Color.White.copy(alpha = 0.9f), strokeWidth = 2.dp, trackColor = Color.White.copy(alpha = 0.22f))
                         else androidx.compose.material3.CircularProgressIndicator(Modifier.size(14.dp), color = Color.White.copy(alpha = 0.9f), strokeWidth = 2.dp)
