@@ -23,6 +23,8 @@ android {
         }
     }
     buildFeatures { compose true }
+    // native libraries are stored compressed inside the APK: the update you download is much smaller (they are unpacked on install)
+    packaging { jniLibs { useLegacyPackaging true } }
     composeOptions { kotlinCompilerExtensionVersion "1.5.8" }
     kotlinOptions { jvmTarget = "17" }
     compileSdk rootProject.ext.compileSdkVersion

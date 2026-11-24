@@ -79,16 +79,16 @@ object DiscordRpc {
         scope.launch {
             // one stream of everything the status depends on; it only reaches Discord when something visible changed
             kotlinx.coroutines.flow.combine(NativePlayer.state, Prefs.discordRpc, Prefs.discordAppName, Prefs.discordFormat,
-                kotlinx.coroutines.flow.combine(Prefs.discordShowTimeline, Prefs.discordHidePaused, Prefs.discordShowCover, coverTick) { a, b, c, _ -> Triple(a, b, c) }) { st, on, name, fmt, tl -> arrayOf(st, on, name, fmt, tl) }
+                kotlinx.coroutines.flow.combine(Prefs.discordShowTimeline, Prefs.discordHidePaused, Prefs.discordShowCover, coverTick, Prefs.discordLook) { a, b, c, _, l -> Pair(Triple(a, b, c), l) }) { st, on, name, fmt, tl -> arrayOf(st, on, name, fmt, tl) }
                 .collectLatest { a ->
                     @Suppress("UNCHECKED_CAST")
-                    val o = a[4] as Triple<Boolean, Boolean, Boolean>
-                    push(a[0] as NativePlayer.St, a[1] as Boolean, a[2] as String, a[3] as Int, o.first, o.second, o.third)
+                    val o = a[4] as Pair<Triple<Boolean, Boolean, Boolean>, List<Int>>
+                    push(a[0] as NativePlayer.St, a[1] as Boolean, a[2] as String, a[3] as Int, o.first.first, o.first.second, o.first.third, o.second)
                 }
         }
     }
 
-    private fun push(st: NativePlayer.St, on: Boolean, name: String, fmt: Int, timeline: Boolean, hidePaused: Boolean, showCover: Boolean) {
+    private fun push(st: NativePlayer.St, on: Boolean, name: String, fmt: Int, timeline: Boolean, hidePaused: Boolean, showCover: Boolean, look: List<Int>) {
         val h = worker ?: return
         val song = if (st.id.isNotEmpty()) Store.song(st.id) else null
         if (!on || song == null || (!st.playing && hidePaused)) {
@@ -96,12 +96,18 @@ object DiscordRpc {
             if (!on) { ticking = false; status.value = "Off" } else if (song == null) status.value = "Nothing playing"
             return
         }
+        // Discord draws presence text in its own font and colour (apps can't change that), so the look comes from what is
+        // typed: a Unicode text style (bold, italic, script...) and a marker in front (a coloured dot, a note...)
+        val t = DiscordLook.mark(look[2]) + DiscordLook.style(song.title, look[0])
+        val ar = if (song.artist.isBlank()) "" else DiscordLook.mark(look[3]) + DiscordLook.style(song.artist, look[1])
         val details: String; val state: String
         when (fmt) {
-            1 -> { details = song.title; state = listOf(song.artist, song.album).filter { it.isNotBlank() }.joinToString(" · ") }
-            2 -> { details = listOf(song.artist, song.title).filter { it.isNotBlank() }.joinToString(" — "); state = song.album }
-            else -> { details = song.title; state = song.artist }
+            1 -> { details = t; state = listOf(ar, song.album).filter { it.isNotBlank() }.joinToString(" · ") }
+            2 -> { details = listOf(ar, t).filter { it.isNotBlank() }.joinToString(" — "); state = song.album }
+            else -> { details = t; state = ar }
         }
+        val tip = when (look[5]) { 1 -> song.title; 2 -> song.artist.ifBlank { song.title }; 3 -> name; else -> song.album.ifBlank { song.title } }.take(128).padEnd(2)
+        val shownBy = look[4].coerceIn(0, 2)
         val now = System.currentTimeMillis()
         val dur = if (st.dur > 0) st.dur else song.durMs
         val start = if (st.playing && timeline) now - st.pos else 0L
@@ -112,13 +118,13 @@ object DiscordRpc {
             val u = try { Covers.webUrl(song) } catch (_: Exception) { null }
             if (u != null) { covers[song.id] = u; coverTick.value++ } else { kotlinx.coroutines.delay(60_000); asked.remove(song.id) }   // none yet: ask again in a minute, not in a loop
         }
-        val key = listOf(song.id, st.playing, details, state, name, timeline, img).joinToString("|")
+        val key = listOf(song.id, st.playing, details, state, name, timeline, img, tip, shownBy).joinToString("|")
         val seeked = st.playing && timeline && lastStart != 0L && kotlin.math.abs(start - lastStart) > 3000
         if (key == lastKey && !seeked) return
         lastKey = key; lastStart = start; shown = true
         val end = if (start > 0 && dur > 0) start + dur else 0L
         val title = if (st.playing) name else "$name (paused)"
-        h.post { try { DiscordBridge.nUpdate(title, details, state, start, end, img, song.album.ifBlank { song.title }.take(128).padEnd(2), 2) } catch (_: Throwable) { ok = false } }
+        h.post { try { DiscordBridge.nUpdate(title, details.take(128), state.take(128), start, end, img, tip, shownBy) } catch (_: Throwable) { ok = false } }
         if (!ticking) {
             ticking = true
             h.post(object : Runnable {
@@ -183,6 +189,15 @@ fun DiscordCustomizeSheet() {
         SSwitch(SG.Motion, "Hide When Paused", "Clears your Discord status while music is paused", hidePaused) {
             Prefs.setDiscordHidePaused(it)
         }
+        val look by Prefs.discordLook.collectAsState()
+        T("Text colour isn't something Discord lets apps change — it always draws presence text in its own colour. What can change is the writing style and a marker in front of each line:", 13.sp, color = C.sub, lines = 4, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+        SChoice("Song name style", DiscordLook.styles, look[0]) { Prefs.setDiscordLook(0, it) }
+        SChoice("Artist style", DiscordLook.styles, look[1]) { Prefs.setDiscordLook(1, it) }
+        SChoice("Marker before the song name (colour dots, notes)", DiscordLook.marks, look[2]) { Prefs.setDiscordLook(2, it) }
+        SChoice("Marker before the artist", DiscordLook.marks, look[3]) { Prefs.setDiscordLook(3, it) }
+        SChoice("Shown in your status next to your name", listOf("App name", "Artist", "Song name"), look[4]) { Prefs.setDiscordLook(4, it) }
+        SChoice("Text when someone hovers the cover", listOf("Album", "Song name", "Artist", "App name"), look[5]) { Prefs.setDiscordLook(5, it) }
+        DiscordLook.Preview(look)
         val cover by Prefs.discordShowCover.collectAsState()
         SSwitch(SG.Cover, "Show Album Cover", "Discord can't read files on your phone, so the cover is looked up online (iTunes, Deezer) from the song and artist names", cover) {
             Prefs.setDiscordShowCover(it)

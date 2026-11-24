@@ -55,6 +55,8 @@ object Prefs {
     val discordShowTimeline = MutableStateFlow(true)
     val discordHidePaused = MutableStateFlow(true)
     val discordShowCover = MutableStateFlow(true)
+    /** how the presence looks: [0] song text style, [1] artist text style, [2] song marker, [3] artist marker, [4] which text the member list shows (0 name, 1 artist, 2 song), [5] cover tooltip */
+    val discordLook = MutableStateFlow(listOf(0, 0, 0, 0, 2, 0))
     val sort = MutableStateFlow(0)
     val shuffle = MutableStateFlow(false)
     val repeat = MutableStateFlow(0)
@@ -78,6 +80,7 @@ object Prefs {
         discordFormat.value = s.optInt("discordFormat", 0).coerceIn(0, 2)
         discordShowTimeline.value = s.optBoolean("discordShowTimeline", true)
         discordHidePaused.value = s.optBoolean("discordHidePaused", true); discordShowCover.value = s.optBoolean("discordShowCover", true)
+        discordLook.value = List(6) { i -> s.optInt("discordLook$i", if (i == 4) 2 else 0).coerceIn(0, if (i == 4) 2 else 20) }
         sort.value = s.optInt("nativeSort", 0)
         applyAudio()
         Cfg.load()
@@ -109,6 +112,7 @@ object Prefs {
     fun setDiscordAppName(v: String) { val n = v.trim().ifBlank { "Strata Music" }; discordAppName.value = n; put("discordAppName", n); DiscordRpc.onSettingsChanged() }
     fun setDiscordFormat(v: Int) { discordFormat.value = v.coerceIn(0, 2); put("discordFormat", discordFormat.value); DiscordRpc.onSettingsChanged() }
     fun setDiscordShowTimeline(v: Boolean) { discordShowTimeline.value = v; put("discordShowTimeline", v); DiscordRpc.onSettingsChanged() }
+    fun setDiscordLook(i: Int, v: Int) { val l = discordLook.value.toMutableList(); l[i] = v; discordLook.value = l; put("discordLook$i", v) }
     fun setDiscordShowCover(v: Boolean) { discordShowCover.value = v; put("discordShowCover", v) }
     fun setDiscordHidePaused(v: Boolean) { discordHidePaused.value = v; put("discordHidePaused", v); DiscordRpc.onSettingsChanged() }
     fun setSort(v: Int) { sort.value = v; put("nativeSort", v) }
