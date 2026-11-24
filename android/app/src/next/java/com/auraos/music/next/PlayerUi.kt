@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -181,6 +182,9 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
  * Let go high (or flick up) and it opens; low and it drops back into the dock.
  *  tug: the dock's give (px)   carrying: the bar is in your hand   miniY: where the carried bar is   f: the panel, 0 = gone, 1 = full
  */
+/** the player opening: quick to start, settles without a long tail */
+val OpenSpring = spring<Float>(0.9f, 480f)
+
 object Morph {
     val tug = Animatable(0f)
     val f = Animatable(0f)
@@ -206,13 +210,13 @@ object Morph {
     /** set by the app's screen: animations need its frame clock (a plain MainScope crashes) */
     var scope: kotlinx.coroutines.CoroutineScope? = null
     fun snap(v: Float) { scope?.launch { f.snapTo(v.coerceIn(0f, 1f)) } }
-    fun to(v: Float) { scope?.launch { f.animateTo(v, if (v > 0.5f) spring(0.82f, 320f) else tween(380, easing = Ease)) } }
+    fun to(v: Float) { scope?.launch { f.animateTo(v, if (v > 0.5f) OpenSpring else tween(380, easing = Ease)) } }
     /** a tap: a little tug, then the glass panel slides up and opens */
     fun tapOpen(fromSquare: Boolean = false) {
         origin = if (fromSquare && sq != Rect.Zero) sq else Rect.Zero
         scope?.launch {
             launch { tug.animateTo(10f * Liquid.density, tween(90, easing = FastOutSlowInEasing)); tug.animateTo(0f, spring(0.45f, 600f)) }
-            delay(90); Hap.thud(); NpState.open.value = true
+            Hap.thud(); NpState.open.value = true          // no wait: the tug plays beside the opening, not before it
         }
     }
 }
@@ -426,8 +430,12 @@ fun PlayerPanel(cur: Song, onClose: () -> Unit) {
         .clip(RoundedCornerShape(topStart = radius, topEnd = radius, bottomStart = rb, bottomEnd = rb)).background(tint.copy(alpha = if (grow) smooth(0.2f, 0.7f, gp) else solid))) {
         if (grow) Box(Modifier.fillMaxSize().graphicsLayer { alpha = 1f - smooth(0.15f, 0.55f, gp) }) { Art(cur.cover, null, Modifier.fillMaxSize(), RoundedCornerShape(radius), phName = cur.album) }
         if (!asBar) {
+            // the fade is a function read while drawing, and the close action is one remembered lambda: the whole player is not
+            // rebuilt on every frame of the opening, only redrawn
+            val fadeFn = remember { { if (Morph.carrying) 0f else if (Morph.origin != Rect.Zero) smooth(0.45f, 0.9f, Morph.f.value.coerceIn(0f, 1f)) else smooth(0.3f, 0.75f, Morph.f.value) } }
+            val closeFn = remember { { Morph.closing = true; onCloseS() } }
             Box(Modifier.requiredSize(with(d) { scr.width.toDp() }, with(d) { h.toDp() }).align(Alignment.TopCenter)) {
-                FullPlayer(cur, if (Morph.carrying) 0f else if (grow) smooth(0.45f, 0.9f, gp) else smooth(0.3f, 0.75f, fv), false) { Morph.closing = true; onClose() }
+                FullPlayer(cur, fadeFn, false, closeFn)
             }
             if (!grow) Box(Modifier.fillMaxWidth().padding(top = 8.dp).graphicsLayer { alpha = 1f - smooth(0.6f, 0.9f, fv) }, contentAlignment = Alignment.TopCenter) {
                 Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.35f)))
@@ -544,7 +552,7 @@ private fun chan(i: Int) = ColorMatrix(FloatArray(20).also { m -> m[i * 5 + i] =
 
 // ------------------------------------------------------------------ now playing (#np)
 @Composable
-fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
+fun FullPlayer(s: Song, fade: () -> Float, hideCover: Boolean, onClose: () -> Unit) {
     val a = accent
     val st by NativePlayer.state.collectAsState()
     val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
@@ -553,18 +561,24 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
     val levels by rememberLevels(live && st.playing && (bgStyle == 0 || vizStyle != 4), vizBars)
     val land = isLand()
     val ctxD = LocalContext.current
+    // the first frames of the opening only draw what is cheap; the blurred cover, fog, visualizer and the neighbouring pages
+    // are added once the panel is nearly open, so nothing heavy is built while it is moving
+    var ready by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { snapshotFlow { Morph.f.value >= 0.86f }.first { it }; ready = true }
     LaunchedEffect(live, vizStyle, bgStyle) {
         Diag.log("player: ${Tasks.motionWhy(ctxD)} · background=$bgStyle visualizer=$vizStyle bars=$vizBars")
     }
     Box(Modifier.fillMaxSize()) {
-      Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.background(Color(0xFF08080A)).clipToBounds()) {
+      Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade() }.background(Color(0xFF08080A)).clipToBounds()) {
         // .bg: the cover itself, hugely blurred and darkened; .bg2: vignette; .glowpulse: the accent breathing with the bass
         val f = if (s.cover.isNotEmpty()) Store.coverFile(s.cover) else null
         val blurred = bgStyle == 1 || (bgStyle == 0 && !live)
         if (bgStyle == 3) Unit
         else if (bgStyle == 2) Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(mix(a, 0.5f, Color.Black), mix(a, 0.2f, Color.Black), Color(0xFF08080A)))))
         else if (blurred) {
-            if (f != null && Build.VERSION.SDK_INT >= 31) AsyncImage(f, null, Modifier.fillMaxSize().scale(1.4f).blur(60.dp), contentScale = ContentScale.Crop,
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(mix(a, 0.45f, Color.Black), mix(a, 0.18f, Color.Black), Color(0xFF08080A)))))
+            val imgA by animateFloatAsState(if (ready) 1f else 0f, tween(320), label = "bgimg")
+            if (ready && f != null && Build.VERSION.SDK_INT >= 31) AsyncImage(f, null, Modifier.fillMaxSize().scale(1.4f).blur(60.dp).graphicsLayer { alpha = imgA }, contentScale = ContentScale.Crop,
                 colorFilter = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(1.6f) }.also { it.timesAssign(ColorMatrix(floatArrayOf(0.55f, 0f, 0f, 0f, 0f, 0f, 0.55f, 0f, 0f, 0f, 0f, 0f, 0.55f, 0f, 0f, 0f, 0f, 0f, 1f, 0f))) }))
             else Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(mix(a, 0.45f, Color.Black), mix(a, 0.18f, Color.Black), Color(0xFF08080A)))))
         }
@@ -572,13 +586,13 @@ fun FullPlayer(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
             Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)))))
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.55f))))
         }
-        if (live && bgStyle == 0) {
+        if (ready && live && bgStyle == 0) {
             Fog(s, levels, st.playing)
             Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.35f)))))
         }
-        if (live && vizStyle != 4) VizBg(levels, if (Cfg.vizColor.use() == 1) (remember(s.cover) { (if (s.cover.isNotEmpty()) Accents.pal(Store.coverFile(s.cover))?.first else null) } ?: a) else a, Modifier.fillMaxWidth().fillMaxHeight(Cfg.vizHeight.use()).align(Alignment.BottomCenter))
+        if (ready && live && vizStyle != 4) VizBg(levels, if (Cfg.vizColor.use() == 1) (remember(s.cover) { (if (s.cover.isNotEmpty()) Accents.pal(Store.coverFile(s.cover))?.first else null) } ?: a) else a, Modifier.fillMaxWidth().fillMaxHeight(Cfg.vizHeight.use()).align(Alignment.BottomCenter))
       }
-      if (land) NpLand(s, fade, hideCover, onClose) else NpPages(s, fade, hideCover, onClose)
+      if (land) NpLand(s, fade, hideCover, onClose) else NpPages(s, fade, ready, hideCover, onClose)
     }
 }
 
@@ -697,27 +711,66 @@ private fun NpControls(playSize: Dp, modifier: Modifier) {
 
 /** the player in portrait: lyrics are one swipe to the left of it, and the artist is one swipe to the right */
 @Composable
-private fun NpPages(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
+private fun NpPages(s: Song, fade: () -> Float, ready: Boolean, hideCover: Boolean, onClose: () -> Unit) {
     val a = accent
     val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = 1) { 3 }
     val scope = rememberCoroutineScope()
     val go: (Int) -> Unit = { p -> scope.launch { pager.animateScrollToPage(p) } }
     var last by remember { mutableStateOf(1) }
     LaunchedEffect(pager.settledPage) { if (pager.settledPage != last) { last = pager.settledPage; Hap.soft() } }
-    Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade }) {
-        androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
-            Box(Modifier.fillMaxSize().graphicsLayer {
-                val off = kotlin.math.abs(pager.currentPage - page + pager.currentPageOffsetFraction).coerceIn(0f, 1f)
-                alpha = 1f - 0.65f * off; val k = 1f - 0.04f * off; scaleX = k; scaleY = k
-            }) {
-                when (page) { 0 -> NpLyricsPage(s, onClose, go); 1 -> NpPortrait(s, hideCover, onClose, go); else -> NpArtistPage(s, onClose, go) }
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade() }) {
+            androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = if (ready) 1 else 0) { page ->
+                Box(Modifier.fillMaxSize().graphicsLayer {
+                    val off = kotlin.math.abs(pager.currentPage - page + pager.currentPageOffsetFraction).coerceIn(0f, 1f)
+                    alpha = 1f - 0.65f * off; val k = 1f - 0.04f * off; scaleX = k; scaleY = k
+                }) {
+                    when (page) { 0 -> NpLyricsPage(s, onClose, go); 1 -> NpPortrait(s, hideCover, onClose, go); else -> NpArtistPage(s, onClose, go) }
+                }
             }
         }
-        Row(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 5.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            repeat(3) { i ->
-                val on = pager.currentPage == i
-                val w by animateDpAsState(if (on) 16.dp else 6.dp, tween(220), label = "dotw")
-                Box(Modifier.height(6.dp).width(w).clip(CircleShape).background(Color.White.copy(alpha = if (on) 0.9f else 0.35f)).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { go(i) })
+        NpTabPill(pager, go, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 10.dp))
+    }
+}
+
+private fun mixF(a: Float, b: Float, k: Float) = a + (b - a) * k
+
+/**
+ * The three pages' tabs: Lyrics · Current Song · Artist. It is the dock's tab bar, shrunk: while the media bar grows into the
+ * player, the bar behind it narrows from the full width of the dock down to this pill, and the three tabs fade in on it. The
+ * bubble rides along with the pages while you swipe them.
+ */
+@Composable
+private fun NpTabPill(pager: androidx.compose.foundation.pager.PagerState, go: (Int) -> Unit, modifier: Modifier) {
+    val a = accent
+    val d = LocalDensity.current
+    val cellDp = 96.dp; val hDp = 52.dp; val pad = 4.dp
+    val cell = with(d) { cellDp.toPx() }; val padPx = with(d) { pad.toPx() }
+    val dockH = with(d) { 62.dp.toPx() }; val dockMargin = with(d) { 24.dp.toPx() }
+    val labels = listOf("Lyrics", "Current Song", "Artist"); val icons = listOf(Ic.Lyrics, Ic.Note, Ic.Person)
+    val page = pager.currentPage
+    Box(modifier.size(cellDp * 3 + pad * 2, hDp)) {
+        // the bar itself: full dock width and height at first, the pill when the player is open
+        Box(Modifier.matchParentSize().graphicsLayer {
+            val k = smooth(0.08f, 0.95f, Morph.f.value)
+            val fullW = maxOf(size.width, Morph.screen.width - dockMargin)
+            scaleX = mixF(fullW / size.width, 1f, k); scaleY = mixF(dockH / size.height, 1f, k)
+            alpha = smooth(0.04f, 0.3f, Morph.f.value)
+        }.clip(RoundedCornerShape(50)).background(Brush.verticalGradient(listOf(mix(a, 0.10f, Color(0xFF26262C)).copy(alpha = 0.86f), mix(a, 0.10f, Color(0xFF16161A)).copy(alpha = 0.90f))))
+            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(50)))
+        Box(Modifier.matchParentSize().graphicsLayer { alpha = smooth(0.5f, 0.92f, Morph.f.value) }) {
+            // the bubble under the current tab
+            Box(Modifier.offset { IntOffset((padPx + (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(0f, 2f) * cell).roundToInt(), padPx.roundToInt()) }
+                .size(cellDp, hDp - pad * 2).clip(RoundedCornerShape(50)).background(mix(a, 0.30f, Color(0xFF2A2830)).copy(alpha = 0.55f)))
+            Row(Modifier.fillMaxSize().padding(horizontal = pad)) {
+                repeat(3) { i ->
+                    val on = page == i
+                    Column(Modifier.width(cellDp).fillMaxHeight().clip(RoundedCornerShape(50)).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.tick(); go(i) },
+                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically)) {
+                        Box(Modifier.height(24.dp), contentAlignment = Alignment.Center) { Icon(icons[i], size = 22.dp, tint = if (on) a else Color.White.copy(alpha = 0.6f)) }
+                        T(labels[i], 10.5.sp, W650, if (on) Color.White else Color.White.copy(alpha = 0.6f))
+                    }
+                }
             }
         }
     }
@@ -730,7 +783,7 @@ private fun NpPortrait(s: Song, hideCover: Boolean, onClose: () -> Unit, go: (In
     val order by PlayerLayout.order.collectAsState(); val hidden by PlayerLayout.hidden.collectAsState()
     val center = Cfg.titleAlign.use() == 1; val tSize = Cfg.titleSize.use(); val cs = Cfg.ctlScale.use(); val heart = Cfg.btnHeart.use()
     val sp = when (Cfg.npSpacing.use()) { 0 -> 0.45f; 2 -> 1.7f; else -> 1f }
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 18.dp)) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 76.dp)) {
         NpTopBar(s, onClose, false, false) { go(0) }
         if (0 in hidden) Spacer(Modifier.weight(1f))        // no cover: the other parts settle at the bottom
         order.forEach { id ->
@@ -756,7 +809,7 @@ private fun NpPortrait(s: Song, hideCover: Boolean, onClose: () -> Unit, go: (In
 private fun NpLyricsPage(s: Song, onClose: () -> Unit, go: (Int) -> Unit) {
     val a = accent
     val favs by Store.favs.collectAsState()
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 24.dp)) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 76.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             IB(Ic.Down, onClick = onClose)
             Box(Modifier.rubber(4.dp).shadow(20.dp, RoundedCornerShape(10.dp)).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.soft(); go(1) }) { Art(s.cover, 48.dp, shape = RoundedCornerShape(10.dp), phName = s.album) }
@@ -785,7 +838,7 @@ private fun NpArtistPage(s: Song, onClose: () -> Unit, go: (Int) -> Unit) {
     val top = remember(mine) { mine.sortedWith(compareByDescending<Song> { it.j.optInt("plays") }.thenByDescending { Store.isFav(it.id) }).take(5) }
     val about = info?.optString("about") ?: ""
     var more by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 36.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 84.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
             IB(Ic.Down, onClick = onClose)
             T("ABOUT THE ARTIST", 12.sp, W700, Color.White.copy(alpha = 0.7f), modifier = Modifier.weight(1f), align = TextAlign.Center)
@@ -836,11 +889,11 @@ private fun NpArtistPage(s: Song, onClose: () -> Unit, go: (Int) -> Unit) {
  * its buttons, the lyrics (or the title, large) and the seek bar and controls along the bottom.
  */
 @Composable
-private fun NpLand(s: Song, fade: Float, hideCover: Boolean, onClose: () -> Unit) {
+private fun NpLand(s: Song, fade: () -> Float, hideCover: Boolean, onClose: () -> Unit) {
     val a = accent
     val favs by Store.favs.collectAsState()
     val lyr by Prefs.npLyrics.collectAsState()
-    Row(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Vertical))
+    Row(Modifier.fillMaxSize().graphicsLayer { alpha = fade() }.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Vertical))
         .padding(start = 28.dp, end = 24.dp, top = 8.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(26.dp)) {
         Column(Modifier.weight(0.42f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { NpCover(s, hideCover, 520.dp) }

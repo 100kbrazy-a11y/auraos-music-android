@@ -1,0 +1,9 @@
+# Baseline profile (hand-written, broad): precompile the app's own code and the Compose runtime/UI/animation paths used on screen,
+# so the first open of the player, scrolling and the tab bubble do not run through the interpreter and stutter.
+HSPLcom/auraos/music/**->**(**)**
+HSPLandroidx/compose/runtime/**->**(**)**
+HSPLandroidx/compose/ui/**->**(**)**
+HSPLandroidx/compose/foundation/**->**(**)**
+HSPLandroidx/compose/animation/**->**(**)**
+HSPLandroidx/compose/material3/**->**(**)**
+HSPLcoil/**->**(**)**
