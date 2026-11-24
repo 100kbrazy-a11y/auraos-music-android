@@ -10,7 +10,8 @@
     "Cover images load through a smaller, capped image cache (about 8% of memory) at the size they are shown",
     "The lock-screen artwork is only rebuilt when the cover actually changes",
     "Library changes are saved after a one second pause instead of a quarter second, with a save every time the app goes to the background",
-    "Restored the full update history that had been trimmed from the release notes"
+    "Restored the full update history that had been trimmed from the release notes",
+    "Discord Rich Presence no longer asks for your Discord token (that broke Discord's rules and could get an account banned); any token stored by an older build is erased. It returns on Discord's official SDK"
    ]
   },
   {

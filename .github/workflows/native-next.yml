@@ -58,7 +58,7 @@ jobs:
           cp Strata-Music-Next.apk "$F"
           T="next-v$V"
           if gh release view "$T" >/dev/null 2>&1; then gh release upload "$T" "$F" --clobber; gh release edit "$T" --title "Strata Music $V — $N" --notes-file notes.md
-          else gh release create "$T" "$F" --title "Strata Music $V — $N" --notes-file notes.md --prerelease --latest=false; fi
+          else gh release create "$T" "$F" --target "$GITHUB_SHA" --title "Strata Music $V — $N" --notes-file notes.md --prerelease --latest=false; fi
           # the old link keeps working too
           if gh release view next >/dev/null 2>&1; then gh release upload next "$F" --clobber; gh release edit next --notes-file notes.md --title "Strata Music Next · newest: $V — $N"; fi
 

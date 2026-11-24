@@ -76,6 +76,7 @@ class NextActivity : ComponentActivity() {
                 .build()
         )
         Prefs.init(this)
+        DiscordRpc.init(this)   // erases any Discord token an older build kept
         if (savedInstanceState == null) Cfg.startTab.v.value.let { st -> if (st >= 0) Nav.tab.value = TabsCfg.order.value.indexOf(st).coerceAtLeast(0) }
         if (intent?.getBooleanExtra("seedDemo", false) == true) Demo.seed()
         if (intent?.hasExtra("liquid") == true) Prefs.setLiquid(intent.getBooleanExtra("liquid", true))

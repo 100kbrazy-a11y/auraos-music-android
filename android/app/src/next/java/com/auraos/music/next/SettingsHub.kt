@@ -128,7 +128,7 @@ private fun searchIndex(): List<Found> = listOf(
     Found(SG.Music, "Add music", "Library & Tabs", "songs folder pack youtube link") { Dialogs.sheet { AddMusicSheet() } },
     Found(SG.Download, "Concurrent downloads", "Library & Tabs", "download songs at once workers speed") { open("library") },
     Found(SG.Pulse, "Discord Rich Presence", "Appearance", "discord rpc listening status presence customize") { open("appearance") },
-    Found(SG.Account, "Discord Account", "About", "discord login sign in token account") { open("about") },
+    Found(SG.Account, "Discord Rich Presence status", "About", "discord login sign in account presence") { open("about") },
     Found(SG.Layout, "Player layout", "Player", "order move hide spacing compact roomy") { open("player") },
     Found(SG.Cover, "Cover shape and size", "Player", "album art circle rounded sharp swipe") { open("player") },
     Found(SG.Cover, "Player background", "Player", "fog blur glow black") { open("player") },
@@ -454,7 +454,7 @@ private fun appearanceBlocks(): List<@Composable () -> Unit> = listOf(
         Group("Downloads") {
             SPick(SG.Download, "Concurrent Downloads", (1..8).map { "$it" }, Cfg.dlWorkers.use() - 1, sub = "How many songs to download at once") { Cfg.dlWorkers.set(it + 1) }
             Div()
-            SSwitch(SG.Pulse, "Discord Rich Presence", if (loggedIn) status else "Sign in under Settings › About › Discord Account", rpc) { Prefs.setDiscordRpc(it) }
+            SSwitch(SG.Pulse, "Discord Rich Presence", status, rpc) { Prefs.setDiscordRpc(it) }
             Div()
             SRow(SG.Customize, "Customize Discord Status", "Activity name, format, live timeline and pause behavior", chevron = true, onClick = { Dialogs.sheet { DiscordCustomizeSheet() } })
         }
@@ -574,8 +574,8 @@ private fun aboutBlocks(): List<@Composable () -> Unit> = listOf(
             }); Div()
             SRow(
                 SG.Account,
-                "Discord Account",
-                if (dLoggedIn) "Signed in as ${dUser.ifBlank { "Discord User" }} · $dStatus" else "Sign in to show what you're listening to on Discord",
+                "Discord Rich Presence",
+                dStatus,
                 chevron = true,
                 onClick = { Dialogs.sheet { DiscordAccountSheet() } }
             ); Div()
