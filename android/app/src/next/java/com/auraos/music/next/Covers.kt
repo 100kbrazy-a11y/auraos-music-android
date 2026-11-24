@@ -76,20 +76,26 @@ object Covers {
         Regex("/\\d+x\\d+(bb|bf|sr)?(-\\d+)?\\.(jpg|png|webp)$", RegexOption.IGNORE_CASE),
         "/1200x1200bb.jpg"
     )
-    private var offline = true       // reset by each lookup: did anything answer at all?
+    /** when a server last answered (any answer, even an error page, proves the phone is online); a lookup is "offline" only if nothing answered since it began */
+    private val lastAnswer = java.util.concurrent.atomic.AtomicLong(0L)
+    private fun answered() { lastAnswer.set(System.nanoTime()) }
+    private fun answeredIn(e: Exception) { if (e.message?.startsWith("HTTP") == true) answered() }
+    private fun silentSince(t0: Long) = lastAnswer.get() < t0
+    /** the last thing that went wrong that wasn't just "no connection" (shown instead of a wrong "can't reach the internet") */
+    @Volatile var lastError: String? = null
 
     private fun itunes(term: String, entity: String): List<Cand> = try {
         val r = jsonRetry("https://itunes.apple.com/search?media=music&entity=$entity&limit=12&term=${Net.q(term)}") as? JSONObject
-        offline = false
+        answered()
         val a = r?.optJSONArray("results") ?: JSONArray()
         (0 until a.length()).map { a.getJSONObject(it) }.filter { it.optString("artworkUrl100").isNotBlank() }.map { o ->
             Cand(if (entity == "song") o.optString("trackName") else o.optString("collectionName"), o.optString("artistName"), o.optString("collectionName"), big(o.optString("artworkUrl100")), "iTunes")
         }
-    } catch (e: Exception) { Diag.log("iTunes: ${e.message}"); emptyList() }
+    } catch (e: Exception) { answeredIn(e); Diag.log("iTunes: ${e.message}"); emptyList() }
 
     private fun deezer(term: String, kind: String): List<Cand> = try {
         val r = jsonRetry("https://api.deezer.com/search/$kind?limit=12&q=${Net.q(term)}") as? JSONObject
-        offline = false
+        answered()
         val a = r?.optJSONArray("data") ?: JSONArray()
         (0 until a.length()).map { a.getJSONObject(it) }.mapNotNull { o ->
             val al = if (kind == "track") o.optJSONObject("album") ?: JSONObject() else o
@@ -97,7 +103,7 @@ object Covers {
             if (cv.isBlank() || cv.contains("/images/cover//") || cv.contains("/cover/1000x1000-")) null    // (Deezer's blank placeholder)
             else Cand(if (kind == "track") o.optString("title") else o.optString("title"), o.optJSONObject("artist")?.optString("name") ?: "", al.optString("title"), cv, "Deezer")
         }
-    } catch (e: Exception) { Diag.log("Deezer: ${e.message}"); emptyList() }
+    } catch (e: Exception) { answeredIn(e); Diag.log("Deezer: ${e.message}"); emptyList() }
 
     private var lastMb = 0L
     private fun musicBrainz(album: String, artist: String): List<Cand> = try {
@@ -105,13 +111,13 @@ object Covers {
         lastMb = System.currentTimeMillis()
         val q = "release:\"${album.replace("\"", "")}" + if (artist.isNotBlank()) " AND artist:\"${artist.replace("\"", "")}" else ""
         val r = jsonRetry("https://musicbrainz.org/ws/2/release/?fmt=json&limit=8&query=${Net.q(q)}", mapOf("Accept" to "application/json")) as? JSONObject
-        offline = false
+        answered()
         val a = r?.optJSONArray("releases") ?: JSONArray()
         (0 until a.length()).map { a.getJSONObject(it) }.map { o ->
             val ar = o.optJSONArray("artist-credit")?.let { c -> (0 until c.length()).joinToString(", ") { c.getJSONObject(it).optString("name") } } ?: ""
             Cand(o.optString("title"), ar, o.optString("title"), "https://coverartarchive.org/release/${o.optString("id")}/front-1200", "MusicBrainz")
         }
-    } catch (e: Exception) { Diag.log("MusicBrainz: ${e.message}"); emptyList() }
+    } catch (e: Exception) { answeredIn(e); Diag.log("MusicBrainz: ${e.message}"); emptyList() }
 
     // ---------------------------------------------------------------- the search
     private class Scored(val c: Cand, val score: Double)
@@ -176,9 +182,9 @@ object Covers {
     suspend fun webUrl(s: Song): String? {
         val key = if (s.album.isNotBlank()) (s.artist + "|" + s.album).lowercase() else s.id
         webCache[key]?.let { return it.ifBlank { null } }
-        offline = true
+        val t0 = System.nanoTime()
         val url = try { forSong(s)?.cover ?: "" } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { return null }
-        if (url.isBlank() && offline) return null           // nothing answered: try again another time instead of remembering "none"
+        if (url.isBlank() && silentSince(t0)) return null           // nothing answered: try again another time instead of remembering "none"
         webCache[key] = url
         return url.ifBlank { null }
     }
@@ -229,7 +235,8 @@ object Covers {
 
     /** Looks for the cover of [a] and saves it for every song in it. [upgrade]: the songs already have a (small) cover, and only a sharp one is accepted instead. */
     suspend fun forAlbum(a: Album, upgrade: Boolean = false): Result {
-        offline = true
+        val t0 = System.nanoTime()
+        lastError = null
         return try {
             if (looksLikeNoAlbum(a)) {
                 // no real album: each song gets the cover of its own single
@@ -239,17 +246,22 @@ object Covers {
                     val b = withIO { if (upgrade) download(c, 700) else (download(c, 500) ?: download(c, 300)) } ?: continue
                     Store.setCover(listOf(s.id), b); n++
                 }
-                if (n > 0) Result.FOUND else if (offline) Result.OFFLINE else Result.NONE
+                if (n > 0) Result.FOUND else if (silentSince(t0)) Result.OFFLINE else Result.NONE
             } else {
                 val c = forAlbumCand(a)
                 if (c != null) {
                     val b = withIO { if (upgrade) download(c, 700) else (download(c, 500) ?: download(c, 300)) }
                     if (b != null) { Store.setCover(a.songs.map { it.id }, b); return Result.FOUND }
                 }
-                if (offline) Result.OFFLINE else Result.NONE
+                if (silentSince(t0)) Result.OFFLINE else Result.NONE
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e
-        } catch (e: Exception) { Diag.log("covers ${a.title}: ${e.message}"); Result.OFFLINE }
+        } catch (e: Exception) {
+            // only a lost connection counts as "offline"; anything else is a real error and is reported as one
+            Diag.log("covers ${a.title}: ${e.javaClass.simpleName}: ${e.message}")
+            if (e is java.net.UnknownHostException || e is java.net.ConnectException || e is java.net.SocketTimeoutException) Result.OFFLINE
+            else { lastError = "${e.javaClass.simpleName}: ${e.message}"; Result.NONE }
+        }
     }
 
     /** several albums at once (three lookups in flight at a time); [progress] is told how far along it is */

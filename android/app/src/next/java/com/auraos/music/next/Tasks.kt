@@ -175,7 +175,9 @@ object Tasks {
             status.value = ""
             Store.update(missing.flatMap { a -> a.songs.map { it.id } }) { put("coverTry", 2) }
             Accents.forget()
+            val err = Covers.lastError
             if (offline) Toasts.show("Couldn't reach the internet to find covers")
+            else if (n == 0 && err != null) Toasts.show("Cover lookup failed: $err")
             else Toasts.show(if (missed.isEmpty()) "Found all $n covers" else "Found $n of ${missing.size} · ${missed.size} couldn't be matched (try Find Cover Online on them)")
             missed.forEach { Diag.log("no cover found: ${it.artist} — ${it.title}") }
         }

@@ -2,6 +2,17 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.15.0",
+   "name": "The Observe Update",
+   "date": "2026-11-24",
+   "notes": [
+    "Observe: a new four-bar button on the lyrics page, right next to the heart. Turn it on (it lights up in your accent colour) and the lyrics and the buttons under them step away, the visualizer grows to fill the page, and the Lyrics tab is renamed Observe.",
+    "Pulling the media bar up now sends the tab bar below it sinking down, fading and leaving the screen. When the player has fully opened, a copy of the bar with just the three player tabs slides up in the same glass look, so it feels like one bar that changed shape.",
+    "Find Cover Automatically no longer says it can't reach the internet when the covers service simply answered with an error or nothing matched. It now says what actually went wrong.",
+    "The heart on the lyrics page moved a little to the left to make room for the new button."
+   ]
+  },
+  {
    "version": "2.14.1",
    "name": "The Karaoke Update",
    "date": "2026-11-24",

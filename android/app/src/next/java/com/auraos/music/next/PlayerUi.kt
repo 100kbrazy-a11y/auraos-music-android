@@ -154,6 +154,11 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
     val dockA = if (Morph.closing) 1f - smooth(Morph.fDock, Morph.fDock + 0.3f, fv) else 1f - smooth(0.05f, 0.45f, fv)
     val sheetUp = Dialogs.cur.value != null && Dialogs.isSheet.value
     val fade by animateFloatAsState(if (sheetUp) 0f else 1f, tween(200), label = "dockfade")
+    // the tab bar sinks, fades and leaves the screen while the media bar is pulled up (and as the player rises); on the way back down it returns once the panel is nearly the bar again
+    val leave = if (Morph.closing) smooth(Morph.fDock, Morph.fDock + 0.12f, fv) else maxOf(Morph.pull.value, smooth(0f, 0.3f, fv))
+    val navPx = WindowInsets.navigationBars.getBottom(LocalDensity.current)
+    val leaveDrop = with(LocalDensity.current) { (62.dp + 10.dp + 24.dp).toPx() } + navPx
+    val tabsA = 1f - smooth(0.12f, 0.8f, leave)
     Column(Modifier.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp).fillMaxWidth()
         .graphicsLayer { alpha = fade * dockA }) {
         if (cur != null) {
@@ -167,9 +172,9 @@ fun Dock(cur: Song?, tab: Int, onTab: (Int) -> Unit, onOpen: () -> Unit) {
             }
         }
         Box(Modifier.fillMaxWidth()
-            .offset { IntOffset(0, (Morph.tug.value * 0.12f).roundToInt()) }              // the tabs give just a touch
-            .liquid("dock-tabs", r, tint, z = 1, alpha = fade * dockA, corners = listOf(join, join, r, r))
-            .clip(RoundedCornerShape(topStart = join, topEnd = join, bottomStart = r, bottomEnd = r))) {
+            .offset { IntOffset(0, (Morph.tug.value * 0.12f + smooth(0f, 1f, leave) * leaveDrop).roundToInt()) }              // the tabs give just a touch, then sink away
+            .liquid("dock-tabs", r, tint, z = 1, alpha = fade * dockA * tabsA, corners = listOf(join, join, r, r))
+            .graphicsLayer { alpha = tabsA }.clip(RoundedCornerShape(topStart = join, topEnd = join, bottomStart = r, bottomEnd = r))) {
             Tabs(tab, onTab)
         }
     }
@@ -187,6 +192,8 @@ val OpenSpring = spring<Float>(0.9f, 480f)
 
 object Morph {
     val tug = Animatable(0f)
+    /** how far the media bar has been pulled toward letting go (0..1): the dock's tab bar sinks, fades and leaves the screen as it grows */
+    val pull = Animatable(0f)
     val f = Animatable(0f)
     val miniY = Animatable(0f)
     var carrying by mutableStateOf(false)
@@ -204,7 +211,7 @@ object Morph {
         scope?.launch {
             if (origin != Rect.Zero) f.animateTo(0f, tween(460, easing = Ease))      // back into the little square it grew from
             else { f.animateTo(fDock, tween(420, easing = Ease)); f.snapTo(0f) }
-            closing = false; origin = Rect.Zero
+            closing = false; origin = Rect.Zero; pull.snapTo(0f)
         }
     }
     /** set by the app's screen: animations need its frame clock (a plain MainScope crashes) */
@@ -320,14 +327,15 @@ internal fun MiniBar(s: Song, st: NativePlayer.St, onOpen: () -> Unit) {
                     if (broke) {
                         Morph.carrying = false
                         if (v < -700f || Morph.f.value > 0.42f) { Hap.soft(); Morph.closing = false; onOpen() } else { Hap.soft(); Morph.toDock() }
-                    } else Morph.scope?.launch { Morph.tug.animateTo(0f, spring(0.4f, 600f)) }
+                    } else Morph.scope?.launch { launch { Morph.pull.animateTo(0f, spring(0.6f, 400f)) }; Morph.tug.animateTo(0f, spring(0.4f, 600f)) }
                 },
-                onDragCancel = { Morph.carrying = false; Morph.scope?.launch { Morph.tug.animateTo(0f, spring(0.4f, 600f)); Morph.f.animateTo(0f) } },
+                onDragCancel = { Morph.carrying = false; Morph.scope?.launch { launch { Morph.pull.animateTo(0f, spring(0.6f, 400f)) }; Morph.tug.animateTo(0f, spring(0.4f, 600f)); Morph.f.animateTo(0f) } },
             ) { c, dy ->
                 c.consume(); vt.addPosition(c.uptimeMillis, c.position); up -= dy
                 val fingerY = origin + c.position.y
                 if (!broke) {
                     val k = (up / breakAt).coerceIn(0f, 1f)
+                    Morph.scope?.launch { Morph.pull.snapTo(k) }
                     Morph.scope?.launch { Morph.tug.snapTo(tugMax * (1f - kotlin.math.exp(-kotlin.math.max(up, 0f) / tugK))) }
                     // the tug: buzzes come closer together and get stronger as you pull
                     if (up > 0 && up - lastBuzz > with(d) { (18.dp - 13.dp * k).toPx() }) { lastBuzz = up; Hap.tug(k) }
@@ -335,6 +343,7 @@ internal fun MiniBar(s: Song, st: NativePlayer.St, onOpen: () -> Unit) {
                         broke = true; Hap.thud()
                         Morph.scope?.launch { Morph.miniY.snapTo(Morph.mini.top - Morph.tug.value); Morph.f.snapTo(0f) }
                         Morph.carrying = true
+                        Morph.scope?.launch { Morph.pull.animateTo(1f, tween(120)) }
                         Morph.scope?.launch { Morph.tug.animateTo(0f, spring(0.35f, 700f)) }                       // the dock springs back
                         chase(fingerY)
                     }
@@ -558,8 +567,10 @@ fun FullPlayer(s: Song, fade: () -> Float, hideCover: Boolean, onClose: () -> Un
     val motion by Prefs.motion.collectAsState(); val saving by Prefs.saving.collectAsState()
     val bgStyle = Cfg.bgStyle.use(); val vizStyle = Cfg.vizStyle.use(); val vizBars = Cfg.vizBars.use()
     val live = motion && !saving
-    val levels by rememberLevels(live && st.playing && (bgStyle == 0 || vizStyle != 4), vizBars)
     val land = isLand()
+    // Observe: the lyrics page turns into a big visualizer (it is drawn even when the background visualizer is switched off)
+    val observe = Cfg.observe.use() && NpState.page.intValue == 0 && !land
+    val levels by rememberLevels(live && st.playing && (bgStyle == 0 || vizStyle != 4 || observe), vizBars)
     val ctxD = LocalContext.current
     // the cover's colours are there from the very first frame (worked out ahead of time; if not, off the main thread), so the player
     // fades in already coloured instead of black
@@ -596,7 +607,11 @@ fun FullPlayer(s: Song, fade: () -> Float, hideCover: Boolean, onClose: () -> Un
             Fog(s, levels, st.playing)
             Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.35f)))))
         }
-        if (ready && live && vizStyle != 4) FadeIn(700) { VizBg(levels, if (Cfg.vizColor.use() == 1) (c1) else a, Modifier.fillMaxWidth().fillMaxHeight(Cfg.vizHeight.use()).align(Alignment.BottomCenter)) }
+        if (ready && live && (vizStyle != 4 || observe)) FadeIn(700) {
+            val hf by animateFloatAsState(if (observe) 0.8f else Cfg.vizHeight.use(), spring(0.85f, 140f), label = "vizh")
+            val boost by animateFloatAsState(if (observe) 1f else 0f, tween(320), label = "vizb")
+            VizBg(levels, if (Cfg.vizColor.use() == 1) (c1) else a, Modifier.fillMaxWidth().fillMaxHeight(hf).align(Alignment.BottomCenter), boost)
+        }
       }
       if (land) NpLand(s, fade, hideCover, onClose) else NpPages(s, fade, ready, hideCover, onClose)
     }
@@ -733,6 +748,8 @@ private fun NpPages(s: Song, fade: () -> Float, ready: Boolean, hideCover: Boole
     val go: (Int) -> Unit = { p -> scope.launch { pager.slideTo(p) } }
     var last by remember { mutableStateOf(1) }
     LaunchedEffect(pager.settledPage) { if (pager.settledPage != last) { last = pager.settledPage; Hap.soft() } }
+    LaunchedEffect(pager) { snapshotFlow { pager.currentPage }.collect { NpState.page.intValue = it } }
+    DisposableEffect(Unit) { onDispose { NpState.page.intValue = 1 } }
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade() }) {
             androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = if (ready) 1 else 0) { page ->
@@ -751,40 +768,45 @@ private fun NpPages(s: Song, fade: () -> Float, ready: Boolean, hideCover: Boole
 private fun mixF(a: Float, b: Float, k: Float) = a + (b - a) * k
 
 /**
- * The three pages' tabs: Lyrics · Current Song · Artist. It is the dock's tab bar, shrunk: while the media bar grows into the
- * player, the bar behind it narrows from the full width of the dock down to this pill, and the three tabs fade in on it. The
- * bubble rides along with the pages while you swipe them.
+ * The three pages' tabs: Lyrics (Observe while the visualizer is on) · Current Song · Artist. The dock's tab bar leaves the screen while the
+ * media bar is pulled up; this is its copy, shrunk to three buttons, in the same glass look. Once the player is fully open it slides up
+ * into the place the dock was, and it rides along with the pages while you swipe them.
  */
 @Composable
 private fun NpTabPill(pager: androidx.compose.foundation.pager.PagerState, go: (Int) -> Unit, modifier: Modifier) {
     val a = accent
     val d = LocalDensity.current
-    val cellDp = 96.dp; val hDp = 52.dp; val pad = 4.dp
+    val observe = Cfg.observe.use()
+    val cellDp = 96.dp; val hDp = 62.dp; val pad = 4.dp; val bubbleH = 52.dp
     val cell = with(d) { cellDp.toPx() }; val padPx = with(d) { pad.toPx() }
-    val dockH = with(d) { 62.dp.toPx() }; val dockMargin = with(d) { 24.dp.toPx() }
-    val labels = listOf("Lyrics", "Current Song", "Artist"); val icons = listOf(Ic.Lyrics, Ic.Note, Ic.Person)
+    val labels = listOf(if (observe) "Observe" else "Lyrics", "Current Song", "Artist"); val icons = listOf(if (observe) Ic.Bars else Ic.Lyrics, Ic.Note, Ic.Person)
+    val shape = RoundedCornerShape(minOf(Cfg.dockRadius.use().dp, hDp / 2))
+    val tint = mix(a, 0.10f, Color(0xFF1A1A20))
+    // it comes up only once the player is all the way open, and goes down again the moment it starts to close
+    var open by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { snapshotFlow { Morph.f.value >= 0.985f && !Morph.carrying && !Morph.closing }.collect { open = it } }
+    val rise = remember { Animatable(0f) }
+    LaunchedEffect(open) { if (open) { delay(70); rise.animateTo(1f, spring(0.78f, 240f)) } else rise.animateTo(0f, tween(200, easing = FastOutSlowInEasing)) }
+    val dropPx = with(d) { (hDp + 40.dp).toPx() }
     val page = pager.currentPage
-    Box(modifier.size(cellDp * 3 + pad * 2, hDp)) {
-        // the bar itself: full dock width and height at first, the pill when the player is open
-        Box(Modifier.matchParentSize().graphicsLayer {
-            val k = smooth(0.08f, 0.95f, Morph.f.value)
-            val fullW = maxOf(size.width, Morph.screen.width - dockMargin)
-            scaleX = mixF(fullW / size.width, 1f, k); scaleY = mixF(dockH / size.height, 1f, k)
-            alpha = smooth(0.04f, 0.3f, Morph.f.value)
-        }.clip(RoundedCornerShape(50)).background(Brush.verticalGradient(listOf(mix(a, 0.10f, Color(0xFF26262C)).copy(alpha = 0.86f), mix(a, 0.10f, Color(0xFF16161A)).copy(alpha = 0.90f))))
-            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(50)))
-        Box(Modifier.matchParentSize().graphicsLayer { alpha = smooth(0.5f, 0.92f, Morph.f.value) }) {
-            // the bubble under the current tab
-            Box(Modifier.offset { IntOffset((padPx + (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(0f, 2f) * cell).roundToInt(), padPx.roundToInt()) }
-                .size(cellDp, hDp - pad * 2).clip(RoundedCornerShape(50)).background(mix(a, 0.30f, Color(0xFF2A2830)).copy(alpha = 0.55f)))
-            Row(Modifier.fillMaxSize().padding(horizontal = pad)) {
-                repeat(3) { i ->
-                    val on = page == i
-                    Column(Modifier.width(cellDp).fillMaxHeight().clip(RoundedCornerShape(50)).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.tick(); go(i) },
-                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically)) {
-                        Box(Modifier.height(24.dp), contentAlignment = Alignment.Center) { Icon(icons[i], size = 22.dp, tint = if (on) a else Color.White.copy(alpha = 0.6f)) }
-                        T(labels[i], 10.5.sp, W650, if (on) Color.White else Color.White.copy(alpha = 0.6f))
-                    }
+    Box(modifier.size(cellDp * 3 + pad * 2, hDp).graphicsLayer { translationY = (1f - rise.value) * dropPx; alpha = smooth(0f, 0.3f, rise.value) }) {
+        // the glass: the dock's tint, a sheen along the top and a bright rim (the pane itself can't bend the player behind it, so the look is drawn)
+        Box(Modifier.matchParentSize().clip(shape)
+            .background(Brush.verticalGradient(listOf(tint.copy(alpha = 0.66f), tint.copy(alpha = 0.52f))))
+            .background(Brush.verticalGradient(0f to Color.White.copy(alpha = 0.16f), 0.55f to Color.Transparent))
+            .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.40f), Color.White.copy(alpha = 0.07f), Color.White.copy(alpha = 0.18f))), shape))
+        // the bubble under the current tab
+        Box(Modifier.offset { IntOffset((padPx + (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(0f, 2f) * cell).roundToInt(), ((hDp - bubbleH).toPx() / 2).roundToInt()) }
+            .size(cellDp, bubbleH).clip(RoundedCornerShape(50)).background(mix(a, 0.30f, Color(0xFF2A2830)).copy(alpha = 0.50f))
+            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(50)))
+        Row(Modifier.fillMaxSize().padding(horizontal = pad)) {
+            repeat(3) { i ->
+                val on = page == i
+                val sc by animateFloatAsState(if (on) 1.08f else 1f, tween(350, easing = Spring), label = "np$i")
+                Column(Modifier.width(cellDp).fillMaxHeight().clip(RoundedCornerShape(50)).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.tick(); go(i) },
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
+                    Box(Modifier.height(28.dp).scale(sc), contentAlignment = Alignment.Center) { Icon(icons[i], tint = if (on) a else Color.White.copy(alpha = 0.62f)) }
+                    T(labels[i], 10.5.sp, W650, if (on) Color.White else Color.White.copy(alpha = 0.62f))
                 }
             }
         }
@@ -824,15 +846,18 @@ private fun NpPortrait(s: Song, hideCover: Boolean, onClose: () -> Unit, go: (In
 private fun NpLyricsPage(s: Song, onClose: () -> Unit, go: (Int) -> Unit) {
     val a = accent
     val favs by Store.favs.collectAsState()
+    val observe = Cfg.observe.use()
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 76.dp)) {
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             IB(Ic.Down, onClick = onClose)
             Box(Modifier.rubber(4.dp).shadow(20.dp, RoundedCornerShape(10.dp)).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.soft(); go(1) }) { Art(s.cover, 48.dp, shape = RoundedCornerShape(10.dp), phName = s.album) }
             Column(Modifier.weight(1f).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.soft(); go(1) }) { T(s.title, 15.sp, W800); T(s.artist, 13.sp, color = Color.White.copy(alpha = 0.7f)) }
             IB(if (s.id in favs) Ic.HeartFill else Ic.Heart, if (s.id in favs) a else C.text) { if (Store.toggleFav(s.id)) Hap.success() else Hap.soft() }
+            // Observe: the lyrics (and the buttons under them) go away and the visualizer fills the page
+            IB(Ic.Bars, on = observe) { Hap.soft(); Cfg.observe.set(!observe) }
             IB(Ic.More) { Dialogs.sheet { NpSheet(s) } }
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) { LyricsPane(s) }
+        if (observe) Spacer(Modifier.weight(1f).fillMaxWidth()) else Box(Modifier.weight(1f).fillMaxWidth()) { LyricsPane(s) }
         NpSeek(false)
         NpControls(64.dp, Modifier.fillMaxWidth().padding(top = 4.dp).height(72.dp))
     }
@@ -956,7 +981,7 @@ fun NpSheet(s: Song) {
         Act(Ic.Trash, "Remove Song…", danger = true) { Dialogs.show { Confirm("Remove “${s.title}”?", "It's deleted from this phone.", "Remove") { Store.remove(listOf(s.id)) } } }
     }
 }
-object NpState { val open = mutableStateOf(false) }
+object NpState { val open = mutableStateOf(false); /** which of the player's three pages is showing (0 lyrics / observe, 1 current song, 2 artist) */ val page = mutableIntStateOf(1) }
 object Sleep { val endOfSong = kotlinx.coroutines.flow.MutableStateFlow(false) }
 
 @Composable
@@ -1147,9 +1172,9 @@ object VizHold {
 
 /** the full-screen visualizer behind the player: bars, mirror, wave or dots, in the colour you chose (Customize) */
 @Composable
-fun VizBg(levels: FloatArray, color: Color, modifier: Modifier) {
+fun VizBg(levels: FloatArray, color: Color, modifier: Modifier, boost: Float = 0f) {
     val style = Cfg.vizStyle.use(); val colMode = Cfg.vizColor.use(); val op = Cfg.vizOpacity.use()
-    Canvas(modifier.graphicsLayer { alpha = op; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }) {
+    Canvas(modifier.graphicsLayer { alpha = op + (1f - op) * boost; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }) {
         val n = levels.size.coerceAtLeast(1); val bw = size.width / n
         fun col(i: Int): Color = when (colMode) { 2 -> Color.hsv((i * 360f / n + 0f) % 360f, 0.55f, 1f); 3 -> Color.White; else -> color }
         for (i in 0 until n) {

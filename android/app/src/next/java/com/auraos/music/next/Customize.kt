@@ -101,6 +101,7 @@ object Cfg {
     val haptics = B("cfgHaptics", true)
     val npSpacing = I("cfgNpSpacing", 1)       // how much air the player has: compact · normal · roomy
     val btnShape = I("cfgBtnShape", 1)         // the play button: rounded · circle · sharp
+    val observe = B("cfgObserve", false)       // the lyrics page shows a big visualizer instead of the lyrics
     val lyricSync = B("cfgLySync", true)       // follow the timestamps; off shows the lyrics as plain text
     val lyricPos = I("cfgLyPos", 1)            // where the current line sits: top · centre · bottom
     val dlWorkers = I("cfgDlWorkers", 3)       // songs downloaded at the same time

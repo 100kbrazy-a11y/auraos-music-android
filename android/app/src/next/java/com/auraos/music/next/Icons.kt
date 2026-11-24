@@ -53,7 +53,9 @@ enum class Ic(val d: String, val fill: Boolean = false, val sw: Float = 2f) {
     Radio("M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"),
     Link("M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9z"),
     Wand("M10.5 17.5a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20.5 20.5l-5-5"), Sort("M4 6h16M7 12h10M10 18h4"),
-    UpDown("M7 4v16M3.5 16.5 7 20l3.5-3.5M17 20V4M13.5 7.5 17 4l3.5 3.5");
+    UpDown("M7 4v16M3.5 16.5 7 20l3.5-3.5M17 20V4M13.5 7.5 17 4l3.5 3.5"),
+    /** four bars of different heights: the visualizer */
+    Bars("M5 19v-6M9.7 19V5M14.3 19V9M19 19v-9", sw = 2.8f);
 
     val path: Path by lazy { PathParser().parsePathString(d).toPath() }
 }
