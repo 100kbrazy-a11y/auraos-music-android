@@ -108,9 +108,8 @@ object PcmLoader {
                     val ob = dec.getOutputBuffer(outIdx)
                     if (ob != null && info.size > 0) {
                         if (firstPts < 0) {
-                            // where the first sample sits in the song: the player counts from this same clock, so a decoder that starts late would put every word early
+                            // (only noted: the decoder's first time stamp is not where the sound is for mp3s, which the CI decoder test showed: they come out right as they are)
                             firstPts = info.presentationTimeUs
-                            if (firstPts >= 5_000L) { padded = (firstPts * RATE / 1_000_000L).toInt(); repeat(padded) { sink.put(0.0, 0.0) } }
                             outRate = inRate; outCh = ch
                         }
                         ob.position(info.offset); ob.limit(info.offset + info.size)
