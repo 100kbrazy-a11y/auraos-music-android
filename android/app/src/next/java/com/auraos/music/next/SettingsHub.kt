@@ -68,7 +68,7 @@ fun SSlider(title: String, sub: String, value: String, v: Float, range: ClosedFl
     }
 }
 
-@Composable private fun Div() = Box(Modifier.padding(start = 70.dp).fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.05f)))
+@Composable internal fun Div() = Box(Modifier.padding(start = 70.dp).fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.05f)))
 
 /** a row of a settings card: tinted icon, title and sub-line, then a value, a chevron or a control */
 @Composable
