@@ -8,7 +8,10 @@ import kotlin.math.min
 // The pure part of word timing (no Android in it, so it can be run and tested on a computer): lines the lyrics up against what the voice finder reports.
 
 /** the whole song as 22.05 kHz stereo 16-bit */
-class Pcm(val left: ShortArray, val right: ShortArray, val n: Int)
+class Pcm(val left: ShortArray, val right: ShortArray, val n: Int) {
+    /** how the file was read (codec, rates, where the first sample sits): for the diagnostics and the timing report */
+    var info: String = ""
+}
 
 /** how many syllables a word has, and which words are sung fast and short */
 object Syllables {

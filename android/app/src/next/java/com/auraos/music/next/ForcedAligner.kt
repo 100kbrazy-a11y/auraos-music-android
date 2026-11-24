@@ -58,11 +58,13 @@ object PcmLoader {
             var cap = ((durUs / 1_000_000.0) * RATE).toInt() + RATE * 2
             if (cap < RATE * 20) cap = RATE * 60
             val sink = Sink(cap)
+            var codecName = "?"; var firstPts = -1L; var padded = 0; var outRate = 0; var outCh = 0
             var inRate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
             var ch = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
             var isFloat = false
             val dec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME)!!)
             codec = dec
+            codecName = dec.name
             dec.configure(fmt, null, null, 0)
             dec.start()
             // box-filter resampling to 22.05 kHz: every input sample adds to the output sample it falls in, weighted by how much of it falls there
@@ -105,6 +107,12 @@ object PcmLoader {
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) eosOut = true
                     val ob = dec.getOutputBuffer(outIdx)
                     if (ob != null && info.size > 0) {
+                        if (firstPts < 0) {
+                            // where the first sample sits in the song: the player counts from this same clock, so a decoder that starts late would put every word early
+                            firstPts = info.presentationTimeUs
+                            if (firstPts >= 5_000L) { padded = (firstPts * RATE / 1_000_000L).toInt(); repeat(padded) { sink.put(0.0, 0.0) } }
+                            outRate = inRate; outCh = ch
+                        }
                         ob.position(info.offset); ob.limit(info.offset + info.size)
                         ob.order(ByteOrder.LITTLE_ENDIAN)
                         // the whole buffer is copied out once (reading it sample by sample through the buffer is slow)
@@ -139,7 +147,10 @@ object PcmLoader {
                     dec.releaseOutputBuffer(outIdx, false)
                 }
             }
-            return Pcm(sink.left, sink.right, sink.n)
+            val p = Pcm(sink.left, sink.right, sink.n)
+            val mime = fmt.getString(MediaFormat.KEY_MIME) ?: "?"
+            p.info = "codec=$codecName mime=$mime rate=$outRate ch=$outCh float=$isFloat first_sample_at=${if (firstPts < 0) "?" else "%.1f ms".format(firstPts / 1000.0)}${if (padded > 0) " (padded ${padded * 1000 / RATE} ms of silence)" else ""} container_duration=${durUs / 1000} ms decoded=${sink.n * 1000L / RATE} ms"
+            return p
         } finally {
             try { codec?.stop(); codec?.release() } catch (_: Exception) { }
             try { ex.release() } catch (_: Exception) { }
@@ -280,6 +291,9 @@ object ForcedAligner {
             val out = WordTiming.align(pcm, lines, offset) { _progress.value = it; stepAside(urgent) }
                 ?: return fail("no line could be lined up with the singing")
             Diag.log("word timing ${s.title}: read ${(t1 - t0) / 100 / 10.0} s, listened + timed ${(System.currentTimeMillis() - t1) / 100 / 10.0} s (${lines.size} lines, ${(pcm.n / PcmLoader.RATE)} s of song)")
+            // what the engine decided: how far the lyrics' times were from the singing, from how many places, and where the lyrics came from
+            Diag.log("word timing ${s.title}: ${out.lineSequence().first().trim('[', ']')} · lyrics from ${rec.optString("source").ifBlank { "?" }} · your nudge ${"%+.1f".format(offset)} s · highlight ${Cfg.lyricShift.v.value.toInt()} ms")
+            Diag.log("word timing ${s.title}: audio ${pcm.info}")
             rec.put("syncedSrc", src); rec.put("synced", out.trimEnd()); rec.put("aligned", true); rec.put("alignGen", GEN)
             offsets?.remove(s.id)            // the times are in the song's own time now: any nudge made for the old ones is already in them
             Store.save()

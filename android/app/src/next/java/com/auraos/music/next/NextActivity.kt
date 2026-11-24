@@ -99,6 +99,7 @@ class NextActivity : ComponentActivity() {
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); handle(intent) }
     private fun handle(i: Intent?) {
+        i?.getStringExtra("decodeTest")?.let { SelfTest.run(this, it); return }
         i?.getStringExtra("open")?.let { o -> Tour.open(this, o); return }
         if (i?.action == Intent.ACTION_SEND) { val t = i.getStringExtra(Intent.EXTRA_TEXT) ?: return; Nav.stack.clear(); Nav.open(Page.Search); Yt.link(t) }
     }
