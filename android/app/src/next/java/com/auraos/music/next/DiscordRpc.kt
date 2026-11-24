@@ -24,13 +24,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
  */
 object DiscordRpc {
     /** Discord application ID from the Developer Portal. Empty until it exists. */
-    const val APPLICATION_ID = ""
+    const val APPLICATION_ID = "1573427664281407609"   // Strata Music in the Discord Developer Portal (public, not a secret)
+    /** flips to true in the commit that adds Discord's Social SDK (discord_partner_sdk.aar) and calls it from onPlayback() */
+    private const val SDK_LINKED = false
 
     val loggedIn = MutableStateFlow(false)
     val username = MutableStateFlow("")
     val status = MutableStateFlow("Waiting for Discord's official SDK")
 
-    val available: Boolean get() = APPLICATION_ID.isNotBlank()
+    val available: Boolean get() = SDK_LINKED && APPLICATION_ID.isNotBlank()
 
     fun init(ctx: Context) {
         // erase the account token (and name) that earlier builds kept on the phone
