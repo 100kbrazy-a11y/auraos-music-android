@@ -17,7 +17,6 @@ import org.json.JSONObject
 import java.io.File
 import java.nio.ByteOrder
 import kotlin.math.min
-import kotlin.math.roundToInt
 
 // Precise word timing, made at home and light on purpose: no model to download (the same engine as the Mac app).
 // 1. the song is read as 22.05 kHz stereo; cpp/voice keeps the part that is sung (centred, steady, not a drum hit) and finds where the voice is and where its syllables begin
@@ -28,6 +27,17 @@ import kotlin.math.roundToInt
 object PcmLoader {
     const val RATE = WordTiming.RATE
     const val MAX_SECONDS = 8 * 60
+
+    /** the 22.05 kHz stereo the engine listens to, grown as it is filled */
+    private class Sink(cap: Int) {
+        var left = ShortArray(cap); var right = ShortArray(cap); var n = 0
+        fun put(l: Double, r: Double) {
+            if (n >= left.size) { left = left.copyOf(left.size + RATE * 30); right = right.copyOf(right.size + RATE * 30) }
+            left[n] = Math.round(l).toInt().coerceIn(-32768, 32767).toShort()
+            right[n] = Math.round(r).toInt().coerceIn(-32768, 32767).toShort()
+            n++
+        }
+    }
 
     /** [onProgress] 0..1 over the reading of the file */
     fun load(file: File, onProgress: (Float) -> Unit = {}): Pcm {
@@ -46,7 +56,7 @@ object PcmLoader {
             if (durUs > MAX_SECONDS * 1_000_000L) throw IllegalStateException("too long to analyse")
             var cap = ((durUs / 1_000_000.0) * RATE).toInt() + RATE * 2
             if (cap < RATE * 20) cap = RATE * 60
-            var left = ShortArray(cap); var right = ShortArray(cap); var n = 0
+            val sink = Sink(cap)
             var inRate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
             var ch = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
             var isFloat = false
@@ -57,13 +67,14 @@ object PcmLoader {
             // box-filter resampling to 22.05 kHz: every input sample adds to the output sample it falls in, weighted by how much of it falls there
             var binWidth = inRate / RATE.toDouble()
             var filled = 0.0; var accL = 0.0; var accR = 0.0
+            var tmpS = ShortArray(1 shl 16); var tmpF = FloatArray(1 shl 16)
             val info = MediaCodec.BufferInfo()
             var eosIn = false; var eosOut = false; var reads = 0
             val deadline = System.currentTimeMillis() + 180_000L
             while (!eosOut) {
                 if (System.currentTimeMillis() > deadline) throw IllegalStateException("decoding took too long")
                 if (!eosIn) {
-                    val inIdx = dec.dequeueInputBuffer(10_000)
+                    val inIdx = dec.dequeueInputBuffer(2_000)
                     if (inIdx >= 0) {
                         val buf = dec.getInputBuffer(inIdx)!!
                         val sz = ex.readSampleData(buf, 0)
@@ -75,7 +86,7 @@ object PcmLoader {
                         }
                     }
                 }
-                val outIdx = dec.dequeueOutputBuffer(info, 10_000)
+                val outIdx = dec.dequeueOutputBuffer(info, 2_000)
                 if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     val of = dec.outputFormat
                     if (of.containsKey(MediaFormat.KEY_SAMPLE_RATE)) inRate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE)
@@ -87,23 +98,32 @@ object PcmLoader {
                     val ob = dec.getOutputBuffer(outIdx)
                     if (ob != null && info.size > 0) {
                         ob.position(info.offset); ob.limit(info.offset + info.size)
-                        val sh = if (isFloat) null else ob.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-                        val fl = if (isFloat) ob.order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer() else null
-                        val total = if (sh != null) sh.remaining() else fl!!.remaining()
+                        ob.order(ByteOrder.LITTLE_ENDIAN)
+                        // the whole buffer is copied out once (reading it sample by sample through the buffer is slow)
+                        val total: Int
+                        if (isFloat) { val fb = ob.asFloatBuffer(); total = fb.remaining(); if (tmpF.size < total) tmpF = FloatArray(total); fb.get(tmpF, 0, total) }
+                        else { val sb = ob.asShortBuffer(); total = sb.remaining(); if (tmpS.size < total) tmpS = ShortArray(total); sb.get(tmpS, 0, total) }
                         var i = 0
                         while (i + ch <= total) {
-                            val l = if (sh != null) sh.get(i).toDouble() else fl!!.get(i) * 32768.0
-                            val r = if (ch > 1) (if (sh != null) sh.get(i + 1).toDouble() else fl!!.get(i + 1) * 32768.0) else l
+                            val l: Double; val r: Double
+                            if (isFloat) { l = tmpF[i] * 32768.0; r = if (ch > 1) tmpF[i + 1] * 32768.0 else l }
+                            else { l = tmpS[i].toDouble(); r = if (ch > 1) tmpS[i + 1].toDouble() else l }
                             i += ch
-                            var w = 1.0
-                            while (w > 1e-9) {
-                                val take = min(w, binWidth - filled)
-                                accL += l * take; accR += r * take; filled += take; w -= take
-                                if (filled >= binWidth - 1e-9) {
-                                    if (n >= left.size) { left = left.copyOf(left.size + RATE * 30); right = right.copyOf(right.size + RATE * 30) }
-                                    left[n] = (accL / binWidth).roundToInt().coerceIn(-32768, 32767).toShort()
-                                    right[n] = (accR / binWidth).roundToInt().coerceIn(-32768, 32767).toShort()
-                                    n++; accL = 0.0; accR = 0.0; filled = 0.0
+                            if (binWidth >= 1.0) {
+                                val rem = binWidth - filled
+                                if (rem > 1.0) { accL += l; accR += r; filled += 1.0 }
+                                else {                      // this sample finishes an output sample; what is left of it starts the next
+                                    accL += l * rem; accR += r * rem
+                                    sink.put(accL / binWidth, accR / binWidth)
+                                    val k = 1.0 - rem
+                                    accL = l * k; accR = r * k; filled = k
+                                }
+                            } else {                        // (a source slower than 22.05 kHz: one input sample spans several output ones)
+                                var w = 1.0
+                                while (w > 1e-9) {
+                                    val take = min(w, binWidth - filled)
+                                    accL += l * take; accR += r * take; filled += take; w -= take
+                                    if (filled >= binWidth - 1e-9) { sink.put(accL / binWidth, accR / binWidth); accL = 0.0; accR = 0.0; filled = 0.0 }
                                 }
                             }
                         }
@@ -111,7 +131,7 @@ object PcmLoader {
                     dec.releaseOutputBuffer(outIdx, false)
                 }
             }
-            return Pcm(left, right, n)
+            return Pcm(sink.left, sink.right, sink.n)
         } finally {
             try { codec?.stop(); codec?.release() } catch (_: Exception) { }
             try { ex.release() } catch (_: Exception) { }
@@ -214,10 +234,13 @@ object ForcedAligner {
             if (!Voice.load()) return fail("the timing engine isn't available on this phone")
             val offsets = Store.settings().optJSONObject("offsets")
             val offset = offsets?.optDouble(s.id, 0.0)?.takeIf { !it.isNaN() } ?: 0.0
+            val t0 = System.currentTimeMillis()
             val pcm = PcmLoader.load(File(Store.app.filesDir, s.path)) { _progress.value = 0.02f + 0.33f * it }
+            val t1 = System.currentTimeMillis()
             if (pcm.n < PcmLoader.RATE * 8) return fail("the song is too short")
             val out = WordTiming.align(pcm, lines, offset) { _progress.value = it }
                 ?: return fail("no line could be lined up with the singing")
+            Diag.log("word timing ${s.title}: read ${(t1 - t0) / 100 / 10.0} s, listened + timed ${(System.currentTimeMillis() - t1) / 100 / 10.0} s (${lines.size} lines, ${(pcm.n / PcmLoader.RATE)} s of song)")
             rec.put("syncedSrc", src); rec.put("synced", out.trimEnd()); rec.put("aligned", true); rec.put("alignGen", GEN)
             offsets?.remove(s.id)            // the times are in the song's own time now: any nudge made for the old ones is already in them
             Store.save()

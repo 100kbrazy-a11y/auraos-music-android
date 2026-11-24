@@ -90,6 +90,9 @@ object LyricTiming {
 
 private class Row(val line: Int, val gap: Boolean)
 
+/** how far (dp) the wheel's curve has slid a line that is two away from the one being sung */
+private val NEAR_SHIFT = (1f - cos(1f)) * 64f
+
 /**
  * Lyrics like the Mac app's: lines sit on a gentle curve like a wheel (the further from the line being sung, the smaller, dimmer and further
  * left), the line being sung is lit word by word with the word being sung a little bigger, two lines are lit when an ad-lib overlaps, and
@@ -149,16 +152,18 @@ fun CarouselLyrics(lines: List<Online.Line>, durMs: Long, now: () -> Long, onSee
                 transformOrigin = TransformOrigin(if (center) 0.5f else 0f, 0.5f)
                 cameraDistance = 14f * dens
                 rotationY = d.coerceIn(-3f, 3f) * 3f * (1f - bf)
-                if (!center) translationX = -(1f - cos(a * 0.5f)) * 64f * dens
+                // the two lines either side of the one being sung stay fully in front (a little left of it, never cut off at the edge);
+                // the lines further away slide off to the left into the fog
+                if (!center) { val full = (1f - cos(a * 0.5f)) * 64f; translationX = -(if (a <= 2f) full * (12f / NEAR_SHIFT) else 12f + (full - NEAR_SHIFT)) * dens }
                 // browsing: every line is sharp and readable
                 alpha = (0.16f + 0.84f * exp(-a * 0.9f)) * (1f - bf) + (if (lit) 1f else 0.7f) * bf
             }
             if (row.gap) {
                 val done = if (focus.gap >= 0) focus.gap > row.line else focus.main >= row.line
-                Box(base.padding(horizontal = 22.dp)) { GapDots(gaps[row.line]!!, focus.gap == row.line, done, live, center) }
+                Box(base.padding(start = 34.dp, end = 22.dp)) { GapDots(gaps[row.line]!!, focus.gap == row.line, done, live, center) }
             } else {
                 val ln = lines[row.line]
-                Box(base.clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.tick(); onSeek(row.line) }.padding(horizontal = 22.dp, vertical = 12.dp)) {
+                Box(base.clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.tick(); onSeek(row.line) }.padding(start = 34.dp, end = 22.dp, top = 12.dp, bottom = 12.dp)) {
                     if (lit && sweep && ln.words.isNotEmpty() && ln.text.isNotBlank()) LiveLine(ln, live, fontSize, center, shift)
                     else Text(ln.text.ifBlank { "♪" }, Modifier.fillMaxWidth(), color = Color.White, fontSize = fontSize.sp, fontWeight = W800, lineHeight = (fontSize * 1.22f).sp, letterSpacing = (-0.4).sp,
                         textAlign = if (center) TextAlign.Center else TextAlign.Start, maxLines = 6)
@@ -169,7 +174,8 @@ fun CarouselLyrics(lines: List<Online.Line>, durMs: Long, now: () -> Long, onSee
         drawContent()
         // feather every edge: no hard line where the lyrics end
         drawRect(Brush.verticalGradient(0f to Color.Transparent, 0.08f to Color.Black, 0.9f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
-        drawRect(Brush.horizontalGradient(0f to Color.Transparent, 0.04f to Color.Black, 0.96f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+        // only the right edge is feathered: the start of a line is never covered
+        drawRect(Brush.horizontalGradient(0f to Color.Black, 0.96f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
     }.pointerInput(rows.size) {
         var lastRow = 0
         detectVerticalDragGestures(onDragStart = { browsing = true; lastRow = scroll.value.roundToInt(); Hap.soft() }, onDragEnd = { lastDrag = System.currentTimeMillis() }, onDragCancel = { lastDrag = System.currentTimeMillis() }) { c, dy ->

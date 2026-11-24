@@ -2,6 +2,16 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.15.1",
+   "name": "The Observe Update",
+   "date": "2026-11-24",
+   "notes": [
+    "Lyrics: the two lines above and below the one being sung now stay fully in front, with their first letters showing, instead of being cut off and covered by the fog on the left. Only lines further away slide off into it.",
+    "Word syncing reads the song faster (the audio is copied out in one go and resampled with a leaner loop), says what it is doing (Reading the song · Listening for the voice · Syncing words) with a percentage, and writes how long each step took to Settings › Diagnostics.",
+    "The little status under the lyrics is short enough to read: Syncing…, Words ✓, Lines only, or Sync failed."
+   ]
+  },
+  {
    "version": "2.15.0",
    "name": "The Observe Update",
    "date": "2026-11-24",

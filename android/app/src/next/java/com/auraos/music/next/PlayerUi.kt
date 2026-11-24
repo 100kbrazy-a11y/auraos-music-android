@@ -1043,7 +1043,7 @@ fun LyricsPane(s: Song) {
                     if (syncing) {
                         if (busy == s.id) androidx.compose.material3.CircularProgressIndicator({ progress.coerceIn(0.03f, 1f) }, Modifier.size(14.dp), color = Color.White.copy(alpha = 0.9f), strokeWidth = 2.dp, trackColor = Color.White.copy(alpha = 0.22f))
                         else androidx.compose.material3.CircularProgressIndicator(Modifier.size(14.dp), color = Color.White.copy(alpha = 0.9f), strokeWidth = 2.dp)
-                        T(if (busy == s.id) "Syncing words · ${(progress * 100).toInt().coerceIn(1, 99)}%" else "Syncing words · waiting", 13.sp, W700, Color.White.copy(alpha = 0.92f))
+                        T(if (busy == s.id) "${if (progress < 0.35f) "Reading the song" else if (progress < 0.7f) "Listening for the voice" else "Syncing words"} · ${(progress * 100).toInt().coerceIn(1, 99)}%" else "Syncing words · waiting", 13.sp, W700, Color.White.copy(alpha = 0.92f))
                     } else T("Words synced", 13.sp, W700, Color.White.copy(alpha = 0.92f))
                 }
             }
@@ -1052,10 +1052,10 @@ fun LyricsPane(s: Song) {
         // so a press near them can never fall through to a line and jump the song
         Row(Modifier.fillMaxWidth().zIndexCompat(2f).padding(top = 2.dp).pointerInput(Unit) { detectTapGestures { } }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             val state = when {
-                syncing -> "Syncing words…"
-                s.id in failedIds && !timed -> "Words not synced"
-                timed -> "Words synced"
-                l != null && l.synced.isNotEmpty() -> "Line synced"
+                syncing -> "Syncing…"
+                s.id in failedIds && !timed -> "Sync failed"
+                timed -> "Words ✓"
+                l != null && l.synced.isNotEmpty() -> "Lines only"
                 else -> "Lyrics"
             }
             T(if (off != 0.0) "$state · %+.1f s".format(off) else state, 12.sp, color = Color.White.copy(alpha = 0.55f), modifier = Modifier.weight(1f))
