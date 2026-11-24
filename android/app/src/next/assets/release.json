@@ -2,6 +2,16 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.13.4",
+   "name": "The Thanksgiving Update",
+   "date": "2026-11-23",
+   "notes": [
+    "Export any song: three-dot menu › Export… Choose Original, Opus (.opus), M4A (AAC), FLAC or WAV. Opus and M4A pick their own quality; FLAC and WAV carry the title, artist, album and cover. Save it to Music › Strata Music or share it",
+    "A song that is Opus inside a .webm becomes a real .opus without re-encoding: no quality loss",
+    "Music packs now contain .opus files instead of .webm for YouTube songs, with the title, artist and cover inside"
+   ]
+  },
+  {
    "version": "2.13.3",
    "name": "The Thanksgiving Update",
    "date": "2026-11-23",

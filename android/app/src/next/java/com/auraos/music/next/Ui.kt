@@ -513,6 +513,7 @@ fun SongSheet(s: Song, playlist: String? = null) {
         if (playlist != null) Act(Ic.Close, "Remove from This Playlist") { Store.setPlaylist(playlist, (Store.playlists.value[playlist] ?: emptyList()).filter { it != s.id }) }
         Act(Ic.Disc, "Go to Album") { NpState.open.value = false; Nav.open(Page.AlbumP(s.albumKey)) }
         Act(Ic.Person, "Go to Artist") { NpState.open.value = false; Nav.open(Page.ArtistP(primaryArtist(s.artist).ifBlank { s.albumArtist })) }
+        Act(Ic.Download, "Export…") { Dialogs.sheet { ExportSheet(s) } }
         Act(Ic.Share, "Share as Music Pack…") { scope.launch { sharePack(ctx, s.title, listOf(s), null) } }
         Act(Ic.Trash, "Remove Song…", danger = true) { Dialogs.show { Confirm("Remove “${s.title}”?", "It's deleted from this phone.", "Remove") { Store.remove(listOf(s.id)) } } }
     }

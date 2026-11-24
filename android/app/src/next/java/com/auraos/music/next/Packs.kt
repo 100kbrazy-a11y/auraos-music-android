@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import com.auraos.music.WebmOpus
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -29,10 +30,19 @@ object Packs {
                 Store.busy.value = "Packing ${i + 1} of ${songs.size}…"
                 val f = File(Store.app.filesDir, s.path)
                 if (!f.exists()) return@forEachIndexed
-                var rel = Store.organizedPath(s.albumartist, s.artist, s.album, s.track, s.disc, s.title, s.ext.ifEmpty { "m4a" })
+                // a YouTube song is Opus inside a .webm: in a pack it is an .opus (the same audio, moved into an Ogg file, with its tags and cover)
+                val asOpus = s.ext == "webm" && try { WebmOpus.isWebm(f) && WebmOpus.hasOpus(f) } catch (_: Exception) { false }
+                var rel = Store.organizedPath(s.albumartist, s.artist, s.album, s.track, s.disc, s.title, if (asOpus) "opus" else s.ext.ifEmpty { "m4a" })
                 val base = rel.substringBeforeLast('.'); val ext = rel.substringAfterLast('.'); var n = 2
                 while (!names.add(rel.lowercase())) { rel = "$base ($n).$ext"; n++ }
-                z.putNextEntry(ZipEntry("Music/$rel")); f.inputStream().use { it.copyTo(z) }; z.closeEntry()
+                var tmp: File? = null
+                var data = f
+                if (asOpus) try {
+                    val t = File(Store.app.cacheDir, "share/pack-${System.nanoTime()}.opus"); t.parentFile?.mkdirs()
+                    WebmOpus.toOgg(f, t, Exporter.packTags(s), Exporter.coverBytes(s)); tmp = t; data = t
+                } catch (_: Exception) { rel = rel.substringBeforeLast('.') + ".webm" }      // couldn't move it: keep the original file
+                z.putNextEntry(ZipEntry("Music/$rel")); data.inputStream().use { it.copyTo(z) }; z.closeEntry()
+                tmp?.delete()
                 val folder = rel.substringBeforeLast('/')
                 if (s.cover.isNotEmpty() && coverDone.add(folder)) {
                     val cf = Store.coverFile(s.cover)
