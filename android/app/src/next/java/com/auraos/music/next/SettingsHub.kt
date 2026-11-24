@@ -144,6 +144,7 @@ private fun searchIndex(): List<Found> = listOf(
     Found(SG.Motion, "Motion effects", "Appearance", "animation background battery saver timing") { open("motion") },
     Found(SG.Motion, "Falling leaves", "Appearance", "thanksgiving autumn fall leaf background") { open("motion") },
     Found(SG.Feel, "Haptics", "Appearance", "touch vibration buzz scroll timer tucked") { open("touch") },
+    Found(SG.Download, "Downloads", "Library", "download manager queue speed pause stop retry songs at once") { open("downloads") },
     Found(SG.Playback, "Crossfade", "Playback", "blend beats gapless") { open("playback") },
     Found(SG.Playback, "Equalizer", "Playback", "eq bass treble") { open("playback") },
     Found(SG.Update, "Updates", "About", "check version what's new") { open("about") },
@@ -177,6 +178,7 @@ fun SettingsPage() {
                     if (words.isNotEmpty() && found.isEmpty()) T("Nothing matches “$q”", 14.sp, color = C.sub, modifier = Modifier.padding(24.dp))
                 } else {
                     HubRow(SG.Folder, "Library & Tabs", "Manage your library and tabs") { open("library") }
+                    HubRow(SG.Download, "Downloads", "Queue, speed and controls") { open("downloads") }
                     HubRow(SG.Playback, "Player Layout & Player Look", "Customize the player experience") { open("player") }
                     HubRow(SG.Viz, "Visualizer & Lyrics", "Configure visualizer and lyrics") { open("vizlyrics") }
                     // Appearance: tap it for its page, or the arrow to unfold its sections right here
@@ -213,11 +215,11 @@ fun SettingsSectionPage(id: String) {
     val ls = rememberLazyListState()
     val title = when (id) {
         "library" -> "Library & Tabs"; "player" -> "Player Layout"; "vizlyrics" -> "Visualizer & Lyrics"; "appearance" -> "Appearance"; "buttons" -> "Buttons"
-        "colors" -> "Colors"; "shapes" -> "Shapes"; "motion" -> "Motion"; "touch" -> "Touch"; "playback" -> "Playback"; else -> "About"
+        "colors" -> "Colors"; "shapes" -> "Shapes"; "motion" -> "Motion"; "touch" -> "Touch"; "playback" -> "Playback"; "downloads" -> "Downloads"; else -> "About"
     }
     val blocks: List<@Composable () -> Unit> = when (id) {
         "library" -> libraryBlocks(); "player" -> playerBlocks(); "vizlyrics" -> vizLyricsBlocks(); "appearance" -> appearanceBlocks(); "buttons" -> buttonsBlocks()
-        "colors" -> colorBlocks(); "shapes" -> shapeBlocks(); "motion" -> motionBlocks(); "touch" -> touchBlocks(); "playback" -> playbackBlocks(); else -> aboutBlocks()
+        "colors" -> colorBlocks(); "shapes" -> shapeBlocks(); "motion" -> motionBlocks(); "touch" -> touchBlocks(); "playback" -> playbackBlocks(); "downloads" -> downloadBlocks(); else -> aboutBlocks()
     }
     Box(Modifier.fillMaxSize().background(C.bg)) {
         Aurora(motion && !saving && !ls.isScrollInProgress)

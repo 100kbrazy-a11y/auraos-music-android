@@ -167,6 +167,22 @@ object Covers {
     }
 
     /** the best cover for an album */
+    private val webCache = java.util.concurrent.ConcurrentHashMap<String, String>()   // album (or song) -> cover web address; "" = looked, none found
+
+    /**
+     * A web address for a song's cover, for places that cannot read files on this phone (Discord's status).
+     * Found like "Find cover online" does it (iTunes, then Deezer), kept for next time, and null when offline or nothing matches.
+     */
+    suspend fun webUrl(s: Song): String? {
+        val key = if (s.album.isNotBlank()) (s.artist + "|" + s.album).lowercase() else s.id
+        webCache[key]?.let { return it.ifBlank { null } }
+        offline = true
+        val url = try { forSong(s)?.cover ?: "" } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { return null }
+        if (url.isBlank() && offline) return null           // nothing answered: try again another time instead of remembering "none"
+        webCache[key] = url
+        return url.ifBlank { null }
+    }
+
     private suspend fun forAlbumCand(a: Album): Cand? {
         val title = norm(a.title).ifBlank { a.title }
         val artists = (splitArtists(a.artist) + a.songs.flatMap { splitArtists(it.artist) }).filter { it != "Unknown Artist" }.distinct()

@@ -58,6 +58,9 @@ object DiscordRpc {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var started = false
     private var lastKey = ""; private var lastStart = 0L; private var shown = false
+    private val covers = java.util.concurrent.ConcurrentHashMap<String, String>()   // song id -> cover web address
+    private val asked = java.util.Collections.synchronizedSet(HashSet<String>())
+    private val coverTick = MutableStateFlow(0)
 
     fun init(ctx: Context) {
         // erase the account token (and name) that earlier builds kept on the phone
@@ -76,15 +79,16 @@ object DiscordRpc {
         scope.launch {
             // one stream of everything the status depends on; it only reaches Discord when something visible changed
             kotlinx.coroutines.flow.combine(NativePlayer.state, Prefs.discordRpc, Prefs.discordAppName, Prefs.discordFormat,
-                kotlinx.coroutines.flow.combine(Prefs.discordShowTimeline, Prefs.discordHidePaused) { a, b -> a to b }) { st, on, name, fmt, tl -> arrayOf(st, on, name, fmt, tl) }
+                kotlinx.coroutines.flow.combine(Prefs.discordShowTimeline, Prefs.discordHidePaused, Prefs.discordShowCover, coverTick) { a, b, c, _ -> Triple(a, b, c) }) { st, on, name, fmt, tl -> arrayOf(st, on, name, fmt, tl) }
                 .collectLatest { a ->
                     @Suppress("UNCHECKED_CAST")
-                    push(a[0] as NativePlayer.St, a[1] as Boolean, a[2] as String, a[3] as Int, (a[4] as Pair<Boolean, Boolean>).first, (a[4] as Pair<Boolean, Boolean>).second)
+                    val o = a[4] as Triple<Boolean, Boolean, Boolean>
+                    push(a[0] as NativePlayer.St, a[1] as Boolean, a[2] as String, a[3] as Int, o.first, o.second, o.third)
                 }
         }
     }
 
-    private fun push(st: NativePlayer.St, on: Boolean, name: String, fmt: Int, timeline: Boolean, hidePaused: Boolean) {
+    private fun push(st: NativePlayer.St, on: Boolean, name: String, fmt: Int, timeline: Boolean, hidePaused: Boolean, showCover: Boolean) {
         val h = worker ?: return
         val song = if (st.id.isNotEmpty()) Store.song(st.id) else null
         if (!on || song == null || (!st.playing && hidePaused)) {
@@ -102,13 +106,19 @@ object DiscordRpc {
         val dur = if (st.dur > 0) st.dur else song.durMs
         val start = if (st.playing && timeline) now - st.pos else 0L
         // resend when what is shown changed, or when you seeked (the play time drifted from where Discord expects it)
-        val key = listOf(song.id, st.playing, details, state, name, timeline).joinToString("|")
+        // Discord cannot read files on this phone, so the cover is looked up online (once per album) and added as soon as it is found
+        val img = if (showCover) covers[song.id].orEmpty() else ""
+        if (showCover && img.isEmpty() && asked.add(song.id)) scope.launch(Dispatchers.IO) {
+            val u = try { Covers.webUrl(song) } catch (_: Exception) { null }
+            if (u != null) { covers[song.id] = u; coverTick.value++ } else { kotlinx.coroutines.delay(60_000); asked.remove(song.id) }   // none yet: ask again in a minute, not in a loop
+        }
+        val key = listOf(song.id, st.playing, details, state, name, timeline, img).joinToString("|")
         val seeked = st.playing && timeline && lastStart != 0L && kotlin.math.abs(start - lastStart) > 3000
         if (key == lastKey && !seeked) return
         lastKey = key; lastStart = start; shown = true
         val end = if (start > 0 && dur > 0) start + dur else 0L
         val title = if (st.playing) name else "$name (paused)"
-        h.post { try { DiscordBridge.nUpdate(title, details, state, start, end, "", "", 2) } catch (_: Throwable) { ok = false } }
+        h.post { try { DiscordBridge.nUpdate(title, details, state, start, end, img, song.album.ifBlank { song.title }.take(128).padEnd(2), 2) } catch (_: Throwable) { ok = false } }
         if (!ticking) {
             ticking = true
             h.post(object : Runnable {
@@ -172,6 +182,10 @@ fun DiscordCustomizeSheet() {
         }
         SSwitch(SG.Motion, "Hide When Paused", "Clears your Discord status while music is paused", hidePaused) {
             Prefs.setDiscordHidePaused(it)
+        }
+        val cover by Prefs.discordShowCover.collectAsState()
+        SSwitch(SG.Cover, "Show Album Cover", "Discord can't read files on your phone, so the cover is looked up online (iTunes, Deezer) from the song and artist names", cover) {
+            Prefs.setDiscordShowCover(it)
         }
     }
 }

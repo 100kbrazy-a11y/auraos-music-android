@@ -55,6 +55,8 @@ class YtEngine(private val ctx: Context) {
             w.settings.javaScriptEnabled = true
             w.settings.domStorageEnabled = true
             w.addJavascriptInterface(Bridge(), "Android")
+            // keep the hidden browser's renderer at full priority even though nothing shows it: otherwise Android slows it down while the app is in the background, and downloads there time out
+            if (android.os.Build.VERSION.SDK_INT >= 26) w.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
             w.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String?) {
                     if (started) return
@@ -161,6 +163,9 @@ object Engine {
 
     /** opens the hidden browser ahead of time (when the YouTube search screen opens) so the first search / download doesn't wait for it */
     fun warm() { scope.launch { try { use { } } catch (_: Exception) { } } }
+
+    /** throws the hidden browser away; the next job opens a fresh one (used when several calls in a row went wrong) */
+    suspend fun reset() { mutex.withLock { try { eng?.close() } catch (_: Exception) { }; eng = null } }
 
     suspend fun search(q: String, type: String): List<JSONObject> = use { e ->
         val arr = org.json.JSONArray(e.call("search", JSONObject().put("q", q).put("type", type).toString()))

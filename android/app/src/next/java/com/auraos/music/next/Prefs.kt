@@ -54,6 +54,7 @@ object Prefs {
     val discordFormat = MutableStateFlow(0)
     val discordShowTimeline = MutableStateFlow(true)
     val discordHidePaused = MutableStateFlow(true)
+    val discordShowCover = MutableStateFlow(true)
     val sort = MutableStateFlow(0)
     val shuffle = MutableStateFlow(false)
     val repeat = MutableStateFlow(0)
@@ -76,7 +77,7 @@ object Prefs {
         discordAppName.value = s.optString("discordAppName", "Strata Music").ifBlank { "Strata Music" }
         discordFormat.value = s.optInt("discordFormat", 0).coerceIn(0, 2)
         discordShowTimeline.value = s.optBoolean("discordShowTimeline", true)
-        discordHidePaused.value = s.optBoolean("discordHidePaused", true)
+        discordHidePaused.value = s.optBoolean("discordHidePaused", true); discordShowCover.value = s.optBoolean("discordShowCover", true)
         sort.value = s.optInt("nativeSort", 0)
         applyAudio()
         Cfg.load()
@@ -108,6 +109,7 @@ object Prefs {
     fun setDiscordAppName(v: String) { val n = v.trim().ifBlank { "Strata Music" }; discordAppName.value = n; put("discordAppName", n); DiscordRpc.onSettingsChanged() }
     fun setDiscordFormat(v: Int) { discordFormat.value = v.coerceIn(0, 2); put("discordFormat", discordFormat.value); DiscordRpc.onSettingsChanged() }
     fun setDiscordShowTimeline(v: Boolean) { discordShowTimeline.value = v; put("discordShowTimeline", v); DiscordRpc.onSettingsChanged() }
+    fun setDiscordShowCover(v: Boolean) { discordShowCover.value = v; put("discordShowCover", v) }
     fun setDiscordHidePaused(v: Boolean) { discordHidePaused.value = v; put("discordHidePaused", v); DiscordRpc.onSettingsChanged() }
     fun setSort(v: Int) { sort.value = v; put("nativeSort", v) }
 

@@ -2,6 +2,18 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.13.2",
+   "name": "The Thanksgiving Update",
+   "date": "2026-11-23",
+   "notes": [
+    "Downloads no longer stop after a couple of songs: one slow answer from YouTube used to cancel the whole queue. Now each song tries up to four times with a pause between tries, a stuck hidden browser is replaced with a fresh one, and a song that cannot start goes back in line",
+    "New Settings › Downloads page: speed, number of streams and songs done, every song with its own progress, speed and streams, plus Pause, Stop all, Retry failed, Clear, and cancel, retry or remove for each song",
+    "The download notification has Pause and Stop buttons and refreshes about once a second instead of on every tick, which is easier on the battery",
+    "Discord Rich Presence shows the album cover (looked up online, because Discord cannot read files on your phone); turn it off with Show Album Cover",
+    "Under the hood: tested lossless Opus remux (WebM to .opus), and FLAC and WAV writers, ready for song export"
+   ]
+  },
+  {
    "version": "2.13.1",
    "name": "The Thanksgiving Update",
    "date": "2026-11-23",
