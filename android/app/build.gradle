@@ -17,6 +17,7 @@ android {
             dimension "ui"; applicationIdSuffix ".next"; minSdkVersion 24   // the liquid glass library needs Android 7.0+
             def rel = new groovy.json.JsonSlurper().parse(file("src/next/assets/release.json")).releases[0]
             def v = rel.version.tokenize(".").collect { it as int }
+            ndk { abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64' }   // the Discord SDK ships these (plus 32-bit x86, which no phone uses)
             versionName rel.version
             versionCode v[0] * 10000 + v[1] * 100 + v[2]
         }
@@ -62,6 +63,8 @@ dependencies {
     nextImplementation "io.coil-kt:coil-compose:2.5.0"
     nextImplementation "com.github.QWEA0:liquidglass:2.0.11"
     nextImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+    // Discord Social SDK (Rich Presence). Private copy, decrypted by CI into libs/ (see .github/workflows/native-next.yml); without it the app still builds, just without Discord
+    if (file("libs/discord_partner_sdk.aar").exists()) nextImplementation files("libs/discord_partner_sdk.aar")
     implementation "androidx.media3:media3-exoplayer:1.4.1"
     implementation "androidx.media3:media3-session:1.4.1"
     implementation fileTree(include: ['*.jar'], dir: 'libs')

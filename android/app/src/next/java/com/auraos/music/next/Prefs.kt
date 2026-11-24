@@ -49,7 +49,7 @@ object Prefs {
     val compress = MutableStateFlow(true)
     val autofill = MutableStateFlow(true)
     val npLyrics = MutableStateFlow(false)
-    val discordRpc = MutableStateFlow(true)
+    val discordRpc = MutableStateFlow(false)
     val discordAppName = MutableStateFlow("Strata Music")
     val discordFormat = MutableStateFlow(0)
     val discordShowTimeline = MutableStateFlow(true)
@@ -72,7 +72,7 @@ object Prefs {
         glassFrost.value = s.optDouble("glassFrost", 0.25).toFloat(); glassOpacity.value = s.optDouble("glassOpacity", 0.5).toFloat(); glassShine.value = s.optBoolean("glassShine", true); tuck.value = s.optBoolean("tuckPinned", false); scrollTimer.value = s.optDouble("scrollTimer", 1.5).toFloat(); autoSaver.value = s.optBoolean("autoSaver", true); vizShift.value = s.optDouble("vizShift", 0.0).toFloat(); NativePlayer.vizShift(vizShift.value)
         compress.value = s.optBoolean("compress", true); autofill.value = s.optBoolean("autofill", true)
         npLyrics.value = s.optBoolean("npLyrics", false)
-        discordRpc.value = s.optBoolean("discordRpc", true)
+        discordRpc.value = s.optBoolean("discordRpc", false)
         discordAppName.value = s.optString("discordAppName", "Strata Music").ifBlank { "Strata Music" }
         discordFormat.value = s.optInt("discordFormat", 0).coerceIn(0, 2)
         discordShowTimeline.value = s.optBoolean("discordShowTimeline", true)

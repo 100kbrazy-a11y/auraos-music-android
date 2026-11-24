@@ -2,6 +2,16 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.13.1",
+   "name": "The Thanksgiving Update",
+   "date": "2026-11-23",
+   "notes": [
+    "Discord Rich Presence is back on Discord's official SDK: your profile shows \"Listening to Strata Music\" with the song, the artist and a live timeline. There is no sign-in and no token, it just needs the Discord app on the same phone",
+    "Rich Presence is off until you switch it on (Settings › Appearance › Discord Rich Presence), so nothing about what you play appears on Discord unless you choose it",
+    "Customize it in the same place: activity name, display format, the live timeline, and hiding the status while paused"
+   ]
+  },
+  {
    "version": "2.13.0",
    "name": "The Thanksgiving Update",
    "date": "2026-11-23",

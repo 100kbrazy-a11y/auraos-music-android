@@ -1,47 +1,131 @@
 package com.auraos.music.next
 
+import android.app.Activity
 import android.content.Context
+import android.os.Handler
+import android.os.HandlerThread
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.auraos.music.NativePlayer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+
+/** The doorway to the C++ bridge (src/next/cpp/strata_discord.cpp), which talks to Discord's official Social SDK. */
+object DiscordBridge {
+    @Volatile var loaded = false; private set
+    fun load(): Boolean {
+        if (loaded) return true
+        return try { System.loadLibrary("discord_partner_sdk"); System.loadLibrary("strata_discord"); loaded = true; true } catch (_: Throwable) { false }
+    }
+    @JvmStatic external fun nInit(appId: Long): Boolean
+    @JvmStatic external fun nTick()
+    @JvmStatic external fun nUpdate(name: String, details: String, state: String, startMs: Long, endMs: Long, largeImage: String, largeText: String, displayType: Int)
+    @JvmStatic external fun nClear()
+    @JvmStatic external fun nResult(): String
+    @JvmStatic external fun nShutdown()
+}
 
 /**
- * Discord Rich Presence, token-free.
+ * Discord Rich Presence through Discord's official Social SDK (1.10+), the supported way on Android.
  *
- * The first version signed in to Discord's gateway with the user's own account token. That is a self-bot: it breaks Discord's
- * rules, can get the account banned, and asked people to copy a secret out of their browser. It is gone, and init() erases any
- * token an earlier build stored.
+ * No sign-in and no token: with the Discord app on the same phone, the SDK hands the activity to it over Android's RPC service,
+ * and Discord shows "Listening to ..." on your profile. (The first version used a user token, which is a self-bot and breaks
+ * Discord's rules; it is gone and [init] erases any token an older build kept.)
  *
- * The official route on Android is the Discord Social SDK (1.10 or newer). It needs a Discord application ID plus the SDK files
- * from the Developer Portal (Social SDK > Downloads, they are not on Maven), so it can only be switched on once those exist:
- *   - [APPLICATION_ID] below holds the ID;
- *   - the SDK's .aar goes in android/app/libs/;
- *   - [available] flips to true and onPlayback() forwards to the SDK's UpdateRichPresence.
- * Everything the user can already set (name, format, timeline, hide when paused) is kept in Prefs for that day.
+ * All SDK calls happen on one worker thread, which also runs the SDK's callbacks once a second. It is off until Rich Presence
+ * is switched on in Settings, and it is simply "unavailable" in a build that does not carry the SDK files.
  */
 object DiscordRpc {
-    /** Discord application ID from the Developer Portal. Empty until it exists. */
-    const val APPLICATION_ID = "1573427664281407609"   // Strata Music in the Discord Developer Portal (public, not a secret)
-    /** flips to true in the commit that adds Discord's Social SDK (discord_partner_sdk.aar) and calls it from onPlayback() */
-    private const val SDK_LINKED = false
+    /** Strata Music in the Discord Developer Portal (public, not a secret) */
+    const val APPLICATION_ID = "1573427664281407609"
 
-    val loggedIn = MutableStateFlow(false)
+    val loggedIn = MutableStateFlow(false)      // kept for the settings screens: there is no account to sign in to any more
     val username = MutableStateFlow("")
-    val status = MutableStateFlow("Waiting for Discord's official SDK")
+    val status = MutableStateFlow("Off")
 
-    val available: Boolean get() = SDK_LINKED && APPLICATION_ID.isNotBlank()
+    @Volatile private var ok = false
+    val available: Boolean get() = ok
+
+    private var worker: Handler? = null
+    private var ticking = false
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var started = false
+    private var lastKey = ""; private var lastStart = 0L; private var shown = false
 
     fun init(ctx: Context) {
         // erase the account token (and name) that earlier builds kept on the phone
         try { ctx.getSharedPreferences("strata_discord_private", Context.MODE_PRIVATE).edit().clear().apply() } catch (_: Exception) { }
         loggedIn.value = false; username.value = ""
-        status.value = if (available) "Ready" else "Waiting for Discord's official SDK"
+        if (started) return
+        if (!DiscordBridge.load()) { status.value = "Not in this build"; return }
+        try {
+            val c = Class.forName("com.discord.socialsdk.DiscordSocialSdkInit")
+            (ctx as? Activity)?.let { c.getMethod("setEngineActivity", Activity::class.java).invoke(null, it) }
+        } catch (_: Throwable) { status.value = "Not in this build"; return }
+        started = true; ok = true
+        val th = HandlerThread("strata-discord").also { it.start() }
+        worker = Handler(th.looper).also { h -> h.post { try { DiscordBridge.nInit(APPLICATION_ID.toLong()) } catch (t: Throwable) { ok = false } } }
+        status.value = if (Prefs.discordRpc.value) "Waiting for Discord" else "Off"
+        scope.launch {
+            // one stream of everything the status depends on; it only reaches Discord when something visible changed
+            kotlinx.coroutines.flow.combine(NativePlayer.state, Prefs.discordRpc, Prefs.discordAppName, Prefs.discordFormat,
+                kotlinx.coroutines.flow.combine(Prefs.discordShowTimeline, Prefs.discordHidePaused) { a, b -> a to b }) { st, on, name, fmt, tl -> arrayOf(st, on, name, fmt, tl) }
+                .collectLatest { a ->
+                    @Suppress("UNCHECKED_CAST")
+                    push(a[0] as NativePlayer.St, a[1] as Boolean, a[2] as String, a[3] as Int, (a[4] as Pair<Boolean, Boolean>).first, (a[4] as Pair<Boolean, Boolean>).second)
+                }
+        }
     }
 
-    fun onToggle(enabled: Boolean) { }
+    private fun push(st: NativePlayer.St, on: Boolean, name: String, fmt: Int, timeline: Boolean, hidePaused: Boolean) {
+        val h = worker ?: return
+        val song = if (st.id.isNotEmpty()) Store.song(st.id) else null
+        if (!on || song == null || (!st.playing && hidePaused)) {
+            if (shown) { shown = false; lastKey = ""; h.post { try { DiscordBridge.nClear() } catch (_: Throwable) { } } }
+            if (!on) { ticking = false; status.value = "Off" } else if (song == null) status.value = "Nothing playing"
+            return
+        }
+        val details: String; val state: String
+        when (fmt) {
+            1 -> { details = song.title; state = listOf(song.artist, song.album).filter { it.isNotBlank() }.joinToString(" · ") }
+            2 -> { details = listOf(song.artist, song.title).filter { it.isNotBlank() }.joinToString(" — "); state = song.album }
+            else -> { details = song.title; state = song.artist }
+        }
+        val now = System.currentTimeMillis()
+        val dur = if (st.dur > 0) st.dur else song.durMs
+        val start = if (st.playing && timeline) now - st.pos else 0L
+        // resend when what is shown changed, or when you seeked (the play time drifted from where Discord expects it)
+        val key = listOf(song.id, st.playing, details, state, name, timeline).joinToString("|")
+        val seeked = st.playing && timeline && lastStart != 0L && kotlin.math.abs(start - lastStart) > 3000
+        if (key == lastKey && !seeked) return
+        lastKey = key; lastStart = start; shown = true
+        val end = if (start > 0 && dur > 0) start + dur else 0L
+        val title = if (st.playing) name else "$name (paused)"
+        h.post { try { DiscordBridge.nUpdate(title, details, state, start, end, "", "", 2) } catch (_: Throwable) { ok = false } }
+        if (!ticking) {
+            ticking = true
+            h.post(object : Runnable {
+                override fun run() {
+                    if (!ticking) return
+                    try {
+                        DiscordBridge.nTick()
+                        val r = DiscordBridge.nResult()
+                        status.value = when (r) { "ok" -> "Showing on your Discord profile"; "pending" -> "Waiting for Discord"; else -> "Discord said: $r" }
+                    } catch (_: Throwable) { ok = false; ticking = false }
+                    h.postDelayed(this, 1000)
+                }
+            })
+        }
+    }
+
+    fun onToggle(enabled: Boolean) { }          // the stream above reacts to the switch itself
     fun onSettingsChanged() { }
     fun onPlayback(song: Song?, playing: Boolean, posMs: Long, durMs: Long) { }
 }
