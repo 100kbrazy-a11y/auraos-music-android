@@ -4,15 +4,13 @@
   {
    "version": "2.12.4",
    "name": "Performance Update Pt. 1",
-   "date": "2026-11-21",
+   "date": "2026-11-23",
    "notes": [
-    "RAM usage: Android now keeps song audio as real files outside the app's web storage, while moving existing songs out of IndexedDB gradually in the background",
-    "RAM usage: large music imports and music-pack ZIP work are processed in pieces, so an entire large file or ZIP does not need to be loaded into memory at once",
-    "RAM usage: cover processing reuses shared canvases instead of creating a new canvas for every cover",
-    "RAM usage: album artwork in memory is capped, and the native player caches only the current and next two cover images",
-    "RAM usage: visualizer analysis now starts only when motion and playback need it, and turns itself off after a second without use",
-    "RAM usage: settings and inactive pages are kept in smaller cached sections, with scrolling background motion paused while the list is moving",
-    "RAM usage: the native download engine closes its hidden browser after it stops being needed and limits how many downloads can run at once"
+    "Fixed a build break: the song library layer (Store) had been emptied by a bad edit and is restored, so the app builds again",
+    "Cover images load through a smaller, capped image cache (about 8% of memory) at the size they are shown",
+    "The lock-screen artwork is only rebuilt when the cover actually changes",
+    "Library changes are saved after a one second pause instead of a quarter second, with a save every time the app goes to the background",
+    "Restored the full update history that had been trimmed from the release notes"
    ]
   },
   {
@@ -20,7 +18,7 @@
    "name": "The Presence Update",
    "date": "2026-11-20",
    "notes": [
-    "-fixed the login proccess for discord"
+    "Fixed signing in to Discord for Rich Presence"
    ]
   },
   {
@@ -28,9 +26,8 @@
    "name": "The Presence Update",
    "date": "2026-11-20",
    "notes": [
-    "Discord Rich Presence: show the song, artist, and live playback timeline on Strata Music (toggle it in Settings · Appearance)",
-    "Sharper automatic covers: upgrades Apple/iTunes album art to 1200x1200, skips low-res thumbnails, and grabs max-res YouTube covers when downloading",
-    "Settings polish: added the Concurrent Downloads subtitle and search entry for Discord Rich Presence"
+    "Discord Rich Presence: shows the song, artist and live playback time on Strata Music (toggle it in Settings › Appearance)",
+    "Lyrics: forced alignment times the words of a song to its vocals when no synced lyrics exist"
    ]
   },
   {
@@ -38,9 +35,9 @@
    "name": "The Connectivity Update",
    "date": "2026-11-20",
    "notes": [
-    "Discord Rich Presence: show the song, artist, and live playback timeline on Strata Music (toggle it in Settings · Appearance)",
     "Sharper automatic covers: upgrades Apple/iTunes album art to 1200x1200, skips low-res thumbnails, and grabs max-res YouTube covers when downloading",
-    "Settings polish: added the Concurrent Downloads subtitle and search entry for Discord Rich Presence"
+    "Discord Rich Presence setting added to Settings (the connection itself arrived in 2.12.2)",
+    "Settings polish: Concurrent Downloads subtitle and a search entry for it"
    ]
   },
   {
@@ -49,11 +46,246 @@
    "date": "2026-11-20",
    "notes": [
     "Settings redesigned: Library & Tabs, Player Layout & Player Look, Visualizer & Lyrics, Appearance (Buttons, Colors, Shapes, Motion, Touch), Playback and About, with a live preview of the player and a search button to find any setting",
-    "Lyrics: three more sources (NetEase, QQ Music, Kugou) next to LRCLIB, so many more songs get timed lyrics. Choose which to use and in what order in Visualizer & Lyrics · LRC Providers",
+    "Lyrics: three more sources (NetEase, QQ Music, Kugou) next to LRCLIB, so many more songs get timed lyrics. Choose which to use and in what order in Visualizer & Lyrics › LRC Providers",
     "Import your own .lrc files: pick one or many (name them like \"Artist - Title.lrc\" to match songs automatically), or from \"Wrong lyrics?\" in the player for one song",
     "Lyrics options: Sync with LRC on/off, highlight style, and where the current line sits (top, centre or bottom)",
     "Concurrent Downloads: choose how many songs download at once, from 1 to 8",
     "Player Layout: Compact / Normal / Roomy spacing, hide the album art, and a Rounded / Circle / Sharp play button"
+   ]
+  },
+  {
+   "version": "2.11.2",
+   "name": "The Studio Update",
+   "date": "2026-11-19",
+   "notes": [
+    "Downloads now keep going in the background: while there is anything in the queue the app runs a download service with one progress notification, so you can leave the app or lock the phone",
+    "Playlists with more than 100 songs now download completely (only the first 100 were being read)"
+   ]
+  },
+  {
+   "version": "2.11.1",
+   "name": "The Studio Update",
+   "date": "2026-11-19",
+   "notes": [
+    "Lyric highlighting keeps up with fast and slow parts: each word's share of the line is now worked out from its syllables (not its letters), with a beat of rest after commas and full stops, and the fill stops when a rapper's line ends instead of crawling across the gap",
+    "New Customize › Lyrics › Highlight timing slider to nudge the highlight earlier or later",
+    "Lyrics that carry a time for every word are used exactly"
+   ]
+  },
+  {
+   "version": "2.11.0",
+   "name": "The Studio Update",
+   "date": "2026-11-19",
+   "notes": [
+    "Scan Folders: pick the folders your music lives in (Android asks once and remembers), see every song found, tick or untick any of them, and add them with no playlist, one playlist, or one playlist per folder",
+    "Settings is now a menu of sections, each its own button with a hand-drawn icon that follows your accent colour",
+    "Customize is a hub of tiles: Tabs, Library, Player layout, Player look, Visualizer, Lyrics, Buttons, Media bar, Shapes, Colour, and Motion & touch",
+    "Move the parts of the full player up and down or hide them, centre the title, resize the buttons, and change the corners and shapes of cards, album art, the media bar and its cover",
+    "A short intro for new users, which you can replay from Settings › Updates & About",
+    "Search: the library / YouTube buttons are two round bubbles beside the search bar, and switching runs the search straight away",
+    "YouTube artist pages show their picture, with an All button; results have a play button and a ⋯ menu, and songs, albums and artists play or queue straight from there",
+    "Full player: swipe left for full-screen lyrics (words fill in as they are sung) and right for artist info",
+    "Haptics can be turned off in Customize"
+   ]
+  },
+  {
+   "version": "2.10.3",
+   "name": "The Customizer Update",
+   "date": "2026-11-19",
+   "notes": [
+    "New \"Motion check\" at the top of Customize: says plainly whether the living background and visualizer are running (or paused by Motion Effects, Android's battery saver, or the app's low-battery saver) and whether the audio analyser can hear the music — with one tap to keep motion on",
+    "Diagnostics now records why motion is on or paused, and what the player is using, so problems show up there"
+   ]
+  },
+  {
+   "version": "2.10.2",
+   "name": "The Customizer Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Smoother scrolling in Settings: each section is its own list item so only what's on screen is drawn, and the drifting background glow pauses (instead of redrawing every frame) while you scroll"
+   ]
+  },
+  {
+   "version": "2.10.1",
+   "name": "The Customizer Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Media bar: pulling it up now lifts the bar away from the tab buttons while you resist, and the corners round off as the gap opens",
+    "Tab bubble haptics: a buzz when you pick it up, a click on every tab it passes over, and a thud when you let go (portrait and sideways)"
+   ]
+  },
+  {
+   "version": "2.10.0",
+   "name": "The Customizer Update",
+   "date": "2026-11-18",
+   "notes": [
+    "New Customize centre (Settings → Make it yours): reorder or hide the four tabs, pick your start tab, change song row size, album grid size, and what each row shows",
+    "Sorting like Musicolet: a sort button on every tab — title, artist, album, year, date added, duration, most played and more, ascending or descending, remembered per tab",
+    "Fullscreen player: choose the background (living fog, blurred cover, accent glow or black), visualizer style (bars, mirror, wave, dots), its colour, height and opacity",
+    "Choose the cover's shape and size, the lyrics' size, alignment, glow and fade, the play button style and the seek bar thickness, and add lyrics / equalizer / sleep / queue buttons",
+    "Sideways Fullscreen is rebuilt: the big album cover on the left, lyrics or the title on the right, controls along the bottom",
+    "Lyrics no longer have hard edges: the top, bottom and sides fade softly and the glow and blur are never cut off",
+    "The equalizer is live the instant you open Fullscreen — no more delay",
+    "When the media bar is tucked into its little square, the player now grows out of it and shrinks back into it",
+    "The top glass bar is raised above the screen edge so its rounded top is never seen",
+    "Media bar: optionally hide the progress line or the next button; accent colour can follow the cover or stay fixed"
+   ]
+  },
+  {
+   "version": "2.9.0",
+   "name": "The Collector Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Finding covers is much smarter: it asks iTunes, Deezer and MusicBrainz, forgives accents, \"(Deluxe)\", \"- Single\", \"feat.\" and messy YouTube-style titles, and scores every answer on how well the title and artist match",
+    "If the album can't be found, it looks up the songs themselves; songs with no album get the cover of their own single",
+    "Three albums are looked up at once, with progress, and the result says how many were found and how many couldn't be matched",
+    "Songs without a cover are found automatically in the background, including the ones that failed before",
+    "Hold an album (in Albums, a shelf or search) for its menu: Play, Shuffle, Play Next, Add to Queue, Playlist, Favorite, Go to Artist, Look Up Info, Find Cover, Choose Cover, Share, Remove",
+    "Hold an artist for theirs: Play, Shuffle, Radio, Queue, Playlist, Favorite, Get More from YouTube Music, Find Missing Covers",
+    "Downloads are faster: three songs at once, each fetched in four pieces at the same time, the cover comes down alongside the audio, and the hidden browser warms up when you open YouTube search"
+   ]
+  },
+  {
+   "version": "2.8.1",
+   "name": "The Demo Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Fixed: the glass behind the tab bar, the media bar and the headers could vanish (leaving only the buttons) after you left the app with Back and opened it again. The glass is now rebuilt every time the screen is created, and fixes itself if it ever goes missing"
+   ]
+  },
+  {
+   "version": "2.8.0",
+   "name": "The Demo Update",
+   "date": "2026-11-18",
+   "notes": [
+    "New: Music Packs can carry synced lyrics. A song's entry in musicpack.json can have a \"lyrics\" field with LRC text, and it shows up in the lyrics view without needing LRCLIB",
+    "Made for the Strata Demo pack: 45 invented songs with invented lyrics for \"Open Fields\""
+   ]
+  },
+  {
+   "version": "2.7.0",
+   "name": "The Synced Update",
+   "date": "2026-11-18",
+   "notes": [
+    "New: Settings › Look & Feel › Visual Timing. Move the visualizer and background effects earlier or later (up to half a second either way), with a live visualizer and beat pulse right under the slider so you can see when it lines up with the music",
+    "The visualizer and fog follow the audio's real position (speaker or Bluetooth delay included) and update every frame"
+   ]
+  },
+  {
+   "version": "2.6.1",
+   "name": "The Sideways Update",
+   "date": "2026-11-18",
+   "notes": [
+    "The visualizer and the fog background are in time with the music now: they follow what the speaker (or Bluetooth headphones) is actually playing instead of trailing behind",
+    "The visualizer updates twice as often, every frame"
+   ]
+  },
+  {
+   "version": "2.6.0",
+   "name": "The Sideways Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Sideways: the tabs become a vertical glass pill on the right, with a round bubble you can drag up and down",
+    "Sideways: the media bar is its own glass bubble along the bottom",
+    "Sideways: scroll and the media bar tucks away. It wraps down to its album cover and slides in under the tab pill as the pill shrinks to make room, then comes back after the Scroll Timer",
+    "Settings and Keep Media Bar Tucked keep it tucked; tap the tucked cover to open the player",
+    "Everything slides and resizes smoothly between the shapes"
+   ]
+  },
+  {
+   "version": "2.5.0",
+   "name": "The Fog Update",
+   "date": "2026-11-18",
+   "notes": [
+    "The player's live background is back: two colours from the cover drift as clouds that swell with the bass and flash on big hits",
+    "The full-screen visualizer is back behind the player, fading out towards the top",
+    "Skipping swings the cover off on a curve: it tilts and shrinks away while the next one swings in",
+    "Tap the album cover to turn it over and see the song's info",
+    "Lyrics: the current line sits in the middle, the list glides there smoothly, and passed lines dim and blur away above it. Drag to look around; it glides back after a moment",
+    "In lyrics, tap the small cover or the title to go back to the album cover",
+    "Held buttons keep a circle of liquid glass behind them, even while you drag them about",
+    "Switches glide after your finger and snap to a side like iOS",
+    "More haptics: opening pages, closing menus, skipping, scrolling through lyrics, switches",
+    "The media bar no longer has a visualizer"
+   ]
+  },
+  {
+   "version": "2.4.1",
+   "name": "The Lens Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Tab bubble follows the pages as you swipe between tabs, instead of catching up after",
+    "Dragging the tab bubble tracks your finger instantly"
+   ]
+  },
+  {
+   "version": "2.4.0",
+   "name": "The Lens Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Tab bubble: a rounded iOS-style pill that swells while you drag it, magnifying the icons under it (sharp in the middle, split into red, green and blue at the rim)",
+    "Switches: drag the handle across; while you hold it, it swells into a liquid glass lens and the track colour follows it",
+    "Buttons give a little under your finger, like iOS, and spring back when you let go",
+    "Pulling the player down holds on for a moment, with growing buzzes, then lets go with a thud",
+    "Page headers are glass: the bar fades in smoothly as you scroll, with rounded bottom corners",
+    "Glass tracks the UI in the same frame now: no more jitter while things move",
+    "Fixed: slowly swiping the player down could leave it stuck halfway"
+   ]
+  },
+  {
+   "version": "2.3.0",
+   "name": "The Gloss Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Every floating panel is the glass itself now, and it follows its control exactly on every frame (no more glass left behind or in the wrong place)",
+    "Glass settings: thickness, bend, colour split, frost, opacity and tilt shine (Settings › Look & Feel › Glass), live while you drag",
+    "Tug to open: the whole bar gives a little with a buzz that grows as you pull, then lets go; the media bar jumps to your finger and a glass panel slides up fast from the bottom to meet it",
+    "The player stays glass until it's fully open, and its corners ease into shape",
+    "Closing (or letting go low) shrinks the player back into the media bar's spot and the tab bar rejoins it — no more sliding away and popping back",
+    "Only one set of covers at a time while you open or close the player",
+    "Fixed: tapping a tab could stop halfway on the wrong page",
+    "Fixed: a stray pane of glass over the equalizer"
+   ]
+  },
+  {
+   "version": "2.2.0",
+   "name": "The Glamor Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Liquid Glass everywhere: the bottom bar, the tab bubble, the tool buttons, menus, messages and the selection bar are real glass (QWEA0's Liquid Glass) that bends the music behind it, splits light at the edges and catches the light as you tilt",
+    "New way to open the player: pull the media bar up and it peels off, sticks for a moment, then breaks loose and the player follows your finger up from the bottom",
+    "Haptics everywhere, just like before: taps, ticks on sliders and the seek bar, a thud when the bar breaks loose, buzzes for likes, saves and errors",
+    "Liquid Glass off gives the classic frosted blur on the same controls"
+   ]
+  },
+  {
+   "version": "2.1.0",
+   "name": "The Mirror Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Looks and works like the original Strata Music: same menus, settings, search and queue",
+    "Liquid Glass: the bottom bar bends and splits the light behind it (switch it off for the classic frosted blur)",
+    "The media bar grows into the full player, and shrinks back when you drag it down",
+    "Swipe the album cover to slide to the next or previous song",
+    "Double-tap a song, album or artist to like it",
+    "Pop-up menus swipe down to close",
+    "Queue: hold and drag to reorder, swipe left to remove",
+    "Updates right inside the app: Settings › Updates",
+    "If the app ever crashes, the next launch shows what happened with a Copy button",
+    "Fixed: tapping a tab two away stopped on the tab in between",
+    "Fixed: the app crashed on opening"
+   ]
+  },
+  {
+   "version": "2.0.0",
+   "name": "The Native Update",
+   "date": "2026-11-17",
+   "notes": [
+    "Strata Music rebuilt as a fully native Android app",
+    "Your library, playlists, favorites, lyrics and settings carry over from the old app",
+    "YouTube Music search and downloads with a browser that only runs while downloading",
+    "Synced lyrics, equalizer, crossfade with beat matching, silence cutting",
+    "Music Packs, folders, radio and mixes"
    ]
   }
  ]
