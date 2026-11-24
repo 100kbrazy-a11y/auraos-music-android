@@ -74,27 +74,34 @@ object PcmLoader {
             val deadline = System.currentTimeMillis() + 180_000L
             while (!eosOut) {
                 if (System.currentTimeMillis() > deadline) throw IllegalStateException("decoding took too long")
-                if (!eosIn) {
-                    val inIdx = dec.dequeueInputBuffer(2_000)
-                    if (inIdx >= 0) {
-                        val buf = dec.getInputBuffer(inIdx)!!
-                        val sz = ex.readSampleData(buf, 0)
-                        if (sz < 0) { dec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); eosIn = true }
-                        else {
-                            val tUs = ex.sampleTime
-                            dec.queueInputBuffer(inIdx, 0, sz, tUs, 0); ex.advance()
-                            if (durUs > 0 && (++reads and 63) == 0) onProgress((tUs.toFloat() / durUs).coerceIn(0f, 1f))
-                        }
+                // feed the decoder as much as it will take right now (one buffer per round trip would make it wait on every single frame)
+                while (!eosIn) {
+                    val inIdx = dec.dequeueInputBuffer(0)
+                    if (inIdx < 0) break
+                    val buf = dec.getInputBuffer(inIdx)!!
+                    val sz = ex.readSampleData(buf, 0)
+                    if (sz < 0) { dec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); eosIn = true }
+                    else {
+                        val tUs = ex.sampleTime
+                        dec.queueInputBuffer(inIdx, 0, sz, tUs, 0); ex.advance()
+                        if (durUs > 0 && (++reads and 63) == 0) onProgress((tUs.toFloat() / durUs).coerceIn(0f, 1f))
                     }
                 }
-                val outIdx = dec.dequeueOutputBuffer(info, 2_000)
-                if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    val of = dec.outputFormat
-                    if (of.containsKey(MediaFormat.KEY_SAMPLE_RATE)) inRate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                    if (of.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) ch = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
-                    isFloat = of.containsKey(MediaFormat.KEY_PCM_ENCODING) && of.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_FLOAT
-                    binWidth = inRate / RATE.toDouble()
-                } else if (outIdx >= 0) {
+                // ...and take out everything it has ready (the first look waits a moment if nothing is yet)
+                var wait = 4_000L
+                while (!eosOut) {
+                    val outIdx = dec.dequeueOutputBuffer(info, wait)
+                    wait = 0L
+                    if (outIdx == MediaCodec.INFO_TRY_AGAIN_LATER) break
+                    if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        val of = dec.outputFormat
+                        if (of.containsKey(MediaFormat.KEY_SAMPLE_RATE)) inRate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                        if (of.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) ch = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
+                        isFloat = of.containsKey(MediaFormat.KEY_PCM_ENCODING) && of.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_FLOAT
+                        binWidth = inRate / RATE.toDouble()
+                        continue
+                    }
+                    if (outIdx < 0) continue
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) eosOut = true
                     val ob = dec.getOutputBuffer(outIdx)
                     if (ob != null && info.size > 0) {
