@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -156,6 +157,25 @@ object ForcedAligner {
     val waiting: StateFlow<Set<String>> = _waiting
     val failed: StateFlow<Set<String>> = _failed
     private val gate = Mutex()                       // one song at a time: the engine holds the whole song in memory
+    /** songs the listener is on that are being timed or waiting to be: while there are any, the background jobs stand aside */
+    private val urgentN = java.util.concurrent.atomic.AtomicInteger(0)
+    /** the newest song asked for on the spot; an older one still waiting its turn is dropped (skipping through songs doesn't line them all up) */
+    @Volatile private var latestUrgent: String? = null
+    private class Yielded : RuntimeException()
+
+    /** Suspends while a song being listened to is waiting for or having its words timed. The background queue calls this between jobs. */
+    val urgentPending: Boolean get() = urgentN.get() > 0
+
+    suspend fun awaitUrgent() { while (urgentN.get() > 0) delay(400) }
+
+    /** The playing song: gets its lyrics (if they aren't kept yet) and has its words timed ahead of everything else; the rest carries on afterwards. */
+    fun prioritize(s: Song) {
+        latestUrgent = s.id
+        scope.launch {
+            try { if (Online.cachedLyrics(s.id) == null) withContext(Dispatchers.IO) { Online.fetchLyrics(s) } } catch (_: Exception) { }
+            if (latestUrgent == s.id) startNow(s)
+        }
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private fun recOf(id: String): JSONObject? = Store.meta.optJSONObject("lyrics")?.optJSONObject(id)
@@ -194,6 +214,7 @@ object ForcedAligner {
 
     /** The song whose lyrics are on screen: its words are timed right away (ahead of the background queue), and the page shows it happening. */
     fun startNow(s: Song) {
+        latestUrgent = s.id
         if (_busy.value == s.id || s.id in _waiting.value) return
         if (!check(s, false)) return
         scope.launch { alignSong(s, urgent = true) }
@@ -201,6 +222,7 @@ object ForcedAligner {
 
     /** Throws away the words' times and makes them again from the lyrics' own line times. */
     fun resync(s: Song) {
+        latestUrgent = s.id
         if (_busy.value == s.id || s.id in _waiting.value) return
         val r = recOf(s.id) ?: return
         val src = sourceOf(r) ?: return
@@ -213,14 +235,24 @@ object ForcedAligner {
 
     /** Times the words of one song on this phone and saves them (as enhanced LRC) in place of the lyrics' own line-only version. Returns true when the words were timed. */
     suspend fun alignSong(s: Song, urgent: Boolean = false): Boolean {
+        if (urgent) urgentN.incrementAndGet()
         _waiting.value = _waiting.value + s.id
-        return gate.withLock {
+        try {
+            return gate.withLock {
+                _waiting.value = _waiting.value - s.id
+                if (urgent && latestUrgent != null && latestUrgent != s.id) return@withLock false     // the listener has moved on to another song
+                if (!check(s, !urgent)) return@withLock false       // already timed (a second request for the same song), or nothing to time
+                _busy.value = s.id; _progress.value = 0.02f
+                try { withContext(Dispatchers.Default) { run(s, urgent) } }
+                finally { _busy.value = null; _progress.value = 0f }
+            }
+        } finally {
             _waiting.value = _waiting.value - s.id
-            _busy.value = s.id; _progress.value = 0.02f
-            try { withContext(Dispatchers.Default) { run(s, urgent) } }
-            finally { _busy.value = null; _progress.value = 0f }
+            if (urgent) urgentN.decrementAndGet()
         }
     }
+
+    private fun stepAside(urgent: Boolean) { if (!urgent && urgentN.get() > 0) throw Yielded() }
 
     private suspend fun run(s: Song, urgent: Boolean): Boolean {
         val rec = recOf(s.id) ?: return false
@@ -235,10 +267,10 @@ object ForcedAligner {
             val offsets = Store.settings().optJSONObject("offsets")
             val offset = offsets?.optDouble(s.id, 0.0)?.takeIf { !it.isNaN() } ?: 0.0
             val t0 = System.currentTimeMillis()
-            val pcm = PcmLoader.load(File(Store.app.filesDir, s.path)) { _progress.value = 0.02f + 0.33f * it }
+            val pcm = PcmLoader.load(File(Store.app.filesDir, s.path)) { _progress.value = 0.02f + 0.33f * it; stepAside(urgent) }
             val t1 = System.currentTimeMillis()
             if (pcm.n < PcmLoader.RATE * 8) return fail("the song is too short")
-            val out = WordTiming.align(pcm, lines, offset) { _progress.value = it }
+            val out = WordTiming.align(pcm, lines, offset) { _progress.value = it; stepAside(urgent) }
                 ?: return fail("no line could be lined up with the singing")
             Diag.log("word timing ${s.title}: read ${(t1 - t0) / 100 / 10.0} s, listened + timed ${(System.currentTimeMillis() - t1) / 100 / 10.0} s (${lines.size} lines, ${(pcm.n / PcmLoader.RATE)} s of song)")
             rec.put("syncedSrc", src); rec.put("synced", out.trimEnd()); rec.put("aligned", true); rec.put("alignGen", GEN)
@@ -247,6 +279,8 @@ object ForcedAligner {
             _failed.value = _failed.value - s.id
             withContext(Dispatchers.Main) { Lyr.bump() }
             return true
+        } catch (e: Yielded) {
+            return false          // a song being listened to needs the engine: this one is picked up again afterwards (nothing was marked)
         } catch (e: Throwable) {
             return fail(e.message ?: e.javaClass.simpleName)
         }

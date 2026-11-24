@@ -82,8 +82,8 @@ object WordTiming {
         progress(0.35f)
         val voice = Voice.nAnalyze(pcm.left, pcm.right, pcm.n, RATE)
         if (voice == 0L) return null
-        progress(0.7f)
         try {
+            progress(0.7f)
             // The lyrics' times say which line is which, but a file can be a little early or late as a whole (or carry an old nudge of yours that no longer fits).
             // Where the voice comes back in after each pause says how far off it is; if that is steady, every line moves by the same amount.
             val bases = lines.filter { it.text.isNotEmpty() && it.words.isNotEmpty() && !isAdlib(it.text) }.map { it.ms / 1000.0 + offset }.toDoubleArray()

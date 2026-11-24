@@ -2,6 +2,15 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.15.2",
+   "name": "The Observe Update",
+   "date": "2026-11-25",
+   "notes": [
+    "The song you're listening to is synced first. As soon as it starts playing its lyrics are fetched (if needed) and its words are timed ahead of everything else. Any background job (timing other songs, silence scans, covers) steps aside while it works and carries on from where it left off when it is done.",
+    "Skipping through songs doesn't line them all up: only the song you end up on is timed."
+   ]
+  },
+  {
    "version": "2.15.1",
    "name": "The Observe Update",
    "date": "2026-11-24",

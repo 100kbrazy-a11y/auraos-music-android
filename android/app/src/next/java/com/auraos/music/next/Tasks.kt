@@ -66,6 +66,8 @@ object Tasks {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
         while (true) {
             if (saver(Store.app)) { status.value = ""; return }
+            if (ForcedAligner.urgentPending) status.value = "Waiting for the song you're on"
+            ForcedAligner.awaitUrgent()                // the song being listened to gets the phone first; everything here carries on afterwards
             val all = Store.songs.value
             val wantSil = Prefs.trimSilence.value || Prefs.beatMatch.value
             val sil = if (wantSil) all.firstOrNull { it.j.optInt("silenceChecked", 0) == 0 } else null

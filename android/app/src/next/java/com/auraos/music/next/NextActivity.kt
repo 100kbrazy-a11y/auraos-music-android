@@ -142,6 +142,7 @@ fun Themed(content: @Composable () -> Unit) {
         val target = if (follow) fromCover ?: C.defAccent else androidx.compose.ui.graphics.Color(fixed)
         val acc by animateColorAsState(target, tween(600), label = "acc")
         // the cover's two background colours are worked out now, in the background, so the player never stops to do it when it opens
+        LaunchedEffect(cur?.id) { cur?.let { ForcedAligner.prioritize(it) } }
         LaunchedEffect(cur?.cover) { cur?.cover?.takeIf { it.isNotEmpty() }?.let { c -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { Accents.pal(Store.coverFile(c)) } } }
         val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         CompositionLocalProvider(LocalAccent provides acc, LocalBottom provides (if (isLand()) (if (cur != null) 96.dp else 24.dp) else if (cur != null) 163.dp else 100.dp) + nav) { content() }
