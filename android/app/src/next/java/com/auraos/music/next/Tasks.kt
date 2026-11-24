@@ -83,6 +83,16 @@ object Tasks {
                 if (r == Covers.Result.FOUND) Accents.forget()
                 delay(500); continue
             }
+            // a cover that is too small to look good on a big screen is swapped for a sharp one (tried once per album)
+            val lowAlbum = if (Prefs.autofill.value) Store.albums(all.filter { Covers.isLow(it) && it.j.optInt("coverQ", 0) == 0 }).firstOrNull() else null
+            if (lowAlbum != null) {
+                status.value = "Sharper cover · ${lowAlbum.title}"
+                val r = Covers.forAlbum(lowAlbum, upgrade = true)
+                if (r == Covers.Result.OFFLINE) { status.value = ""; return }
+                Store.update(lowAlbum.songs.map { it.id }) { put("coverQ", 1) }
+                if (r == Covers.Result.FOUND) Accents.forget()
+                delay(500); continue
+            }
             val alignSong = all.firstOrNull { ForcedAligner.needsAlign(it) }
             if (alignSong != null) {
                 status.value = "Aligning lyrics · ${alignSong.title}"

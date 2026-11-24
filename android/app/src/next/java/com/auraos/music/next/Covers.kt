@@ -213,23 +213,37 @@ object Covers {
 
     private fun looksLikeNoAlbum(a: Album) = a.title == "Unknown Album" || a.title.equals("singles", true) || a.title.equals("single", true)
 
-    /** Looks for the cover of [a] and saves it for every song in it. */
-    suspend fun forAlbum(a: Album): Result {
+    /** pictures with a shorter side under this are soft on a big screen: they get swapped for a sharp one when one can be found */
+    const val SHARP = 600
+    private val sides = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    /** the shorter side of a cover picture in pixels (0 = none or unreadable); read once per picture */
+    fun side(cover: String): Int {
+        if (cover.isEmpty()) return 0
+        return sides.getOrPut(cover) {
+            val f = Store.coverFile(cover)
+            if (!f.exists()) 0 else BitmapFactory.Options().apply { inJustDecodeBounds = true }.let { o -> BitmapFactory.decodeFile(f.path, o); minOf(o.outWidth, o.outHeight).coerceAtLeast(0) }
+        }
+    }
+    /** does this song have a cover that is too small to look good? */
+    fun isLow(s: Song): Boolean = side(s.cover).let { it in 1 until SHARP }
+
+    /** Looks for the cover of [a] and saves it for every song in it. [upgrade]: the songs already have a (small) cover, and only a sharp one is accepted instead. */
+    suspend fun forAlbum(a: Album, upgrade: Boolean = false): Result {
         offline = true
         return try {
             if (looksLikeNoAlbum(a)) {
                 // no real album: each song gets the cover of its own single
                 var n = 0
-                for (s in a.songs.filter { it.cover.isEmpty() }) {
+                for (s in a.songs.filter { if (upgrade) isLow(it) else it.cover.isEmpty() }) {
                     val c = forSong(s) ?: continue
-                    val b = withIO { download(c, 500) ?: download(c, 300) } ?: continue
+                    val b = withIO { if (upgrade) download(c, 700) else (download(c, 500) ?: download(c, 300)) } ?: continue
                     Store.setCover(listOf(s.id), b); n++
                 }
                 if (n > 0) Result.FOUND else if (offline) Result.OFFLINE else Result.NONE
             } else {
                 val c = forAlbumCand(a)
                 if (c != null) {
-                    val b = withIO { download(c, 500) ?: download(c, 300) }
+                    val b = withIO { if (upgrade) download(c, 700) else (download(c, 500) ?: download(c, 300)) }
                     if (b != null) { Store.setCover(a.songs.map { it.id }, b); return Result.FOUND }
                 }
                 if (offline) Result.OFFLINE else Result.NONE

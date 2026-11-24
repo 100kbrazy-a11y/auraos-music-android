@@ -414,6 +414,9 @@ public class AuraPlaybackService extends MediaSessionService {
     }
 
     // ------------------------------------------------------------------ telling the app
+    /** just the position: cheap enough to ask for every frame (state() builds a whole record) */
+    long position() { return active().getCurrentPosition(); }
+
     JSObject state() {
         ExoPlayer p = active();
         JSObject o = new JSObject();

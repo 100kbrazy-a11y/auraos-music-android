@@ -2,6 +2,19 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.14.0",
+   "name": "The Karaoke Update",
+   "date": "2026-11-24",
+   "notes": [
+    "Lyrics now look and behave like the Mac app: the lines sit on a gentle curve like a wheel, the line being sung is lit word by word with the word being sung a little bigger, two lines light up when an ad-lib is sung over the end of a line, and a long quiet stretch shows three dots that fill as the next line gets closer. The glow behind the lyrics is gone.",
+    "Word timing is made on your phone by the same small, model-free engine the Mac app uses: it finds where the voice is and where each syllable starts, lines every word up with that (stutters like \"eh eh everyone\" included), and checks whether the whole lyrics file is early or late. Songs are re-timed in the background the first time after this update.",
+    "The buttons under the lyrics (Earlier, Later, Wrong lyrics?) are bigger and sit in front of the lyrics, so pressing them can no longer jump the song to a line.",
+    "Tapping a tab now slides the pages across at a pace you can follow, instead of snapping.",
+    "The player fades in already in the song's colours (no more black frame and flash), and the moving background and visualizer melt in a moment later.",
+    "Covers that are too small to look good are found and swapped for a sharp one automatically (once per album, in the background)."
+   ]
+  },
+  {
    "version": "2.13.4",
    "name": "The Thanksgiving Update",
    "date": "2026-11-23",

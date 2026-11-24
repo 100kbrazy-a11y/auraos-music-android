@@ -51,3 +51,8 @@ YouTube Music search lives in Search (Your Library / YouTube Music), Add Music i
 
 ## Also parked
 `wip/speed-fixes` holds the unfinished media-bar / play-start speed edits for the WebView app.
+
+## Lyrics and word timing (2.14)
+- `LyricsCarousel.kt`: the Mac-style wheel, per-word fill, enlarged word being sung, two lit lines for ad-libs, gap dots. Lines come from `Online.parseLrc` (every line has `words`, `sungEnd`, `end`; a `<t>` tag with no text after it = where the word before it stops).
+- `ForcedAligner.kt` + `Voice.kt` + `cpp/voice/` (C, built by CI into `jniLibs/<abi>/libstrata_voice.so`): the same engine as the Mac app. Original lyrics are kept as `syncedSrc`; the timed version replaces `synced` (`alignGen` = version of the timing, bump `ForcedAligner.GEN` to redo every song). The lyrics' own line times stay the authority; a steady early/late shift is measured from where the voice comes back in after pauses.
+- Songs over 6 minutes or on battery saver are skipped (the analysis needs ~160 MB of native memory for 6 minutes).

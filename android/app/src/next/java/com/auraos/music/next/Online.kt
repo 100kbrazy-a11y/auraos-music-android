@@ -82,41 +82,108 @@ object Online {
     }
 
     // ---------------------------------------------------------------- lyrics
-    class Line(val ms: Long, val text: String, val wordMs: LongArray? = null)
+    /** a piece of a line (a word with the space after it) and when it is sung; [end] = when it stops being sung, -1 when the file doesn't say */
+    class Chunk(val text: String, val start: Long, val end: Long = -1L)
+    class Line(val ms: Long, val text: String, val wordMs: LongArray? = null) {
+        /** the words, each with a time: from the file, or spread over the line when the file only has a time for the line */
+        var words: List<Chunk> = emptyList()
+        var tagged = false          // the file gave a time for each word
+        var end = 0L                // when the next line starts
+        var sungEnd = 0L            // when the last word has been sung (it can be after the next line has started, for ad-libs)
+    }
     class Lyrics(val synced: List<Line>, val plain: String, val instrumental: Boolean, val none: Boolean)
 
+    /** how many beats a word takes to sing: syllables for letters we can count, one per character for scripts without spaces */
+    private fun beats(word: String): Double {
+        val t = word.trim()
+        val letters = t.filter { it.isLetter() }
+        if (letters.isEmpty()) return 0.4
+        if (t.any { it.code > 0x24F }) return letters.length.toDouble()
+        val vowels = "aeiouyáàâäãåéèêëíìîïóòôöõúùûüœæ"
+        val lower = letters.lowercase()
+        var groups = 0; var inGroup = false
+        for (ch in lower) { if (ch in vowels) { if (!inGroup) { groups++; inGroup = true } } else inGroup = false }
+        if (groups > 1 && lower.endsWith("e") && !lower.endsWith("le")) groups--       // a silent final e
+        if (lower.endsWith("ed") && groups > 1 && !(lower.endsWith("ted") || lower.endsWith("ded"))) groups--
+        var w = maxOf(groups, 1).toDouble()
+        if (t.endsWith(",") || t.endsWith(";")) w += 0.5
+        if (t.endsWith(".") || t.endsWith("!") || t.endsWith("?") || t.endsWith("…")) w += 0.9
+        return w
+    }
+
+    /**
+     * No word times in the file: the words are spread over the part of the line that is actually sung. A line that runs into the next one
+     * fills the gap (less a breath); a line followed by a long pause is sung at a natural pace and then stops.
+     */
+    fun estimateSpan(text: String, a: Long, b: Long): Pair<List<Chunk>, Long> {
+        if (text.isEmpty()) return emptyList<Chunk>() to a
+        val pieces: List<String> = if (text.contains(" ")) {
+            val ws = text.split(" ").filter { it.isNotEmpty() }
+            ws.mapIndexed { i, w -> if (i < ws.size - 1) "$w " else w }
+        } else text.map { it.toString() }
+        val weights = pieces.map { beats(it) }.toMutableList()
+        weights[weights.size - 1] += 0.6                 // the last note of a line is usually held
+        val total = weights.sum()
+        val gap = maxOf(b - a, 500L) / 1000.0
+        val natural = total * 0.26 + 0.25
+        val span = if (gap <= natural * 1.7) maxOf(gap - 0.18, gap * 0.8) else minOf(gap * 0.9, natural * 1.3)
+        var acc = 0.0
+        val out = ArrayList<Chunk>()
+        pieces.forEachIndexed { i, p -> out.add(Chunk(p, a + (span * 1000.0 * acc / total).toLong())); acc += weights[i] }
+        return out to a + (span * 1000.0).toLong()
+    }
+
+    private fun adlib(s: String): Boolean { val t = s.trim(); return t.length > 2 && t.startsWith("(") && t.endsWith(")") }
+
     fun parseLrc(t: String): List<Line> {
-        val out = ArrayList<Line>(); var offset = 0L
+        class Raw(val ms: Long, val text: String, val chunks: List<Chunk>)
+        val raws = ArrayList<Raw>(); var offset = 0L
+        val offRe = Regex("^\\[offset:\\s*([+-]?\\d+)]", RegexOption.IGNORE_CASE)
+        val stampRe = Regex("\\[(\\d+):(\\d+(?:\\.\\d+)?)]")
+        val tagRe = Regex("<(\\d+):(\\d+(?:\\.\\d+)?)>")
+        fun at(m: MatchResult) = (m.groupValues[1].toLong() * 60000 + (m.groupValues[2].toDouble() * 1000).toLong() - offset).coerceAtLeast(0)
         for (raw in t.lines()) {
-            Regex("^\\[offset:\\s*([+-]?\\d+)]", RegexOption.IGNORE_CASE).find(raw)?.let { offset = it.groupValues[1].toLong() }
-            val stamps = Regex("\\[(\\d+):(\\d+(?:\\.\\d+)?)]").findAll(raw).toList()
+            offRe.find(raw)?.let { offset = it.groupValues[1].toLong() }
+            val stamps = stampRe.findAll(raw).toList()
             if (stamps.isEmpty()) continue
             val rawText = raw.substring(stamps.last().range.last + 1)
-            val tags = Regex("<(\\d+):(\\d+(?:\\.\\d+)?)>").findAll(rawText).toList()
-            var text = rawText.trim(); var wordAt: LongArray? = null
+            val tags = tagRe.findAll(rawText).toList()
+            var text = rawText.trim(); val chunks = ArrayList<Chunk>()
             if (tags.isNotEmpty()) {           // "enhanced" lyrics carry a time for every word: use them exactly
-                val sb = StringBuilder(); val marks = ArrayList<Pair<Int, Long>>()
-                val first = rawText.substring(0, tags[0].range.first)
-                if (first.isNotBlank()) sb.append(first)
+                val sb = StringBuilder()
                 tags.forEachIndexed { i, m ->
                     val seg = rawText.substring(m.range.last + 1, if (i + 1 < tags.size) tags[i + 1].range.first else rawText.length)
-                    marks.add(sb.length to (m.groupValues[1].toLong() * 60000 + (m.groupValues[2].toDouble() * 1000).toLong() - offset).coerceAtLeast(0))
-                    sb.append(seg)
+                    val tm = at(m)
+                    if (seg.isNotEmpty()) { chunks.add(Chunk(seg, tm)); sb.append(seg) }
+                    // a time with no word after it: where the word before it stops being sung
+                    else if (chunks.isNotEmpty() && chunks.last().end < 0 && tm > chunks.last().start) chunks[chunks.size - 1] = Chunk(chunks.last().text, chunks.last().start, tm)
                 }
-                val lead = sb.length - sb.toString().trimStart().length
                 text = sb.toString().trim()
-                val starts = ArrayList<Long>(); var at = 0
-                val base = (stamps.first().groupValues[1].toLong() * 60000 + (stamps.first().groupValues[2].toDouble() * 1000).toLong() - offset).coerceAtLeast(0)
-                for (w in text.split(" ")) {
-                    val ci = at + lead
-                    starts.add(marks.lastOrNull { it.first <= ci }?.second ?: base)
-                    at += w.length + 1
-                }
-                wordAt = starts.toLongArray()
             }
-            for (m in stamps) out.add(Line((m.groupValues[1].toLong() * 60000 + (m.groupValues[2].toDouble() * 1000).toLong() - offset).coerceAtLeast(0), text, wordAt))
+            for (m in stamps) raws.add(Raw(at(m), text, chunks))
         }
-        return out.sortedBy { it.ms }
+        raws.sortBy { it.ms }
+        val out = ArrayList<Line>()
+        raws.forEachIndexed { i, o ->
+            val next = if (i + 1 < raws.size) raws[i + 1].ms else o.ms + 5000
+            // a line is sung right through the (bracketed) ad-libs that come after it, not cut off where they start
+            var limit = next
+            if (!adlib(o.text)) {
+                var k = i + 1
+                while (k < raws.size && adlib(raws[k].text)) k++
+                limit = if (k < raws.size) raws[k].ms else maxOf(next, raws.last().ms + 3000)
+            }
+            val l = Line(o.ms, o.text)
+            l.end = next
+            if (o.chunks.isEmpty()) { val e = estimateSpan(o.text, o.ms, limit); l.words = e.first; l.sungEnd = e.second }
+            else {
+                l.tagged = true; l.words = o.chunks
+                val last = o.chunks.last()
+                l.sungEnd = if (last.end > last.start) last.end else last.start + minOf(1200L, maxOf(450L, next - last.start))
+            }
+            out.add(l)
+        }
+        return out
     }
 
     fun cachedLyrics(id: String): Lyrics? {

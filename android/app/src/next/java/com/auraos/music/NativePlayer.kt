@@ -123,5 +123,5 @@ object NativePlayer {
         s.setQueue(items.map { AuraPlaybackService.item(ctx.applicationContext, it) }, index, posMs, play, keep)
     }
     /** where the song really is (the player counts from the cut start) */
-    fun livePos(): Long = AuraPlaybackService.instance?.state()?.optLong("pos") ?: state.value.pos
+    fun livePos(): Long = AuraPlaybackService.instance?.position() ?: state.value.pos
 }

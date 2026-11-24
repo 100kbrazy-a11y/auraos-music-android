@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -108,6 +109,18 @@ class NextActivity : ComponentActivity() {
 object Snack { val text = mutableStateOf<String?>(null) }
 /** each tab reports whether it's scrolled, so the header (on the controls layer) can darken */
 object TabScroll { val v = mutableStateListOf(false, false, false, false) }
+/**
+ * Tapping a tab slides the pages across at a pace you can follow (a swipe is still instant under your finger): about a third of a second
+ * for the next tab, a little longer for each tab it has to pass.
+ */
+suspend fun androidx.compose.foundation.pager.PagerState.slideTo(page: Int) {
+    val to = page.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+    val dist = (to - currentPage - currentPageOffsetFraction) * (layoutInfo.pageSize + layoutInfo.pageSpacing)
+    if (kotlin.math.abs(dist) < 1f) return
+    val hops = kotlin.math.abs(to - currentPage).coerceIn(1, 3)
+    animateScrollBy(dist, tween(360 + 150 * hops, easing = androidx.compose.animation.core.CubicBezierEasing(0.3f, 0.0f, 0.15f, 1f)))
+}
+
 /** set by the controls layer: the bottom layer's pager follows it */
 object Pager {
     var animateTo: ((Int) -> Unit)? = null
@@ -128,6 +141,8 @@ fun Themed(content: @Composable () -> Unit) {
         val fromCover = remember(cur?.cover) { cur?.cover?.takeIf { it.isNotEmpty() }?.let { Accents.of(Store.coverFile(it)) } }
         val target = if (follow) fromCover ?: C.defAccent else androidx.compose.ui.graphics.Color(fixed)
         val acc by animateColorAsState(target, tween(600), label = "acc")
+        // the cover's two background colours are worked out now, in the background, so the player never stops to do it when it opens
+        LaunchedEffect(cur?.cover) { cur?.cover?.takeIf { it.isNotEmpty() }?.let { c -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { Accents.pal(Store.coverFile(c)) } } }
         val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         CompositionLocalProvider(LocalAccent provides acc, LocalBottom provides (if (isLand()) (if (cur != null) 96.dp else 24.dp) else if (cur != null) 163.dp else 100.dp) + nav) { content() }
     }
@@ -141,8 +156,8 @@ fun BgApp() {
     val pager = rememberPagerState(initialPage = Nav.tab.value.coerceIn(0, order.size - 1)) { order.size }
     LaunchedEffect(order) { if (Nav.tab.value > order.size - 1) Nav.tab.value = order.size - 1 }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { Pager.animateTo = { i -> scope.launch { pager.animateScrollToPage(i) } } }
-    LaunchedEffect(Nav.tab.value) { if (pager.currentPage != Nav.tab.value || pager.currentPageOffsetFraction != 0f) pager.animateScrollToPage(Nav.tab.value) }
+    LaunchedEffect(Unit) { Pager.animateTo = { i -> scope.launch { pager.slideTo(i) } } }
+    LaunchedEffect(Nav.tab.value) { if (pager.currentPage != Nav.tab.value || pager.currentPageOffsetFraction != 0f) pager.slideTo(Nav.tab.value) }
     // the tab bubble rides along with the pages while you swipe them (not only once they land)
     val swiping by pager.interactionSource.collectIsDraggedAsState()
     LaunchedEffect(swiping) { if (swiping) Pager.user.value = true }

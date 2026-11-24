@@ -48,6 +48,16 @@ jobs:
             cmake --build "/tmp/dbuild/$ABI"
           done
           ls -l android/app/src/next/jniLibs/*/
+      - name: Word timing engine (plain C, no libraries)
+        run: |
+          NDK="${ANDROID_NDK_HOME:-$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)}"
+          for ABI in arm64-v8a armeabi-v7a x86_64; do
+            cmake -S android/app/src/next/cpp/voice -B "/tmp/vbuild/$ABI" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-24 \
+              -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/android/app/src/next/jniLibs/$ABI"
+            cmake --build "/tmp/vbuild/$ABI"
+          done
+          ls -l android/app/src/next/jniLibs/*/
       - name: Compile (next flavor)
         run: cd android && chmod +x gradlew && ./gradlew --no-daemon --stacktrace assembleNextRelease
       - name: Sign

@@ -561,6 +561,11 @@ fun FullPlayer(s: Song, fade: () -> Float, hideCover: Boolean, onClose: () -> Un
     val levels by rememberLevels(live && st.playing && (bgStyle == 0 || vizStyle != 4), vizBars)
     val land = isLand()
     val ctxD = LocalContext.current
+    // the cover's colours are there from the very first frame (worked out ahead of time; if not, off the main thread), so the player
+    // fades in already coloured instead of black
+    val coverF = if (s.cover.isNotEmpty()) Store.coverFile(s.cover) else null
+    val pal by produceState(Accents.palCached(coverF), s.cover) { if (value == null && coverF != null) value = withContext(Dispatchers.Default) { Accents.pal(coverF) } }
+    val c1 = pal?.first ?: a; val c2 = pal?.second ?: a
     // the first frames of the opening only draw what is cheap; the blurred cover, fog, visualizer and the neighbouring pages
     // are added once the panel is nearly open, so nothing heavy is built while it is moving
     var ready by remember { mutableStateOf(false) }
@@ -569,7 +574,7 @@ fun FullPlayer(s: Song, fade: () -> Float, hideCover: Boolean, onClose: () -> Un
         Diag.log("player: ${Tasks.motionWhy(ctxD)} · background=$bgStyle visualizer=$vizStyle bars=$vizBars")
     }
     Box(Modifier.fillMaxSize()) {
-      Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade() }.background(Color(0xFF08080A)).clipToBounds()) {
+      Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade() }.background(if (bgStyle == 3) androidx.compose.ui.graphics.SolidColor(Color(0xFF08080A)) else Brush.verticalGradient(listOf(mix(c1, 0.42f, Color.Black), mix(c2, 0.26f, Color.Black), Color(0xFF08080A)))).clipToBounds()) {
         // .bg: the cover itself, hugely blurred and darkened; .bg2: vignette; .glowpulse: the accent breathing with the bass
         val f = if (s.cover.isNotEmpty()) Store.coverFile(s.cover) else null
         val blurred = bgStyle == 1 || (bgStyle == 0 && !live)
@@ -586,14 +591,24 @@ fun FullPlayer(s: Song, fade: () -> Float, hideCover: Boolean, onClose: () -> Un
             Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)))))
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.55f))))
         }
-        if (ready && live && bgStyle == 0) {
+        // the moving fog and the visualizer melt in over the colours that are already there (nothing pops in)
+        if (ready && live && bgStyle == 0) FadeIn(900) {
             Fog(s, levels, st.playing)
             Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.35f)))))
         }
-        if (ready && live && vizStyle != 4) VizBg(levels, if (Cfg.vizColor.use() == 1) (remember(s.cover) { (if (s.cover.isNotEmpty()) Accents.pal(Store.coverFile(s.cover))?.first else null) } ?: a) else a, Modifier.fillMaxWidth().fillMaxHeight(Cfg.vizHeight.use()).align(Alignment.BottomCenter))
+        if (ready && live && vizStyle != 4) FadeIn(700) { VizBg(levels, if (Cfg.vizColor.use() == 1) (c1) else a, Modifier.fillMaxWidth().fillMaxHeight(Cfg.vizHeight.use()).align(Alignment.BottomCenter)) }
       }
       if (land) NpLand(s, fade, hideCover, onClose) else NpPages(s, fade, ready, hideCover, onClose)
     }
+}
+
+/** shows [content] fading in from nothing over [ms] */
+@Composable
+private fun FadeIn(ms: Int, content: @Composable BoxScope.() -> Unit) {
+    var on by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { on = true }
+    val al by animateFloatAsState(if (on) 1f else 0f, tween(ms), label = "fadein")
+    Box(Modifier.fillMaxSize().graphicsLayer { alpha = al }) { content() }
 }
 
 /** the song's cover: swipe to skip, tap to turn it over, double-tap to like. Fills what it's given (up to [maxSide]). */
@@ -715,7 +730,7 @@ private fun NpPages(s: Song, fade: () -> Float, ready: Boolean, hideCover: Boole
     val a = accent
     val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = 1) { 3 }
     val scope = rememberCoroutineScope()
-    val go: (Int) -> Unit = { p -> scope.launch { pager.animateScrollToPage(p) } }
+    val go: (Int) -> Unit = { p -> scope.launch { pager.slideTo(p) } }
     var last by remember { mutableStateOf(1) }
     LaunchedEffect(pager.settledPage) { if (pager.settledPage != last) { last = pager.settledPage; Hap.soft() } }
     Box(Modifier.fillMaxSize()) {
@@ -963,7 +978,7 @@ fun LyricsPane(s: Song) {
     var loading by remember(s.id, v) { mutableStateOf(ly == null) }
     var failed by remember(s.id, v) { mutableStateOf(false) }
     LaunchedEffect(s.id, v) { if (ly == null) { ly = withContext(Dispatchers.IO) { try { Online.fetchLyrics(s) } catch (_: Exception) { failed = true; null } }; loading = false } }
-    var off by remember(s.id) { mutableStateOf(Store.settings().optJSONObject("offsets")?.optDouble(s.id, 0.0) ?: 0.0) }
+    var off by remember(s.id, v) { mutableStateOf(Store.settings().optJSONObject("offsets")?.optDouble(s.id, 0.0) ?: 0.0) }
     fun nudge(d: Double) {
         off = Math.round((off + d) * 10) / 10.0
         val o = Store.settings().optJSONObject("offsets") ?: org.json.JSONObject().also { Store.settings().put("offsets", it) }
@@ -971,29 +986,28 @@ fun LyricsPane(s: Song) {
     }
     val l = ly
     val syncOn = Cfg.lyricSync.use()
-    var pos by remember { mutableStateOf(0L) }
     val shift = if (Prefs.trimSilence.value) (s.trimStart * 1000).toLong() else 0L
-    LaunchedEffect(s.id, l, syncOn) { while (l != null && l.synced.isNotEmpty() && syncOn) { pos = NativePlayer.livePos() + shift; delay(100) } }
-    val ls = rememberLazyListState()
     Column(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+        // the lyrics are clipped to their own box, so they can never be tapped from outside it
+        Box(Modifier.weight(1f).fillMaxWidth().clipToBounds(), contentAlignment = Alignment.Center) {
             when {
                 loading -> T("Finding the lyrics…", 18.sp, W700, Color.White.copy(alpha = 0.6f))
                 failed || l == null -> T("Couldn't look up lyrics — check your internet connection.", 20.sp, W800, Color.White.copy(alpha = 0.7f), lines = 3, align = TextAlign.Center)
                 l.instrumental -> T("♪ Instrumental", 22.sp, W800, Color.White.copy(alpha = 0.7f))
                 l.synced.isNotEmpty() && syncOn -> {
                     val offMs = (off * 1000).toLong()
-                    val cur = l.synced.indexOfLast { it.ms + offMs <= pos }.coerceAtLeast(0)
-                    SyncedLyrics(l.synced, cur, { NativePlayer.livePos() + shift - offMs }) { i -> NativePlayer.seek((l.synced[i].ms + offMs - shift).coerceAtLeast(0)) }
+                    CarouselLyrics(l.synced, s.durMs, { NativePlayer.livePos() + shift - offMs }) { i -> NativePlayer.seek((l.synced[i].ms + offMs - shift).coerceAtLeast(0)) }
                 }
                 l.plain.isNotBlank() || l.synced.isNotEmpty() -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 24.dp)) { T(l.plain.ifBlank { l.synced.joinToString("\n") { it.text } }, 22.sp, W800, Color.White.copy(alpha = 0.85f), lines = 1000, lh = 32.sp) }
                 else -> T("No lyrics for this song", 20.sp, W800, Color.White.copy(alpha = 0.7f))
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        // the buttons sit in front of the lyrics: a full-size (48 dp) target of their own, drawn above, that swallows any tap that lands on it,
+        // so a press near them can never fall through to a line and jump the song
+        Row(Modifier.fillMaxWidth().zIndexCompat(2f).padding(top = 2.dp).pointerInput(Unit) { detectTapGestures { } }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             T(if (off != 0.0) "Lyrics · %+.1f s".format(off) else "Lyrics", 12.sp, color = Color.White.copy(alpha = 0.55f), modifier = Modifier.weight(1f))
             for ((t, f) in listOf("Earlier" to { nudge(-0.5) }, "Later" to { nudge(0.5) }, "Wrong lyrics?" to { Dialogs.sheet { LyricsSearch(s) } }))
-                Box(Modifier.clip(RoundedCornerShape(10.dp)).clickable { f() }.padding(horizontal = 10.dp, vertical = 6.dp)) { T(t, 12.sp, W700, Color.White.copy(alpha = 0.8f)) }
+                Box(Modifier.height(48.dp).clip(RoundedCornerShape(12.dp)).clickable { f() }.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) { T(t, 12.sp, W700, Color.White.copy(alpha = 0.8f)) }
         }
     }
 }
@@ -1163,157 +1177,6 @@ fun CoverBack(s: Song) {
             Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 T(k, 13.5.sp, color = Color.White.copy(alpha = 0.6f)); T(v, 13.5.sp, align = TextAlign.End, lines = 4, modifier = Modifier.weight(1f))
             }
-        }
-    }
-}
-
-
-/**
- * Time-synced lyrics like the web app: the current line sits in the middle, and the list glides there on a quick, smooth
- * spring (never jumps). Lines you've passed dim and blur away above it; the next ones wait below. Drag to look around (every
- * line sharp, a tick per line); a moment after you let go it glides back to the song. Tap a line to jump there.
- */
-/**
- * Estimated syllables in a word. Lyrics only carry a time for each LINE, so inside a line we have to guess when each word
- * lands; a singer spends time per syllable, not per letter, so this is a far better yardstick than the word's length.
- */
-private fun syllables(w: String): Int {
-    val s = w.lowercase().filter { it.isLetter() }
-    if (s.isEmpty()) return 1
-    var n = 0; var prev = false
-    for (c in s) { val v = c in "aeiouyáàâäãéèêëíìîïóòôöõúùûü"; if (v && !prev) n++; prev = v }
-    if (n > 1 && s.endsWith("e") && !s.endsWith("le") && !s.endsWith("ee")) n--
-    return n.coerceAtLeast(1)
-}
-
-/** where each word of a line falls (0..1 of the time it is sung): by syllables, with a beat of rest after commas and full stops */
-private class WordPlan(val words: List<String>, val a: FloatArray, val b: FloatArray, val syl: Int)
-private fun planOf(text: String): WordPlan {
-    val words = text.split(" ")
-    val n = words.size
-    val wt = FloatArray(n); val rest = FloatArray(n)
-    var syl = 0
-    words.forEachIndexed { k, w ->
-        val s = syllables(w); syl += s
-        wt[k] = s + 0.3f
-        if (k < n - 1) rest[k] = when {
-            w.endsWith("...") || w.endsWith("…") || w.endsWith("—") -> 0.9f
-            w.lastOrNull() in listOf('.', '!', '?', ';', ':') -> 0.8f
-            w.endsWith(",") -> 0.45f
-            else -> 0f
-        }
-    }
-    val total = (wt.sum() + rest.sum()).coerceAtLeast(0.01f)
-    val a = FloatArray(n); val b = FloatArray(n)
-    var acc = 0f
-    for (k in 0 until n) { a[k] = acc / total; acc += wt[k]; b[k] = acc / total; acc += rest[k] }
-    return WordPlan(words, a, b, syl)
-}
-
-/** the line being sung: its words fill in as the singer reaches them */
-@Composable
-private fun KaraokeLine(text: String, from: Long, to: Long, now: () -> Long, size: Float, center: Boolean, wordMs: LongArray? = null) {
-    var t by remember(text) { mutableLongStateOf(0L) }
-    val shift = Cfg.lyricShift.use().toLong()
-    LaunchedEffect(text, from, shift) {
-        var last = 0L
-        while (true) withFrameNanos { n -> if (n - last > 30_000_000L) { last = n; t = now() - from + shift + 70L } }   // a hair early: late always looks worse than early
-    }
-    val plan = remember(text) { planOf(text) }
-    val lineLen = (to - from).coerceIn(400L, 12000L).toFloat()
-    // a line followed by a long gap isn't sung for the whole gap: nobody takes a second a syllable, so the fill finishes by then
-    val sung = minOf(lineLen * 0.96f, plan.syl * 900f + 400f)
-    val exact = wordMs != null && wordMs.size == plan.words.size
-    val str = androidx.compose.ui.text.buildAnnotatedString {
-        plan.words.forEachIndexed { k, w ->
-            val s0: Float; val s1: Float
-            if (exact) {
-                s0 = (wordMs!![k] - from).toFloat()
-                s1 = if (k + 1 < wordMs.size) (wordMs[k + 1] - from).toFloat() else minOf(lineLen, s0 + 350f + 300f * syllables(w))
-            } else { s0 = plan.a[k] * sung; s1 = plan.b[k] * sung }
-            val x = ((t - s0) / (s1 - s0).coerceAtLeast(70f)).coerceIn(0f, 1f)
-            val wp = x * x * (3f - 2f * x)
-            withStyle(androidx.compose.ui.text.SpanStyle(color = Color.White.copy(alpha = 0.5f + 0.5f * wp))) { append(w) }
-            if (k < plan.words.size - 1) append(" ")
-        }
-    }
-    androidx.compose.material3.Text(str, Modifier.fillMaxWidth(), fontSize = size.sp, fontWeight = W800, lineHeight = (size * 1.22f).sp, letterSpacing = (-0.4).sp, textAlign = if (center) TextAlign.Center else TextAlign.Start, maxLines = 6)
-}
-
-@Composable
-private fun SyncedLyrics(lines: List<Online.Line>, cur: Int, now: () -> Long, onSeek: (Int) -> Unit) {
-    val a = accent
-    val n = lines.size
-    val scroll = remember { Animatable(cur.toFloat()) }
-    var browsing by remember { mutableStateOf(false) }
-    var lastDrag by remember { mutableStateOf(0L) }
-    val bf by animateFloatAsState(if (browsing) 1f else 0f, tween(260), label = "bf")
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(cur, browsing, lastDrag) {
-        if (browsing) { delay(2500); browsing = false; return@LaunchedEffect }
-        val far = kotlin.math.abs(cur - scroll.value) > 3
-        scroll.animateTo(cur.toFloat(), spring(1f, if (far) 55f else 150f))
-    }
-    var avgH by remember { mutableStateOf(100f) }
-    val blurOk = Build.VERSION.SDK_INT >= 31
-    val dens = LocalDensity.current.density
-    val sweep = Cfg.lyricSweep.use()
-    val lySize = Cfg.lyricSize.use(); val center = Cfg.lyricAlign.use() == 1; val glow = Cfg.lyricGlow.use(); val soft = Cfg.lyricBlur.use()
-    val gutter = with(LocalDensity.current) { 18.dp.roundToPx() }
-    val posF = when (Cfg.lyricPos.use()) { 0 -> 0.27f; 2 -> 0.62f; else -> 0.42f }
-    androidx.compose.ui.layout.Layout(content = {
-        lines.forEachIndexed { i, ln ->
-            Box(Modifier.fillMaxWidth()
-                .graphicsLayer {
-                    val dd = i - scroll.value
-                    val focus = (1f - kotlin.math.abs(dd)).coerceIn(0f, 1f)
-                    val dim = if (dd < 0) 0.3f else 0.42f
-                    val win = if (dd < 0) (1f - (-dd - 1.2f) / 2.4f).coerceIn(0f, 1f) else (1f - (dd - 3.5f) / 2.5f).coerceIn(0f, 1f)
-                    val aSong = (dim + (1f - dim) * focus) * win
-                    val aBrowse = if (i == cur) 1f else 0.55f
-                    alpha = aSong + (aBrowse - aSong) * bf
-                    val sc = 0.94f + 0.06f * focus; scaleX = sc; scaleY = sc; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (center) 0.5f else 0f, 0.5f)
-                    val br = if (!soft) 0f else (if (dd < -0.15f) ((-dd - 0.15f) * 3.2f).coerceAtMost(7f) else if (dd > 1.5f) ((dd - 1.5f) * 1.2f).coerceAtMost(3f) else 0f) * (1f - bf)
-                    renderEffect = if (blurOk && br > 0.3f) androidx.compose.ui.graphics.BlurEffect(br * dens, br * dens, androidx.compose.ui.graphics.TileMode.Decal) else null
-                }
-                .drawBehind {
-                    if (i == cur && glow) {
-                        val c = Offset(size.width * 0.5f, size.height / 2); val rx = size.width * 0.5f
-                        scale(1f, (size.height / 2 + 40f) / rx, c) { drawCircle(Brush.radialGradient(0f to a.copy(alpha = 0.4f), 0.55f to a.copy(alpha = 0.16f), 1f to Color.Transparent, center = c, radius = rx), rx, c) }
-                    }
-                }
-                .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { Hap.tick(); onSeek(i) }
-                .padding(horizontal = 22.dp, vertical = 16.dp)) {
-                if (sweep && i == cur && ln.text.isNotBlank()) KaraokeLine(ln.text, ln.ms, lines.getOrNull(i + 1)?.ms ?: (ln.ms + 5000), now, lySize, center, ln.wordMs)
-                else T(ln.text.ifBlank { "♪" }, lySize.sp, W800, Color.White, lines = 6, lh = (lySize * 1.22f).sp, align = if (center) TextAlign.Center else TextAlign.Start, spacing = (-0.4).sp, modifier = Modifier.fillMaxWidth())
-            }
-        }
-    }, modifier = Modifier.fillMaxSize().graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }.drawWithContent {
-        drawContent()
-        // feather every edge: no hard line where the lyrics end, and the blur / glow never shows a cut
-        drawRect(Brush.verticalGradient(0f to Color.Transparent, 0.10f to Color.Black, 0.88f to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
-        drawRect(Brush.horizontalGradient(0f to Color.Transparent, 0.04f to Color.Black, 0.96f to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
-    }.pointerInput(n) {
-        var lastLine = 0
-        detectVerticalDragGestures(onDragStart = { browsing = true; lastLine = scroll.value.roundToInt(); Hap.soft() }, onDragEnd = { lastDrag = System.currentTimeMillis() }, onDragCancel = { lastDrag = System.currentTimeMillis() }) { c, dy ->
-            c.consume(); browsing = true
-            val v = (scroll.value - dy / avgH).coerceIn(0f, (n - 1).toFloat())
-            scope.launch { scroll.snapTo(v) }
-            val ln = v.roundToInt(); if (ln != lastLine) { lastLine = ln; Hap.tick() }
-        }
-    }) { ms, c ->
-        val ps = ms.map { it.measure(c.copy(minWidth = c.maxWidth + gutter * 2, maxWidth = c.maxWidth + gutter * 2, minHeight = 0, maxHeight = androidx.compose.ui.unit.Constraints.Infinity)) }
-        val H = c.maxHeight.toFloat()
-        val tops = FloatArray(ps.size); var acc = 0f
-        ps.forEachIndexed { i, p -> tops[i] = acc; acc += p.height }
-        if (ps.isNotEmpty()) avgH = (acc / ps.size).coerceAtLeast(1f)
-        layout(c.maxWidth, c.maxHeight) {
-            if (ps.isEmpty()) return@layout
-            val sv = scroll.value.coerceIn(0f, (ps.size - 1).toFloat())
-            val lo = sv.toInt(); val hi = minOf(ps.size - 1, lo + 1); val fr = sv - lo
-            fun anchor(k: Int) = H * posF - ps[k].height / 2f - tops[k]
-            val shift = anchor(lo) + (anchor(hi) - anchor(lo)) * fr        // continuous: never jumps mid-move
-            ps.forEachIndexed { i, p -> val y = shift + tops[i]; if (y < H && y + p.height > 0) p.placeRelative(-gutter, y.roundToInt()) }
         }
     }
 }

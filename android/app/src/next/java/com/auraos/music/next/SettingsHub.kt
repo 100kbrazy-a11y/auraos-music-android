@@ -417,9 +417,7 @@ private fun vizLyricsBlocks(): List<@Composable () -> Unit> = listOf(
         val prov by LrcProviders.order.collectAsState()
         Group("Lyrics") {
             SSwitch(SG.Lyrics, "Highlight Current Word", "Highlight the word being sung", Cfg.lyricSweep); Div()
-            SPick(SG.Motion, "Highlight Style", listOf("Glow", "Clean"), if (Cfg.lyricGlow.use()) 0 else 1) { Cfg.lyricGlow.set(it == 0) }; Div()
             SSwitch(SG.Update, "Sync with LRC", "Follow the timestamps. Off: plain scrolling text", Cfg.lyricSync); Div()
-            SSwitch(SG.Viz, "Soften the other lines", "Lines you've passed fade and blur", Cfg.lyricBlur); Div()
             SRow(SG.Library, "LRC Providers", "${prov.size} of ${LrcProviders.ALL.size} on · choose lyric sources", chevron = true, onClick = { Dialogs.sheet { ProvidersSheet() } }); Div()
             SRow(SG.Upload, "Import LRC File", "Upload your own .lrc. Name it “Artist - Title.lrc” to match songs automatically", onClick = { pick() }, trailing = { Icon(Ic.Up, size = 22.dp, tint = C.sub) })
         }

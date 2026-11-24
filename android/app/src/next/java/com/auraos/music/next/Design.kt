@@ -41,6 +41,8 @@ object Accents {
     }
     fun forget() { cache.clear(); pals.clear() }
     private val pals = ConcurrentHashMap<String, Pair<Color, Color>>()
+    /** the fog's colours if they are already worked out (never decodes anything) */
+    fun palCached(f: File?): Pair<Color, Color>? = if (f == null) null else pals[f.path]
     /** the fog's two colours: the average colour of the cover's top half and of its bottom half */
     fun pal(f: File?): Pair<Color, Color>? {
         if (f == null || !f.exists()) return null
