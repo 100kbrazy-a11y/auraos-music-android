@@ -2,6 +2,20 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.13.3",
+   "name": "The Thanksgiving Update",
+   "date": "2026-11-23",
+   "notes": [
+    "The media bar opens into the player right away: there is no wait before it starts, it moves on a quicker spring, and the heavy parts (blurred cover, fog, visualizer, the other pages) appear once it has opened instead of being built while it moves",
+    "The player is no longer rebuilt on every frame of the opening, and the whole app skips redrawing parts that did not change, so animations and scrolling stutter less",
+    "The dock's tab bar now shrinks into a small pill at the bottom of the player with three tabs: Lyrics, Current Song and Artist. It slides with the pages as you swipe them",
+    "A built-in start-up profile precompiles the app's hot code on first launch, so the first animations after installing are smooth too",
+    "Updates download several pieces at once and the native libraries are stored compressed, so the update is faster and smaller",
+    "Discord: choose a writing style for the song and artist lines (bold, italic, script, monospace, small caps, wide, UPPERCASE), a marker in front of each (colour dots, notes), what your status shows next to your name, and the text when hovering the cover. Discord itself decides the text colour, so apps cannot change it",
+    "Fixed the Downloads page failing to build"
+   ]
+  },
+  {
    "version": "2.13.2",
    "name": "The Thanksgiving Update",
    "date": "2026-11-23",
