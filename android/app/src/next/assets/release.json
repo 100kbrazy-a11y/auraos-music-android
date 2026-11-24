@@ -2,6 +2,17 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.14.1",
+   "name": "The Karaoke Update",
+   "date": "2026-11-24",
+   "notes": [
+    "Word-by-word timing now starts the moment you open a song's lyrics (it used to wait at the back of the background queue, behind every other job in your library). A \"Syncing words\" pill with a progress ring shows while it works, then \"Words synced\" when it is done.",
+    "New Re-sync button under the lyrics: throws away the word times and makes them again from the lyrics' own line times. The line under the lyrics now says whether the song is Words synced, Line synced or Words not synced.",
+    "A song whose timing fails is no longer silent about it: the reason is written to Settings › Diagnostics and the lyrics say Words not synced, so Re-sync can try again.",
+    "Every song is timed again with this version, and songs up to 8 minutes long can be timed (was 6)."
+   ]
+  },
+  {
    "version": "2.14.0",
    "name": "The Karaoke Update",
    "date": "2026-11-24",

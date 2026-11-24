@@ -13,6 +13,9 @@ import androidx.compose.ui.zIndex
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.lazy.LazyColumn
@@ -985,6 +988,15 @@ fun LyricsPane(s: Song) {
         if (off == 0.0) o.remove(s.id) else o.put(s.id, off); Store.save()
     }
     val l = ly
+    // the words are timed on this phone, for the song whose lyrics are showing, right away (and the page says so)
+    val busy by ForcedAligner.busyId.collectAsState(); val waiting by ForcedAligner.waiting.collectAsState(); val failedIds by ForcedAligner.failed.collectAsState()
+    val progress by ForcedAligner.progress.collectAsState()
+    val syncing = busy == s.id || s.id in waiting
+    LaunchedEffect(s.id, v, l?.synced?.size) { if (l != null && l.synced.isNotEmpty() && !l.instrumental) ForcedAligner.startNow(s) }
+    val timed = remember(s.id, v, syncing) { ForcedAligner.isTimed(s) }
+    var sawSync by remember(s.id) { mutableStateOf(false) }
+    var justDone by remember(s.id) { mutableStateOf(false) }
+    LaunchedEffect(syncing, timed) { if (syncing) sawSync = true else if (sawSync && timed) { justDone = true; delay(2600); justDone = false; sawSync = false } }
     val syncOn = Cfg.lyricSync.use()
     val shift = if (Prefs.trimSilence.value) (s.trimStart * 1000).toLong() else 0L
     Column(Modifier.fillMaxSize()) {
@@ -1001,13 +1013,32 @@ fun LyricsPane(s: Song) {
                 l.plain.isNotBlank() || l.synced.isNotEmpty() -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 24.dp)) { T(l.plain.ifBlank { l.synced.joinToString("\n") { it.text } }, 22.sp, W800, Color.White.copy(alpha = 0.85f), lines = 1000, lh = 32.sp) }
                 else -> T("No lyrics for this song", 20.sp, W800, Color.White.copy(alpha = 0.7f))
             }
+            // "Syncing words": the same cue the Mac shows while it times the words of the song
+            val showPill = syncing || justDone
+            AnimatedVisibility(showPill, Modifier.align(Alignment.TopCenter).padding(top = 6.dp), enter = fadeIn(), exit = fadeOut()) {
+                Row(Modifier.clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = 0.38f)).padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (syncing) {
+                        if (busy == s.id) androidx.compose.material3.CircularProgressIndicator({ progress.coerceIn(0.03f, 1f) }, Modifier.size(14.dp), color = Color.White.copy(alpha = 0.9f), strokeWidth = 2.dp, trackColor = Color.White.copy(alpha = 0.22f))
+                        else androidx.compose.material3.CircularProgressIndicator(Modifier.size(14.dp), color = Color.White.copy(alpha = 0.9f), strokeWidth = 2.dp)
+                        T(if (busy == s.id) "Syncing words · ${(progress * 100).toInt().coerceIn(1, 99)}%" else "Syncing words · waiting", 13.sp, W700, Color.White.copy(alpha = 0.92f))
+                    } else T("Words synced", 13.sp, W700, Color.White.copy(alpha = 0.92f))
+                }
+            }
         }
         // the buttons sit in front of the lyrics: a full-size (48 dp) target of their own, drawn above, that swallows any tap that lands on it,
         // so a press near them can never fall through to a line and jump the song
         Row(Modifier.fillMaxWidth().zIndexCompat(2f).padding(top = 2.dp).pointerInput(Unit) { detectTapGestures { } }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            T(if (off != 0.0) "Lyrics · %+.1f s".format(off) else "Lyrics", 12.sp, color = Color.White.copy(alpha = 0.55f), modifier = Modifier.weight(1f))
-            for ((t, f) in listOf("Earlier" to { nudge(-0.5) }, "Later" to { nudge(0.5) }, "Wrong lyrics?" to { Dialogs.sheet { LyricsSearch(s) } }))
-                Box(Modifier.height(48.dp).clip(RoundedCornerShape(12.dp)).clickable { f() }.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) { T(t, 12.sp, W700, Color.White.copy(alpha = 0.8f)) }
+            val state = when {
+                syncing -> "Syncing words…"
+                s.id in failedIds && !timed -> "Words not synced"
+                timed -> "Words synced"
+                l != null && l.synced.isNotEmpty() -> "Line synced"
+                else -> "Lyrics"
+            }
+            T(if (off != 0.0) "$state · %+.1f s".format(off) else state, 12.sp, color = Color.White.copy(alpha = 0.55f), modifier = Modifier.weight(1f))
+            val canSync = l != null && l.synced.isNotEmpty() && !syncing
+            for ((t, f) in listOfNotNull<Pair<String, () -> Unit>>("Earlier" to { nudge(-0.5) }, "Later" to { nudge(0.5) }, if (canSync) "Re-sync" to { Hap.tick(); ForcedAligner.resync(s) } else null, "Wrong lyrics?" to { Dialogs.sheet { LyricsSearch(s) } }))
+                Box(Modifier.height(48.dp).clip(RoundedCornerShape(12.dp)).clickable { f() }.padding(horizontal = 9.dp), contentAlignment = Alignment.Center) { T(t, 12.sp, W700, Color.White.copy(alpha = 0.8f)) }
         }
     }
 }
