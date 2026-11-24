@@ -66,6 +66,7 @@ object Cfg {
     val lyricShift = F("cfgLyShift", 0f)       // milliseconds: nudges the word highlight earlier (+) or later (-)
     val lyricSweep = B("cfgLySweep", true)     // words fill in as they are sung
     val lyricGlow = B("cfgLyGlow", true)
+    val leaves = B("cfgLeaves", true)          // the Thanksgiving Update: leaves falling behind the app
     val lyricBlur = B("cfgLyBlur", true)
     val playStyle = I("cfgPlayStyle", 0)       // white · accent · outline
     val btnLyrics = B("cfgBtnLyrics", true)

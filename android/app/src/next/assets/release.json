@@ -2,6 +2,16 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.13.0",
+   "name": "The Thanksgiving Update",
+   "date": "2026-11-23",
+   "notes": [
+    "Brown, yellow and red leaves fall softly down the background, behind the songs and behind the pages you open (turn them off in Settings › Appearance › Motion › Falling Leaves)",
+    "The leaves pause with Motion Effects and in Battery Saver, and are drawn at about 30 frames a second to go easy on the battery",
+    "Album and song covers above thumbnail size are drawn in full color and at a higher resolution (up to 768 px) instead of the small, banded version, so big covers are no longer blurry"
+   ]
+  },
+  {
    "version": "2.12.4",
    "name": "Performance Update Pt. 1",
    "date": "2026-11-23",

@@ -391,12 +391,12 @@ fun Art(cover: String, size: Dp?, modifier: Modifier = Modifier, shape: Shape = 
     val f = if (cover.isNotEmpty()) Store.coverFile(cover) else null
     if (f != null && f.exists()) {
         val ctx = LocalContext.current
-        val px = with(LocalDensity.current) { (size ?: 180.dp).roundToPx().coerceIn(64, 512) }
+        val px = with(LocalDensity.current) { (size ?: 260.dp).roundToPx().coerceIn(64, 768) }
         val req = remember(f.path, px) {
             ImageRequest.Builder(ctx)
                 .data(f)
                 .size(px, px)
-                .bitmapConfig(Bitmap.Config.RGB_565)
+                .bitmapConfig(if (px <= 160) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888)
                 .crossfade(false)
                 .build()
         }

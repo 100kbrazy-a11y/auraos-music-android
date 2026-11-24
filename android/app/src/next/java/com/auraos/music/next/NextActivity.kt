@@ -151,6 +151,9 @@ fun BgApp() {
     LaunchedEffect(pager.settledPage, pager.isScrollInProgress) { if (!pager.isScrollInProgress && Nav.tab.value != pager.settledPage) { Nav.tab.value = pager.settledPage; Hap.tick() } }   // only where a swipe lands
     Box(Modifier.fillMaxSize().background(C.bg)) {
         Aurora(motion && !saving)
+        val leavesOn = Cfg.leaves.use() && motion && !saving
+        LeafClockDriver(leavesOn)
+        if (leavesOn && Nav.stack.isEmpty()) FallingLeaves()
         val land = isLand()
         val railPad by animateDpAsState(if (land) Rail + 22.dp else 0.dp, tween(380), label = "rail")
         CompositionLocalProvider(LocalBgLayer provides true) {
@@ -163,7 +166,7 @@ fun BgApp() {
                 var shown by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) { shown = true }
                 AnimatedVisibility(shown, enter = slideInHorizontally(tween(320, easing = Ease)) { it / 3 } + fadeIn(tween(200)), exit = fadeOut()) {
-                    Box(Modifier.fillMaxSize().background(C.bg)) { CompositionLocalProvider(LocalPageIndex provides i) {
+                    Box(Modifier.fillMaxSize().background(C.bg)) { if (leavesOn && i == Nav.stack.lastIndex) FallingLeaves(); CompositionLocalProvider(LocalPageIndex provides i) {
                         when (p) {
                             is Page.AlbumP -> AlbumPage(p.key); is Page.ArtistP -> ArtistPage(p.name); is Page.PlaylistP -> PlaylistPage(p.name)
                             Page.Favorites -> FavoritesPage(); Page.Search -> SearchPage(); Page.Settings -> SettingsPage(); Page.Scanner -> ScannerPage()

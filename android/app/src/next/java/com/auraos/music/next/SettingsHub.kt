@@ -142,6 +142,7 @@ private fun searchIndex(): List<Found> = listOf(
     Found(SG.Shapes, "Shapes and corners", "Appearance", "radius round cards art liquid glass") { open("shapes") },
     Found(SG.Shapes, "Liquid Glass", "Appearance", "glass blur frost bend") { open("shapes") },
     Found(SG.Motion, "Motion effects", "Appearance", "animation background battery saver timing") { open("motion") },
+    Found(SG.Motion, "Falling leaves", "Appearance", "thanksgiving autumn fall leaf background") { open("motion") },
     Found(SG.Feel, "Haptics", "Appearance", "touch vibration buzz scroll timer tucked") { open("touch") },
     Found(SG.Playback, "Crossfade", "Playback", "blend beats gapless") { open("playback") },
     Found(SG.Playback, "Equalizer", "Playback", "eq bass treble") { open("playback") },
@@ -536,6 +537,7 @@ private fun motionBlocks(): List<@Composable () -> Unit> = listOf(
         val motion by Prefs.motion.collectAsState(); val saver by Prefs.autoSaver.collectAsState(); val shift by Prefs.vizShift.collectAsState()
         Group(null) {
             SSwitch(SG.Motion, "Motion Effects", "Sliding pages, glow, living background and the visualizer", motion) { Prefs.setMotion(it) }; Div()
+            SSwitch(SG.Motion, "Falling Leaves", "Brown, yellow and red leaves drift down the background (needs Motion Effects)", Cfg.leaves); Div()
             SSwitch(SG.Pulse, "Save Battery Automatically", "Pause the moving background in Battery Saver or below 20%", saver) { Prefs.setAutoSaver(it) }; Div()
             SRow(SG.Viz, "Visual Timing", "Line the visualizer and background up with the music", value = if (shift == 0f) "In time" else "%+d ms".format(shift.toInt()), chevron = true, onClick = { Dialogs.sheet { TimingSheet() } })
         }
