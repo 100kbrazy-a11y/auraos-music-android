@@ -418,6 +418,14 @@ private fun vizLyricsBlocks(): List<@Composable () -> Unit> = listOf(
         Group("Lyrics") {
             SSwitch(SG.Lyrics, "Highlight Current Word", "Highlight the word being sung", Cfg.lyricSweep); Div()
             SSwitch(SG.Update, "Sync with LRC", "Follow the timestamps. Off: plain scrolling text", Cfg.lyricSync); Div()
+            SSwitch(SG.Lyrics, "Listen for the words", "A speech model listens to each song to time every word. English only; other songs use the older method. Downloads once (about 76 MB).", Cfg.speechSync); Div()
+            run {
+                val st = SpeechModel.state.collectAsState().value
+                val ready = SpeechModel.ready
+                val value = when { st is SpeechModel.St.Downloading -> "Downloading ${(st.fraction * 100).toInt()}%"; ready -> "Ready"; st is SpeechModel.St.Failed -> "Failed. Tap to retry"; else -> "Tap to download" }
+                SRow(SG.Upload, "Speech model", if (ready) "On this phone (46 MB). Tap to remove it" else "Needed for word-by-word timing. It also downloads by itself on Wi-Fi", value = value,
+                    onClick = { if (ready) SpeechModel.delete() else if (st !is SpeechModel.St.Downloading) ForcedAligner.downloadModelNow() })
+            }; Div()
             SRow(SG.Library, "LRC Providers", "${prov.size} of ${LrcProviders.ALL.size} on · choose lyric sources", chevron = true, onClick = { Dialogs.sheet { ProvidersSheet() } }); Div()
             SRow(SG.Upload, "Import LRC File", "Upload your own .lrc. Name it “Artist - Title.lrc” to match songs automatically", onClick = { pick() }, trailing = { Icon(Ic.Up, size = 22.dp, tint = C.sub) })
         }
@@ -429,6 +437,8 @@ private fun vizLyricsBlocks(): List<@Composable () -> Unit> = listOf(
             SChoice("Alignment", listOf("Left", "Centre"), Cfg.lyricAlign.use()) { Cfg.lyricAlign.set(it) }
             val sh = Cfg.lyricShift.use()
             SSlider("Highlight timing", "Slide right if words light up too late, left if too early", if (sh == 0f) "On time" else "%+d ms".format(sh.toInt()), sh, -600f..600f, 20f) { Cfg.lyricShift.set(it) }
+            val bt = Cfg.btDelay.use()
+            SSlider("Bluetooth delay", "Bluetooth plays the sound a moment late. While earbuds or a speaker are connected, the words wait this long. Slide right if they light up too early", "${bt.toInt()} ms", bt, 0f..400f, 10f) { Cfg.btDelay.set(it) }
         }
     },
     { Label("Lyrics Position"); Column(Modifier.padding(horizontal = 14.dp)) { Segmented(listOf("Top", "Center", "Bottom"), Cfg.lyricPos.use(), { Cfg.lyricPos.set(it) }) } }

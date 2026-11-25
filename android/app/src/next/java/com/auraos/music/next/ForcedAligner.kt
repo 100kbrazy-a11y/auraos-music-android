@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.nio.ByteOrder
+import kotlin.math.max
 import kotlin.math.min
 
 // Precise word timing, made at home and light on purpose: no model to download (the same engine as the Mac app).
@@ -41,7 +42,7 @@ object PcmLoader {
     }
 
     /** [onProgress] 0..1 over the reading of the file */
-    fun load(file: File, onProgress: (Float) -> Unit = {}): Pcm {
+    fun load(file: File, onProgress: (Float) -> Unit = {}, onAudio: ((Pcm) -> Unit)? = null): Pcm {
         val ex = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -72,7 +73,7 @@ object PcmLoader {
             var filled = 0.0; var accL = 0.0; var accR = 0.0
             var tmpS = ShortArray(1 shl 16); var tmpF = FloatArray(1 shl 16)
             val info = MediaCodec.BufferInfo()
-            var eosIn = false; var eosOut = false; var reads = 0
+            var eosIn = false; var eosOut = false; var reads = 0; var lastHook = 0
             val deadline = System.currentTimeMillis() + 180_000L
             while (!eosOut) {
                 if (System.currentTimeMillis() > deadline) throw IllegalStateException("decoding took too long")
@@ -145,6 +146,8 @@ object PcmLoader {
                     }
                     dec.releaseOutputBuffer(outIdx, false)
                 }
+                // every few seconds of song decoded, whoever is listening to it as it comes gets to look at what there is so far
+                if (onAudio != null && sink.n - lastHook >= RATE * 4) { lastHook = sink.n; onAudio(Pcm(sink.left, sink.right, sink.n)) }
             }
             val p = Pcm(sink.left, sink.right, sink.n)
             val mime = fmt.getString(MediaFormat.KEY_MIME) ?: "?"
@@ -159,7 +162,7 @@ object PcmLoader {
 
 object ForcedAligner {
     /** bump to have every song's word timing made again */
-    const val GEN = 3
+    const val GEN = 4
     private const val MAX_MS = PcmLoader.MAX_SECONDS * 1000L
     private val judged = HashMap<String, Int>()     // song id -> hash of the lyrics we looked at and decided there was nothing to do for
 
@@ -217,7 +220,9 @@ object ForcedAligner {
         val h = rec.optString("synced").hashCode()
         if (judged[s.id] == h) return false
         fun no(): Boolean { judged[s.id] = h; return false }
-        if (rec.optInt("alignGen", 0) >= GEN || rec.optBoolean("instrumental") || rec.optBoolean("none")) return no()
+        // (a song timed before the speech model was on this phone is timed again once it is)
+        val wantsSpeech = speechWanted() && !rec.optBoolean("speechTried")
+        if ((rec.optInt("alignGen", 0) >= GEN && !wantsSpeech) || rec.optBoolean("instrumental") || rec.optBoolean("none")) return no()
         if (s.durMs < 8_000L || s.durMs > MAX_MS) return no()
         if (!Voice.load()) return no()
         if (saverCounts && Prefs.saving.value) return false     // battery saver: not now (try again later)
@@ -271,6 +276,31 @@ object ForcedAligner {
 
     private fun stepAside(urgent: Boolean) { if (!urgent && urgentN.get() > 0) throw Yielded() }
 
+    /** is the speech model switched on, and on this phone? */
+    private fun speechWanted(): Boolean = Cfg.speechSync.v.value && SpeechModel.ready
+
+    private var modelTry = 0L
+    /** the speech model is fetched in the background the first time word timing runs (on Wi-Fi: it is a big download), so the first songs are timed without it and the rest with it */
+    private fun fetchModelSoon() {
+        if (!Cfg.speechSync.v.value || SpeechModel.ready) return
+        val now = System.currentTimeMillis()
+        if (now - modelTry < 30 * 60_000L) return
+        if (isMetered()) return
+        modelTry = now
+        scope.launch { if (SpeechModel.ensure()) judged.clear() }
+    }
+    fun downloadModelNow() { modelTry = System.currentTimeMillis(); scope.launch { if (SpeechModel.ensure()) judged.clear() } }
+    private fun isMetered(): Boolean = try {
+        (Store.app.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered
+    } catch (_: Throwable) { true }
+
+    /** where the listener is in the song (audio time, seconds), 0 when it isn't the one playing */
+    private fun playhead(s: Song): Double {
+        val st = NativePlayer.state.value
+        if (st.id != s.id) return 0.0
+        return (NativePlayer.livePos() + (if (Prefs.trimSilence.value) (s.trimStart * 1000).toLong() else 0L)) / 1000.0
+    }
+
     private suspend fun run(s: Song, urgent: Boolean): Boolean {
         val rec = recOf(s.id) ?: return false
         fun mark() { rec.put("alignGen", GEN); Store.save() }       // a failed try isn't repeated either
@@ -281,23 +311,91 @@ object ForcedAligner {
             val lines = if (src != null) Online.parseLrc(src) else emptyList()
             if (src == null || lines.size < 2) return fail("no timed lines to work from")
             if (!Voice.load()) return fail("the timing engine isn't available on this phone")
+            fetchModelSoon()
             val offsets = Store.settings().optJSONObject("offsets")
             val offset = offsets?.optDouble(s.id, 0.0)?.takeIf { !it.isNaN() } ?: 0.0
+            val dur = s.durMs / 1000.0
+
+            // ---- the speech model: listens to the song 20 seconds at a time, as it is read, starting where the listener is ----
+            val words = WordTiming.wordsOf(lines)
+            val skip = BooleanArray(lines.size) { WordTiming.isAdlib(lines[it].text) || words[it].isEmpty() }
+            var sheet: LogProbs? = null; var vocab: Vocab? = null
+            var nSteps = 0; var done = BooleanArray(0); var listenMs = 0L
+            if (speechWanted()) {
+                try { sheet = SpeechModel.sheet(dur); vocab = SpeechModel.vocab; nSteps = SpeechModel.steps(dur); done = BooleanArray(nSteps) }
+                catch (e: Throwable) { Diag.log("word timing ${s.title}: speech model unavailable (${e.javaClass.simpleName} ${e.message})"); sheet = null }
+            }
+            val playStep = if (sheet != null && urgent) (playhead(s) / SpeechModel.STEP_S).toInt().coerceIn(0, max(0, nSteps - 1)) else 0
+            var timed: WordTiming.Timed? = null
+            var lastPublish = 0L
+            var speechUsed = 0
+
+            fun speechLines(): Map<Int, SpeechLine>? {
+                val sh = sheet ?: return null
+                val v = vocab ?: return null
+                val shift = timed?.shift ?: offset
+                return try { CtcAlign.align(sh, v, words, DoubleArray(lines.size) { lines[it].ms / 1000.0 + shift }, skip) } catch (e: Throwable) { Diag.log("word timing ${s.title}: speech alignment failed (${e.javaClass.simpleName} ${e.message})"); sheet = null; null }
+            }
+            fun publish(final: Boolean) {
+                val sp = speechLines()
+                val text = (timed ?: WordTiming.blank(lines, offset)).render(sp)
+                speechUsed = sp?.values?.count { it.conf >= CtcAlign.TRUST } ?: 0
+                rec.put("syncedSrc", src); rec.put("synced", text.trimEnd()); rec.put("aligned", true)
+                offsets?.remove(s.id)            // the times are in the song's own time now: any nudge made for the old ones is already in them
+                if (final) rec.put("alignGen", GEN)
+                Store.save()
+                lastPublish = System.currentTimeMillis()
+            }
+            fun listenStep(c: Int, view: Pcm) {
+                val sh = sheet ?: return
+                val t = System.currentTimeMillis()
+                try { SpeechModel.listen(view, c, sh); done[c] = true }
+                catch (e: Throwable) { Diag.log("word timing ${s.title}: speech model failed (${e.javaClass.simpleName} ${e.message})"); sheet = null }
+                listenMs += System.currentTimeMillis() - t
+                stepAside(urgent)
+            }
+
             val t0 = System.currentTimeMillis()
-            val pcm = PcmLoader.load(File(Store.app.filesDir, s.path)) { _progress.value = 0.02f + 0.33f * it; stepAside(urgent) }
+            // while the song is being read: every step that is fully read (and isn't before the listener) is listened to, and the words found so far shown
+            val pcm = PcmLoader.load(File(Store.app.filesDir, s.path), { _progress.value = 0.02f + 0.33f * it; stepAside(urgent) }) { view ->
+                if (sheet != null) {
+                    val secs = view.n.toDouble() / PcmLoader.RATE
+                    var any = false
+                    for (c in 0 until nSteps) if (!done[c] && c >= playStep - 1 && secs >= (c + 1.0) * SpeechModel.STEP_S + 2.5) { listenStep(c, view); any = true; if (sheet == null) break }
+                    if (any && urgent && sheet != null && System.currentTimeMillis() - lastPublish > 2500) { publish(false); bumpLater() }
+                }
+            }
             val t1 = System.currentTimeMillis()
             if (pcm.n < PcmLoader.RATE * 8) return fail("the song is too short")
-            val out = WordTiming.align(pcm, lines, offset) { _progress.value = it; stepAside(urgent) }
-                ?: return fail("no line could be lined up with the singing")
-            Diag.log("word timing ${s.title}: read ${(t1 - t0) / 100 / 10.0} s, listened + timed ${(System.currentTimeMillis() - t1) / 100 / 10.0} s (${lines.size} lines, ${(pcm.n / PcmLoader.RATE)} s of song)")
-            // what the engine decided: how far the lyrics' times were from the singing, from how many places, and where the lyrics came from
-            Diag.log("word timing ${s.title}: ${out.lineSequence().first().trim('[', ']')} · lyrics from ${rec.optString("source").ifBlank { "?" }} · your nudge ${"%+.1f".format(offset)} s · highlight ${Cfg.lyricShift.v.value.toInt()} ms")
-            Diag.log("word timing ${s.title}: audio ${pcm.info}")
-            rec.put("syncedSrc", src); rec.put("synced", out.trimEnd()); rec.put("aligned", true); rec.put("alignGen", GEN)
-            offsets?.remove(s.id)            // the times are in the song's own time now: any nudge made for the old ones is already in them
+
+            // the voice finder: the whole song at once (it tells how far off the lyrics' times are as a whole, and times the lines the model can't hear)
+            val voiceStart = System.currentTimeMillis()
+            timed = WordTiming.align(pcm, lines, offset) { _progress.value = it; stepAside(urgent) }
+            if (timed == null && sheet == null) return fail("no line could be lined up with the singing")
+            val voiceMs = System.currentTimeMillis() - voiceStart
+            if (urgent) { publish(false); bumpLater() }
+
+            // the steps that weren't listened to yet: from where the listener is to the end, then the start
+            if (sheet != null) {
+                val order = (playStep until nSteps) + (0 until playStep)
+                for (c in order) {
+                    if (done[c]) continue
+                    listenStep(c, pcm); if (sheet == null) break
+                    if (urgent && System.currentTimeMillis() - lastPublish > 2500) { publish(false); bumpLater() }
+                }
+            }
+            val usedModel = sheet != null
+            publish(true)
+            rec.put("speechTried", true)
+            if (usedModel) rec.put("speech", speechUsed > 0)
             Store.save()
+            Diag.log("word timing ${s.title}: read ${(t1 - t0) / 100 / 10.0} s, voice finder ${voiceMs / 100 / 10.0} s, speech model ${if (usedModel) "${listenMs / 100 / 10.0} s, heard $speechUsed of ${lines.size} lines" else "not used"} (${lines.size} lines, ${(pcm.n / PcmLoader.RATE)} s of song)")
+            // what the engine decided: how far the lyrics' times were from the singing, from how many places, and where the lyrics came from
+            timed?.let { Diag.log("word timing ${s.title}: shift ${WordTiming.sign(it.shift)} found ${WordTiming.sign(it.residual)} from ${it.used} · lyrics from ${rec.optString("source").ifBlank { "?" }} · your nudge ${"%+.1f".format(offset)} s · highlight ${Cfg.lyricShift.v.value.toInt()} ms") }
+            Diag.log("word timing ${s.title}: audio ${pcm.info}")
+            if (usedModel) SpeechModel.release()
             _failed.value = _failed.value - s.id
-            withContext(Dispatchers.Main) { Lyr.bump() }
+            bumpLater()
             return true
         } catch (e: Yielded) {
             return false          // a song being listened to needs the engine: this one is picked up again afterwards (nothing was marked)
@@ -305,4 +403,6 @@ object ForcedAligner {
             return fail(e.message ?: e.javaClass.simpleName)
         }
     }
+
+    private fun bumpLater() { android.os.Handler(android.os.Looper.getMainLooper()).post { Lyr.bump() } }
 }

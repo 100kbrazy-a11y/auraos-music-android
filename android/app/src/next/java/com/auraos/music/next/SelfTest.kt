@@ -39,4 +39,30 @@ object SelfTest {
             Log.w("Strata", "DECODETEST done")
         }
     }
+
+    /** Speech model test, started by CI: downloads the model for real, listens to a clip of read speech whose words are known, and writes where each word was found. */
+    fun asr(ctx: Context, arg: String) {
+        val dir = ctx.getExternalFilesDir("asrtest") ?: return
+        if (arg == "init") { Log.w("Strata", "ASRTEST dir=${dir.absolutePath}"); return }
+        thread(name = "asrtest") {
+            try {
+                val f = File(dir, "speech.m4a")
+                val t0 = System.currentTimeMillis()
+                val ok = kotlinx.coroutines.runBlocking { SpeechModel.ensure() }
+                Log.w("Strata", "ASRTEST model ready=$ok download_ms=${System.currentTimeMillis() - t0}")
+                if (!ok) { Log.w("Strata", "ASRTEST error=model not available: ${SpeechModel.state.value.let { (it as? SpeechModel.St.Failed)?.why }}"); return@thread }
+                val pcm = PcmLoader.load(f)
+                val secs = pcm.n.toDouble() / PcmLoader.RATE
+                val t1 = System.currentTimeMillis()
+                val sheet = SpeechModel.sheet(secs); val vocab = SpeechModel.vocab
+                for (c in 0 until SpeechModel.steps(secs)) SpeechModel.listen(pcm, c, sheet)
+                val t2 = System.currentTimeMillis()
+                val words = listOf("after early nightfall the yellow lamps would light up here and there the squalid quarter of the brothels".split(" "))
+                val r = CtcAlign.align(sheet, vocab, words, doubleArrayOf(0.0), booleanArrayOf(false))[0]
+                if (r == null) { Log.w("Strata", "ASRTEST error=no line found"); return@thread }
+                Log.w("Strata", "ASRTEST length=${"%.2f".format(java.util.Locale.US, secs)} conf=${"%.2f".format(java.util.Locale.US, r.conf)} listen_ms=${t2 - t1} starts=${r.starts.joinToString(",") { "%.2f".format(java.util.Locale.US, it) }}")
+            } catch (e: Throwable) { Log.w("Strata", "ASRTEST error=${e.javaClass.simpleName}: ${e.message}") }
+            finally { Log.w("Strata", "ASRTEST done") }
+        }
+    }
 }

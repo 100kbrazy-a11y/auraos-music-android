@@ -82,6 +82,7 @@ class NextActivity : ComponentActivity() {
         if (intent?.getBooleanExtra("seedDemo", false) == true) Demo.seed()
         if (intent?.hasExtra("liquid") == true) Prefs.setLiquid(intent.getBooleanExtra("liquid", true))
         NativePlayer.start(this)
+        AudioRoute.start(this)
         if (savedInstanceState == null) Ctl.restore(this)
         handle(intent)
         Hap.init(this)
@@ -100,6 +101,7 @@ class NextActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); handle(intent) }
     private fun handle(i: Intent?) {
         i?.getStringExtra("decodeTest")?.let { SelfTest.run(this, it); return }
+        i?.getStringExtra("asrTest")?.let { SelfTest.asr(this, it); return }
         i?.getStringExtra("open")?.let { o -> Tour.open(this, o); return }
         if (i?.action == Intent.ACTION_SEND) { val t = i.getStringExtra(Intent.EXTRA_TEXT) ?: return; Nav.stack.clear(); Nav.open(Page.Search); Yt.link(t) }
     }

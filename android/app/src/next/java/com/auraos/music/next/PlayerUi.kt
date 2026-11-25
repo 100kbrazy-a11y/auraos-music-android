@@ -1035,7 +1035,7 @@ fun LyricsPane(s: Song) {
                 l.instrumental -> T("♪ Instrumental", 22.sp, W800, Color.White.copy(alpha = 0.7f))
                 l.synced.isNotEmpty() && syncOn -> {
                     val offMs = (off * 1000).toLong()
-                    CarouselLyrics(l.synced, s.durMs, { NativePlayer.livePos() + shift - offMs }) { i -> NativePlayer.seek((l.synced[i].ms + offMs - shift).coerceAtLeast(0)) }
+                    CarouselLyrics(l.synced, s.durMs, { NativePlayer.livePos() + shift - offMs - AudioRoute.delayMs() }) { i -> NativePlayer.seek((l.synced[i].ms + offMs - shift + AudioRoute.delayMs()).coerceAtLeast(0)) }
                 }
                 l.plain.isNotBlank() || l.synced.isNotEmpty() -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 24.dp)) { T(l.plain.ifBlank { l.synced.joinToString("\n") { it.text } }, 22.sp, W800, Color.White.copy(alpha = 0.85f), lines = 1000, lh = 32.sp) }
                 else -> T("No lyrics for this song", 20.sp, W800, Color.White.copy(alpha = 0.7f))

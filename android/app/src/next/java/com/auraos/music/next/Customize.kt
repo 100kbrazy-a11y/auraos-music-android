@@ -63,6 +63,8 @@ object Cfg {
     val coverSize = F("cfgCoverSz", 1f)
     val lyricSize = F("cfgLySize", 27f)
     val lyricAlign = I("cfgLyAlign", 0)        // left · centre
+    val speechSync = B("cfgSpeechSync", true)    // word times come from a speech model that listens to the song (downloaded once)
+    val btDelay = F("cfgBtDelay", 150f)         // milliseconds a Bluetooth speaker or earbuds play behind the phone: the words are held back by this much while one is connected
     val lyricShift = F("cfgLyShift", 0f)       // milliseconds: nudges the word highlight earlier (+) or later (-)
     val lyricSweep = B("cfgLySweep", true)     // words fill in as they are sung
     val lyricGlow = B("cfgLyGlow", true)

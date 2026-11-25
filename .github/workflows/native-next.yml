@@ -120,3 +120,4 @@ jobs:
           script: |
             bash scripts/smoke.sh
             bash scripts/decodetest.sh
+            bash scripts/asrtest.sh

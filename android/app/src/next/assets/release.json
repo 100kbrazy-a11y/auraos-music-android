@@ -2,6 +2,18 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.16.0",
+   "name": "The Sync Update",
+   "date": "2026-11-25",
+   "notes": [
+    "Word timing now listens to the words. A small speech model (English) hears where each word of each line is sung and times it from that, instead of guessing from bursts of sound. Lines it can't hear (heavy beats, mumbled or non-English vocals) keep the older method.",
+    "The model downloads once (about 76 MB, on Wi-Fi or from Settings › Lyrics › Speech model) and takes 46 MB on the phone. You can turn it off or remove it there.",
+    "The words of the song you are listening to show up as soon as they are heard, starting from where you are, instead of after the whole song has been read.",
+    "Bluetooth earbuds and speakers play the sound a moment late, so the words used to light up early. While one is connected the lyrics now wait for it (Settings › Lyrics › Bluetooth delay, 150 ms to begin with: slide it until the words land on the beat).",
+    "Songs are timed again with the new method the first time you play them. Export Timing Report now says whether the speech model was used."
+   ]
+  },
+  {
    "version": "2.15.6",
    "name": "The Observe Update",
    "date": "2026-11-25",

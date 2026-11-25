@@ -73,6 +73,7 @@ object TimingReport {
         r.append("Lyrics from: ${rec?.optString("source").orEmpty().ifBlank { "?" }}${if (rec?.optBoolean("own") == true) " (your file)" else ""}\n")
         r.append("Lyrics shifted by you: ${"%+.2f".format(Locale.US, off)} s (this is cleared when the words are timed) · Highlight timing setting: ${Cfg.lyricShift.v.value.toInt()} ms · silence cut at the start: ${"%.2f".format(Locale.US, s.trimStart)} s (${if (Prefs.trimSilence.value) "on" else "off"})\n")
         r.append("Word timing for this song: ${if (timed) "made by this phone (lyrics-timed.lrc)" else "not made (words are spread evenly over each line)"}${if (ForcedAligner.isTimed(s)) "" else "; generation ${rec?.optInt("alignGen", 0) ?: 0}"}\n")
+        r.append("Speech model: ${if (rec?.optBoolean("speech") == true) "heard this song (its words are timed from the speech)" else if (rec?.optBoolean("speechTried") == true) "listened, but nothing was clear enough to use" else "not used for this song"} · on this phone: ${SpeechModel.ready} · switched on: ${Cfg.speechSync.v.value} · Bluetooth delay ${if (AudioRoute.bluetooth.value) "${AudioRoute.delayMs()} ms (earbuds/speaker connected)" else "none (no Bluetooth output)"}\n")
         if (timed) r.append("Engine header: ${synced.lineSequence().firstOrNull { it.startsWith("[strata:") }.orEmpty()}\n")
         r.append("\nLines in this part. Each word is start-end in seconds of the song; \"?\" means the end isn't known and the word runs to the next one.\n\n")
         var any = false
