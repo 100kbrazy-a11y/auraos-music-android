@@ -1,7 +1,10 @@
 package com.auraos.music.next
 
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.ByteBuffer
@@ -18,6 +21,19 @@ import kotlin.math.min
  */
 object TimingReport {
     private const val SECONDS = 20.0
+
+    // the work runs here, not in the menu's own scope: that one is cancelled the moment the menu closes, which silently killed the report in 2.15.4/2.15.5
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    fun start(ctx: Context, s: Song, posMs: Long) {
+        val app = ctx.applicationContext
+        Toasts.show("Making the timing report…")
+        scope.launch {
+            val f = try { export(app, s, posMs) } catch (e: Throwable) { Diag.log("timing report failed: ${e.javaClass.simpleName} ${e.message}"); Toasts.show("Couldn't make the report: ${e.message ?: e.javaClass.simpleName}"); return@launch }
+            if (f == null) { Toasts.show("Couldn't read this song for the report"); return@launch }
+            try { Packs.share(app, f) } catch (e: Throwable) { Diag.log("timing report share failed: ${e.message}"); Toasts.show("Couldn't open the share sheet: ${e.message}") }
+        }
+    }
 
     private fun clock(t0: Double): String { val t = max(0.0, t0); val m = (t / 60).toInt(); return String.format(Locale.US, "%d:%05.2f", m, t - m * 60) }
     private fun safe(s: String) = s.replace(Regex("[/\\\\:*?\"<>|\\p{Cntrl}]"), " ").trim().ifEmpty { "song" }.take(40)

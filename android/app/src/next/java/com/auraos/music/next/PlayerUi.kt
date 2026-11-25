@@ -980,11 +980,7 @@ fun NpSheet(s: Song) {
         Act(Ic.Info, "Export Timing Report…") {
             val pos = NativePlayer.livePos() + (if (Prefs.trimSilence.value) (s.trimStart * 1000).toLong() else 0L)
             Dialogs.close()
-            scope.launch {
-                Toasts.show("Making the timing report…")
-                val f = try { TimingReport.export(ctx, s, pos) } catch (e: Exception) { Diag.log("timing report: ${e.message}"); null }
-                if (f == null) Toasts.show("Couldn't read this song for the report") else Packs.share(ctx, f)
-            }
+            TimingReport.start(ctx, s, pos)
         }
         Act(Ic.Share, "Share as Music Pack…") { scope.launch { sharePack(ctx, s.title, listOf(s), null) } }
         Act(Ic.Trash, "Remove Song…", danger = true) { Dialogs.show { Confirm("Remove “${s.title}”?", "It's deleted from this phone.", "Remove") { Store.remove(listOf(s.id)) } } }

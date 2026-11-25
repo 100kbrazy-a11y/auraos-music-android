@@ -2,6 +2,14 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.15.6",
+   "name": "The Observe Update",
+   "date": "2026-11-25",
+   "notes": [
+    "Fixes Export Timing Report doing nothing: the report was being cancelled the moment the menu closed. It now finishes in the background and opens the share sheet, or tells you what went wrong."
+   ]
+  },
+  {
    "version": "2.15.5",
    "name": "The Observe Update",
    "date": "2026-11-25",
