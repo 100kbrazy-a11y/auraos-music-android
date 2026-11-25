@@ -2,7 +2,7 @@
 # Word timing can listen with a speech model. This downloads that model in the emulator (the real download, the real unpacking), has it listen to a clip of read speech
 # whose words are known, and checks that every word is found where it really is. Needs the app already installed + started by smoke.sh.
 P=com.auraos.music.next
-command -v ffmpeg >/dev/null || sudo apt-get install -y -qq ffmpeg >/dev/null 2>&1
+command -v ffmpeg >/dev/null || { echo 'FAIL ffmpeg is not installed'; exit 1; }
 mkdir -p at
 ffmpeg -v error -y -i scripts/asrtest/speech.wav -c:a aac -b:a 128k at/speech.m4a
 adb shell am start -n $P/com.auraos.music.next.NextActivity --es asrTest init >/dev/null; sleep 3

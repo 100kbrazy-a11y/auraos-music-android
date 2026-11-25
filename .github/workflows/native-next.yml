@@ -107,6 +107,13 @@ jobs:
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: ffmpeg (the decoder and speech tests make their sound files with it)
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && break
+            sleep 10
+          done
+          ffmpeg -version | head -1
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34

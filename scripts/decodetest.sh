@@ -16,7 +16,7 @@ def make(path, rate, secs=30):
     w.writeframes(bytes(buf)); w.close()
 make('t44.wav',44100); make('t48.wav',48000)
 PY
-command -v ffmpeg >/dev/null || sudo apt-get install -y -qq ffmpeg >/dev/null 2>&1
+command -v ffmpeg >/dev/null || { echo 'FAIL ffmpeg is not installed'; exit 1; }
 mkdir -p dt
 for r in 44 48; do
   ffmpeg -v error -y -i t$r.wav -c:a libmp3lame -b:a 128k dt/r$r.mp3
