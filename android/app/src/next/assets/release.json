@@ -2,6 +2,16 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.16.1",
+   "name": "The Sync Update, fixed",
+   "date": "2026-11-25",
+   "notes": [
+    "Fixes lyrics failing to sync once the speech model was installed. Timing a song you were playing asked the player where you were from the wrong thread, which Android refuses, so those songs failed. Songs that failed this way are timed again automatically.",
+    "Long songs on a busy phone are given more time to be read before giving up (7 minutes instead of 3).",
+    "Export Timing Report now shows how sure the speech model was about the lines it heard (best, median and worst), so lines it couldn't hear are easier to explain."
+   ]
+  },
+  {
    "version": "2.16.0",
    "name": "The Sync Update",
    "date": "2026-11-25",
@@ -34,8 +44,8 @@
    "name": "The Observe Update",
    "date": "2026-11-25",
    "notes": [
-    "New: Export Timing Report in the player's \u22ef menu. It saves the 20 seconds around where you are, exactly as the word timing hears it, with the lyrics before and after timing and a report of what was decided, so a song whose words look wrong can be looked at properly.",
-    "Settings \u203a Diagnostics now shows, for each timed song, how far off the lyrics' own times were found to be, where the lyrics came from, and how the song's audio was read.",
+    "New: Export Timing Report in the player's ⋯ menu. It saves the 20 seconds around where you are, exactly as the word timing hears it, with the lyrics before and after timing and a report of what was decided, so a song whose words look wrong can be looked at properly.",
+    "Settings › Diagnostics now shows, for each timed song, how far off the lyrics' own times were found to be, where the lyrics came from, and how the song's audio was read.",
     "The song reader now respects where the decoder says the first sound starts (a decoder that begins late would have put every word early).",
     "Behind the scenes: every build now tests the phone's song decoder against sounds whose exact timing is known."
    ]

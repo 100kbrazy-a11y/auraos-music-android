@@ -75,7 +75,7 @@ object PcmLoader {
             var tmpS = ShortArray(1 shl 16); var tmpF = FloatArray(1 shl 16)
             val info = MediaCodec.BufferInfo()
             var eosIn = false; var eosOut = false; var reads = 0; var lastHook = 0
-            val deadline = System.currentTimeMillis() + 180_000L
+            val deadline = System.currentTimeMillis() + 420_000L
             while (!eosOut) {
                 if (System.currentTimeMillis() > deadline) throw IllegalStateException("decoding took too long")
                 // feed the decoder as much as it will take right now (one buffer per round trip would make it wait on every single frame)
@@ -297,9 +297,10 @@ object ForcedAligner {
 
     /** where the listener is in the song (audio time, seconds), 0 when it isn't the one playing */
     private fun playhead(s: Song): Double {
+        // (this runs on a worker thread, and the player may only be asked from the main one: the published position is the thread-safe copy)
         val st = NativePlayer.state.value
         if (st.id != s.id) return 0.0
-        return (NativePlayer.livePos() + (if (Prefs.trimSilence.value) (s.trimStart * 1000).toLong() else 0L)) / 1000.0
+        return (st.pos + (if (Prefs.trimSilence.value) (s.trimStart * 1000).toLong() else 0L)) / 1000.0
     }
 
     private suspend fun run(s: Song, urgent: Boolean): Boolean {
@@ -330,6 +331,7 @@ object ForcedAligner {
             var timed: WordTiming.Timed? = null
             var lastPublish = 0L
             var speechUsed = 0
+            var confs: List<Double> = emptyList()
 
             fun speechLines(): Map<Int, SpeechLine>? {
                 val sh = sheet ?: return null
@@ -341,6 +343,7 @@ object ForcedAligner {
                 val sp = speechLines()
                 val text = (timed ?: WordTiming.blank(lines, offset)).render(sp)
                 speechUsed = sp?.values?.count { it.conf >= CtcAlign.TRUST } ?: 0
+                confs = sp?.values?.map { it.conf }?.sorted() ?: emptyList()
                 rec.put("syncedSrc", src); rec.put("synced", text.trimEnd()); rec.put("aligned", true)
                 offsets?.remove(s.id)            // the times are in the song's own time now: any nudge made for the old ones is already in them
                 if (final) rec.put("alignGen", GEN)
@@ -390,7 +393,7 @@ object ForcedAligner {
             rec.put("speechTried", true)
             if (usedModel) rec.put("speech", speechUsed > 0)
             Store.save()
-            Diag.log("word timing ${s.title}: read ${(t1 - t0) / 100 / 10.0} s, voice finder ${voiceMs / 100 / 10.0} s, speech model ${if (usedModel) "${listenMs / 100 / 10.0} s, heard $speechUsed of ${lines.size} lines" else "not used"} (${lines.size} lines, ${(pcm.n / PcmLoader.RATE)} s of song)")
+            Diag.log("word timing ${s.title}: read ${(t1 - t0) / 100 / 10.0} s, voice finder ${voiceMs / 100 / 10.0} s, speech model ${if (usedModel) "${listenMs / 100 / 10.0} s, heard $speechUsed of ${lines.size} lines${if (confs.isNotEmpty()) " (confidence best ${"%.1f".format(confs.last())}, median ${"%.1f".format(confs[confs.size / 2])}, worst ${"%.1f".format(confs.first())}, needs ${CtcAlign.TRUST})" else ""}" else "not used"} (${lines.size} lines, ${(pcm.n / PcmLoader.RATE)} s of song)")
             // what the engine decided: how far the lyrics' times were from the singing, from how many places, and where the lyrics came from
             timed?.let { Diag.log("word timing ${s.title}: shift ${WordTiming.sign(it.shift)} found ${WordTiming.sign(it.residual)} from ${it.used} · lyrics from ${rec.optString("source").ifBlank { "?" }} · your nudge ${"%+.1f".format(offset)} s · highlight ${Cfg.lyricShift.v.value.toInt()} ms") }
             Diag.log("word timing ${s.title}: audio ${pcm.info}")
