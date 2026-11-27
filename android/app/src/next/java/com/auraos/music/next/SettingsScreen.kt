@@ -143,6 +143,8 @@ fun UpdatesGroup() {
             Updater.St.Checking -> "Checking…"; Updater.St.UpToDate -> "You're up to date"; is Updater.St.Failed -> s.msg
             is Updater.St.Available -> "${s.rel.version} is ready to download"; else -> "Looks for a newer version on GitHub"
         }, onClick = { scope.launch { Updater.check(ctx) } })
+        var notifyOn by remember { mutableStateOf(UpdateNotify.enabled(ctx)) }
+        SwitchItem(Ic.Spark, "Update notifications", "Looks every 10 minutes and tells you when a new version is out", notifyOn) { notifyOn = it; UpdateNotify.setEnabled(ctx, it) }
         Item(Ic.Lyrics, "What's New", "What each update added", chevron = true, open = showNotes, onClick = { showNotes = !showNotes })
         AnimatedVisibility(showNotes) {
             Column(Modifier.padding(start = 18.dp, end = 18.dp, bottom = 14.dp)) {

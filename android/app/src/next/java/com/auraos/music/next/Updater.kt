@@ -45,27 +45,33 @@ object Updater {
     }
     private fun list(a: JSONArray?) = if (a == null) emptyList() else (0 until a.length()).map { a.getString(it) }
 
+    /** the newest release on GitHub that has an .apk (blocking; throws when GitHub can't be reached). Touches nothing but the network, so the background check can use it too. */
+    fun latest(): Rel? {
+        val c = URL(API).openConnection() as HttpURLConnection
+        c.setRequestProperty("Accept", "application/vnd.github+json"); c.connectTimeout = 15000; c.readTimeout = 20000
+        if (c.responseCode != 200) throw RuntimeException("GitHub said ${c.responseCode}")
+        val a = JSONArray(c.inputStream.bufferedReader().use { it.readText() })
+        (0 until a.length()).map { a.getJSONObject(it) }.filter { it.optString("tag_name").startsWith("next-v") && !it.optBoolean("draft") }.mapNotNull { o ->
+            val assets = o.optJSONArray("assets") ?: JSONArray()
+            val apk = (0 until assets.length()).map { assets.getJSONObject(it) }.firstOrNull { it.optString("name").endsWith(".apk") } ?: return@mapNotNull null
+            val title = o.optString("name"); val name = title.substringAfter("—", "").trim()
+            Rel(o.optString("tag_name").removePrefix("next-v"), name, o.optString("body").lines().filter { it.trimStart().startsWith("- ") }.map { it.trim().removePrefix("- ") },
+                o.optString("published_at").take(10), apk.optString("browser_download_url"), apk.optLong("size"))
+        }.maxByOrNull { it.code }
+    }
+
+    /** the version code of the installed app */
+    fun installedCode(ctx: Context): Int = try { val p = ctx.packageManager.getPackageInfo(ctx.packageName, 0); if (Build.VERSION.SDK_INT >= 28) p.longVersionCode.toInt() else @Suppress("DEPRECATION") p.versionCode } catch (_: Exception) { 0 }
+
     suspend fun check(ctx: Context, quiet: Boolean = false) {
         if (state.value is St.Downloading) return
         if (!quiet) state.value = St.Checking
         val r = withContext(Dispatchers.IO) {
-            try {
-                val c = URL(API).openConnection() as HttpURLConnection
-                c.setRequestProperty("Accept", "application/vnd.github+json"); c.connectTimeout = 15000; c.readTimeout = 20000
-                if (c.responseCode != 200) throw RuntimeException("GitHub said ${c.responseCode}")
-                val a = JSONArray(c.inputStream.bufferedReader().use { it.readText() })
-                (0 until a.length()).map { a.getJSONObject(it) }.filter { it.optString("tag_name").startsWith("next-v") && !it.optBoolean("draft") }.mapNotNull { o ->
-                    val assets = o.optJSONArray("assets") ?: JSONArray()
-                    val apk = (0 until assets.length()).map { assets.getJSONObject(it) }.firstOrNull { it.optString("name").endsWith(".apk") } ?: return@mapNotNull null
-                    val title = o.optString("name"); val name = title.substringAfter("—", "").trim()
-                    Rel(o.optString("tag_name").removePrefix("next-v"), name, o.optString("body").lines().filter { it.trimStart().startsWith("- ") }.map { it.trim().removePrefix("- ") },
-                        o.optString("published_at").take(10), apk.optString("browser_download_url"), apk.optLong("size"))
-                }.maxByOrNull { it.code }
-            } catch (e: Exception) { Diag.log("update check: ${e.message}"); if (!quiet) state.value = St.Failed("Couldn't reach GitHub: ${e.message}"); return@withContext null }
+            try { latest() }
+            catch (e: Exception) { Diag.log("update check: ${e.message}"); if (!quiet) state.value = St.Failed("Couldn't reach GitHub: ${e.message}"); return@withContext null }
         } ?: return
         Store.settings().put("updateChecked", System.currentTimeMillis()); Store.save()
-        val mine = try { val p = ctx.packageManager.getPackageInfo(ctx.packageName, 0); if (Build.VERSION.SDK_INT >= 28) p.longVersionCode.toInt() else @Suppress("DEPRECATION") p.versionCode } catch (_: Exception) { 0 }
-        if (r.code > mine) { state.value = St.Available(r); if (quiet) Toasts.show("Update available: ${r.version}${if (r.name.isNotBlank()) " · ${r.name}" else ""} — Settings › Updates") }
+        if (r.code > installedCode(ctx)) state.value = St.Available(r)
         else if (!quiet) state.value = St.UpToDate
     }
 

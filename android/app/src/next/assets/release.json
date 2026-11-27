@@ -2,6 +2,16 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.19.0",
+   "name": "The Heads-Up Update",
+   "date": "2026-11-27",
+   "notes": [
+    "When you open the app fresh and a newer version is out, a popup tells you its name and what's new, with Update (downloads, then installs) and Later.",
+    "Every 10 minutes the app looks on GitHub for a new version and sends a notification the moment there is one: \"New update for Strata x.y.z out now!!\". Once per version, tap it to open the app and update. Android can stretch the 10 minutes when the phone is dozing or has battery limits on this app, and nothing runs after you Force stop the app until you open it again.",
+    "Settings › Updates has a switch for the update notifications."
+  ]
+  },
+  {
    "version": "2.18.0",
    "name": "The Speed Update",
    "date": "2026-11-27",

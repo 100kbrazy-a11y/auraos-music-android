@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- the Discord SDK's voice-chat parts: not used, so not asked for -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" tools:node="remove" />
@@ -10,6 +11,13 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:node="remove" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <application android:label="Strata Music Next" tools:replace="android:label">
+        <receiver android:name="com.auraos.music.next.UpdateReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="com.auraos.music.next.UPDATE_CHECK" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <service android:name="com.auraos.music.next.DownloadService" android:foregroundServiceType="dataSync" android:exported="false" />
         <activity android:name="com.auraos.music.MainActivity" tools:node="remove" />
         <service android:name="com.discord.socialsdk.ForegroundService" tools:node="remove" />

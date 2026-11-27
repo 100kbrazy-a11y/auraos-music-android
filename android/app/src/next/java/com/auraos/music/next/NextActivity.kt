@@ -238,7 +238,7 @@ fun FgApp() {
     LaunchedEffect(Unit) {
         if (!Migrate.done() && Store.songs.value.isEmpty()) { val r = Migrate.run(); if (r.isNotBlank() && !r.startsWith("There was nothing")) Toasts.show(r) }
         Tasks.poke()
-        Updater.autoCheck(ctx)
+        UpdateNotify.onLaunch(ctx)
     }
     LaunchedEffect(Unit) { while (true) { val was = Prefs.saving.value; Prefs.saving.value = Prefs.autoSaver.value && Tasks.saver(ctx); if (Prefs.saving.value != was || was == false && Diag.lines.value.none { it.contains("motion check") }) Diag.log("motion check: ${Tasks.motionWhy(ctx)}"); delay(60000) } }
     LaunchedEffect(awake, full) {
