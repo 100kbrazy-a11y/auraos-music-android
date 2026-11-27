@@ -51,7 +51,7 @@ object Updater {
         c.setRequestProperty("Accept", "application/vnd.github+json"); c.connectTimeout = 15000; c.readTimeout = 20000
         if (c.responseCode != 200) throw RuntimeException("GitHub said ${c.responseCode}")
         val a = JSONArray(c.inputStream.bufferedReader().use { it.readText() })
-        (0 until a.length()).map { a.getJSONObject(it) }.filter { it.optString("tag_name").startsWith("next-v") && !it.optBoolean("draft") }.mapNotNull { o ->
+        return (0 until a.length()).map { a.getJSONObject(it) }.filter { it.optString("tag_name").startsWith("next-v") && !it.optBoolean("draft") }.mapNotNull { o ->
             val assets = o.optJSONArray("assets") ?: JSONArray()
             val apk = (0 until assets.length()).map { assets.getJSONObject(it) }.firstOrNull { it.optString("name").endsWith(".apk") } ?: return@mapNotNull null
             val title = o.optString("name"); val name = title.substringAfter("—", "").trim()

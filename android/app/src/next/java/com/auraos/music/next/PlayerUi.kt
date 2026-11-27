@@ -1002,7 +1002,12 @@ fun SpeedSheet() {
         }
         Column(Modifier.padding(horizontal = 24.dp)) {
             Slide(sp, 0.5f..2f, 0.05f) { Prefs.setSpeed(it) }
-            Row(Modifier.fillMaxWidth()) { T("0.5×", 12.sp, color = C.faint, modifier = Modifier.weight(1f)); T("1×", 12.sp, color = C.faint); T("2×", 12.sp, color = C.faint, modifier = Modifier.weight(1f), align = androidx.compose.ui.text.style.TextAlign.End) }
+            // 1× sits a third of the way along (0.5 to 2), so its label is centred on that point, not in the middle
+            Row(Modifier.fillMaxWidth()) {
+                Box(Modifier.weight(1f)) { T("0.5×", 12.sp, color = C.faint) }
+                Box(Modifier.width(0.dp).wrapContentWidth(Alignment.CenterHorizontally, unbounded = true)) { T("1×", 12.sp, color = C.faint) }
+                Box(Modifier.weight(2f), contentAlignment = Alignment.CenterEnd) { T("2×", 12.sp, color = C.faint) }
+            }
         }
         FlowRow(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { v -> Chip(if (v == 1f || v == 2f) "${v.toInt()}×" else "$v×", kotlin.math.abs(sp - v) < 0.001f) { Prefs.setSpeed(v) } }
