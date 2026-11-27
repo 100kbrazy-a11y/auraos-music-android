@@ -386,7 +386,8 @@ object ForcedAligner {
         latestUrgent = s.id
         if (_busy.value == s.id || s.id in _waiting.value) return
         val r = recOf(s.id) ?: return
-        val src = sourceOf(r) ?: return
+        // (lyrics that came with a time for every word are boiled down to their line times, so the words can be timed on this phone instead)
+        val src = sourceOf(r) ?: r.optString("synced").takeIf { it.contains("<") }?.let { t -> Online.parseLrc(t).joinToString("\n") { "[${WordTiming.stamp(it.ms / 1000.0)}]${it.text}" } } ?: return
         r.put("syncedSrc", src); r.put("synced", src); r.remove("aligned"); r.remove("alignGen")
         judged.remove(s.id)
         _failed.value = _failed.value - s.id

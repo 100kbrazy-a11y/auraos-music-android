@@ -1035,13 +1035,11 @@ fun LyricsPane(s: Song) {
     var loading by remember(s.id, v) { mutableStateOf(ly == null) }
     var failed by remember(s.id, v) { mutableStateOf(false) }
     LaunchedEffect(s.id, v) { if (ly == null) { ly = withContext(Dispatchers.IO) { try { Online.fetchLyrics(s) } catch (_: Exception) { failed = true; null } }; loading = false } }
-    var off by remember(s.id, v) { mutableStateOf(Store.settings().optJSONObject("offsets")?.optDouble(s.id, 0.0) ?: 0.0) }
-    fun nudge(d: Double) {
-        off = Math.round((off + d) * 10) / 10.0
-        val o = Store.settings().optJSONObject("offsets") ?: org.json.JSONObject().also { Store.settings().put("offsets", it) }
-        if (off == 0.0) o.remove(s.id) else o.put(s.id, off); Store.save()
-    }
+    val offRev = LyricTiming.rev.intValue
+    val off = remember(s.id, v, offRev) { LyricTiming.offset(s.id) }
     val l = ly
+    // lyrics saved before the sources were asked all at once: look again, once, for a version with a time for every word
+    LaunchedEffect(s.id, l != null) { if (l != null && Online.needsUpgrade(s.id)) { val up = withContext(Dispatchers.IO) { try { Online.upgrade(s) } catch (_: Exception) { false } }; if (up) Lyr.bump() } }
     // the words are timed on this phone, for the song whose lyrics are showing, right away (and the page says so)
     val busy by ForcedAligner.busyId.collectAsState(); val waiting by ForcedAligner.waiting.collectAsState(); val failedIds by ForcedAligner.failed.collectAsState()
     val progress by ForcedAligner.progress.collectAsState()
@@ -1087,12 +1085,13 @@ fun LyricsPane(s: Song) {
                 syncing -> "Syncing…"
                 s.id in failedIds && !timed -> "Sync failed"
                 timed -> "Words ✓"
+                l != null && l.synced.isNotEmpty() && l.synced.count { it.tagged } >= l.synced.size * 0.6 -> "Words ✓ · " + (Store.meta.optJSONObject("lyrics")?.optJSONObject(s.id)?.optString("source")?.ifBlank { null } ?: "source")
                 l != null && l.synced.isNotEmpty() -> "Lines only"
                 else -> "Lyrics"
             }
             T(if (off != 0.0) "$state · %+.1f s".format(off) else state, 12.sp, color = Color.White.copy(alpha = 0.55f), modifier = Modifier.weight(1f))
             val canSync = l != null && l.synced.isNotEmpty() && !syncing
-            for ((t, f) in listOfNotNull<Pair<String, () -> Unit>>("Earlier" to { nudge(-0.5) }, "Later" to { nudge(0.5) }, if (canSync) "Re-sync" to { Hap.tick(); ForcedAligner.resync(s) } else null, "Wrong lyrics?" to { Dialogs.sheet { LyricsSearch(s) } }))
+            for ((t, f) in listOfNotNull<Pair<String, () -> Unit>>("Timing" to { Dialogs.sheet { TimingSheet(s, canSync) } }, if (canSync) "Re-sync" to { Hap.tick(); ForcedAligner.resync(s) } else null, "Wrong lyrics?" to { Dialogs.sheet { LyricsSearch(s) } }))
                 Box(Modifier.height(48.dp).clip(RoundedCornerShape(12.dp)).clickable { f() }.padding(horizontal = 9.dp), contentAlignment = Alignment.Center) { T(t, 12.sp, W700, Color.White.copy(alpha = 0.8f)) }
         }
     }

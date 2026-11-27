@@ -379,10 +379,10 @@ private fun VizPreview() {
 fun ProvidersSheet() {
     val order by LrcProviders.order.collectAsState()
     val all = order + LrcProviders.ALL.filter { it !in order }
-    val about = mapOf("LRCLIB" to "Open community lyrics", "NetEase" to "Very large catalogue, strong on rap and pop", "QQ Music" to "Large catalogue with timed lyrics", "Kugou" to "Extra cover for older and rarer songs")
+    val about = mapOf("LRCLIB" to "Open community lyrics", "Musixmatch" to "Largest lyrics library, often with a time for every word", "NetEase" to "Very large catalogue, strong on rap and pop, many with a time for every word", "QQ Music" to "Large catalogue with timed lyrics", "Kugou" to "Extra cover for older and rarer songs, many with a time for every word")
     SheetScroll {
         T("LRC Providers", 22.sp, W700, modifier = Modifier.padding(start = 24.dp))
-        T("Strata asks them in this order and uses the first that has timed lyrics.", 13.sp, color = C.sub, lines = 2, modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 2.dp, bottom = 8.dp))
+        T("Strata asks all of them at once and keeps the best find: a time for every word first, then timed lines, then plain text. The order only breaks ties.", 13.sp, color = C.sub, lines = 2, modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 2.dp, bottom = 8.dp))
         all.forEach { p ->
             val i = order.indexOf(p); val on = i >= 0
             Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
