@@ -1035,8 +1035,8 @@ fun LyricsPane(s: Song) {
     var loading by remember(s.id, v) { mutableStateOf(ly == null) }
     var failed by remember(s.id, v) { mutableStateOf(false) }
     LaunchedEffect(s.id, v) { if (ly == null) { ly = withContext(Dispatchers.IO) { try { Online.fetchLyrics(s) } catch (_: Exception) { failed = true; null } }; loading = false } }
-    val offRev = LyricTiming.rev.intValue
-    val off = remember(s.id, v, offRev) { LyricTiming.offset(s.id) }
+    val offRev = SongNudge.rev.intValue
+    val off = remember(s.id, v, offRev) { SongNudge.offset(s.id) }
     val l = ly
     // lyrics saved before the sources were asked all at once: look again, once, for a version with a time for every word
     LaunchedEffect(s.id, l != null) { if (l != null && Online.needsUpgrade(s.id)) { val up = withContext(Dispatchers.IO) { try { Online.upgrade(s) } catch (_: Exception) { false } }; if (up) Lyr.bump() } }

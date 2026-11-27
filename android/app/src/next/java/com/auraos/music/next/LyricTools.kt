@@ -19,7 +19,7 @@ import com.auraos.music.NativePlayer
 import kotlinx.coroutines.delay
 
 /** the nudge a song's lyrics get (seconds, + = the words come later), kept per song */
-object LyricTiming {
+object SongNudge {
     val rev = mutableIntStateOf(0)
     fun offset(id: String): Double = Store.settings().optJSONObject("offsets")?.optDouble(id, 0.0)?.takeIf { !it.isNaN() } ?: 0.0
     fun setOffset(id: String, v: Double) {
@@ -34,19 +34,19 @@ object LyricTiming {
 @Composable
 fun TimingSheet(s: Song, canResync: Boolean) {
     val a = accent
-    @Suppress("UNUSED_VARIABLE") val r = LyricTiming.rev.intValue
-    val off = LyricTiming.offset(s.id)
+    @Suppress("UNUSED_VARIABLE") val r = SongNudge.rev.intValue
+    val off = SongNudge.offset(s.id)
     SheetScroll {
         Row(Modifier.padding(start = 24.dp, end = 24.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(Ic.Timer, tint = a); T("Lyric timing", 22.sp, W700, modifier = Modifier.weight(1f)); T(if (off == 0.0) "On time" else "%+.2f s".format(off), 17.sp, W700, a)
         }
         Column(Modifier.padding(horizontal = 24.dp)) {
             T("Words light up too early? Slide right. Too late? Slide left. It only changes this song.", 13.sp, color = C.sub, lines = 3, modifier = Modifier.padding(bottom = 4.dp))
-            Slide(off.toFloat(), -5f..5f, 0.05f) { LyricTiming.setOffset(s.id, it.toDouble()) }
+            Slide(off.toFloat(), -5f..5f, 0.05f) { SongNudge.setOffset(s.id, it.toDouble()) }
         }
         FlowRow(Modifier.padding(horizontal = 20.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            for ((t, d) in listOf("−0.5" to -0.5, "−0.1" to -0.1, "−0.05" to -0.05, "+0.05" to 0.05, "+0.1" to 0.1, "+0.5" to 0.5)) Chip("$t s", false) { LyricTiming.setOffset(s.id, off + d) }
-            Chip("Reset", off == 0.0) { LyricTiming.setOffset(s.id, 0.0) }
+            for ((t, d) in listOf("−0.5" to -0.5, "−0.1" to -0.1, "−0.05" to -0.05, "+0.05" to 0.05, "+0.1" to 0.1, "+0.5" to 0.5)) Chip("$t s", false) { SongNudge.setOffset(s.id, off + d) }
+            Chip("Reset", off == 0.0) { SongNudge.setOffset(s.id, 0.0) }
         }
         Act(Ic.Timer, "Tap along to time the lines", "Play the song and tap as each line starts. The words are timed again from your taps.") { Dialogs.sheet { MarkSheet(s) } }
         if (canResync) Act(Ic.Wand, "Time the words again", "Listens to the song again and times every word from the lines' times") { Hap.tick(); ForcedAligner.resync(s) }
@@ -104,7 +104,7 @@ fun MarkSheet(s: Song) {
         if (done) Box(Modifier.padding(horizontal = 24.dp, vertical = 14.dp)) {
             Btn("Save", Ic.Check, modifier = Modifier.fillMaxWidth()) {
                 val text = lines.indices.joinToString("\n") { "[${WordTiming.stamp(marks[it] / 1000.0)}]${lines[it]}" }
-                LyricTiming.setOffset(s.id, 0.0)
+                SongNudge.setOffset(s.id, 0.0)
                 Online.saveOwn(s.id, text); Lyr.bump(); Dialogs.close(); Toasts.show("Saved. Timing the words from your taps")
                 ForcedAligner.startNow(s)
             }
