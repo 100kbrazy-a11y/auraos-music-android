@@ -1,0 +1,513 @@
+{
+ "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
+ "releases": [
+  {
+   "version": "2.20.0",
+   "name": "The Every Word Update",
+   "date": "2026-11-27",
+   "notes": [
+    "Lyrics now come from every source at once and the best find wins: a version with a time for every word first, then timed lines, then plain text. New source: Musixmatch. NetEase and Kugou are now asked for their word-timed versions too. Songs whose lyrics were saved earlier are looked up again once, when you open their lyrics, and switched only if a version with a time for every word turns up.",
+    "Lyrics page says where the words came from (Words ✓ · Musixmatch, for example). Songs without word timing from any source still get it from the speech model on this phone, as before.",
+    "New Timing button on the lyrics page: fine nudge in steps of 0.05 s with a slider and quick buttons, per song.",
+    "New Tap along: play the song and tap as each line starts, like QuickLRC. Your taps become the song's lyrics and the words are timed from them.",
+    "Re-sync now also works on lyrics that came with word times: it times the words again on this phone from the lines' times."
+  ]
+  },
+  {
+   "version": "2.19.1",
+   "name": "The Heads-Up Update, fixed",
+   "date": "2026-11-27",
+   "notes": [
+    "Fixes the update popup and update notifications from 2.19.0, which didn't build.",
+    "The speed sheet's 1× label now sits right under the 1× point of the slider instead of in the middle of the bar."
+   ]
+  },
+  {
+   "version": "2.19.0",
+   "name": "The Heads-Up Update",
+   "date": "2026-11-27",
+   "notes": [
+    "When you open the app fresh and a newer version is out, a popup tells you its name and what's new, with Update (downloads, then installs) and Later.",
+    "Every 10 minutes the app looks on GitHub for a new version and sends a notification the moment there is one: \"New update for Strata x.y.z out now!!\". Once per version, tap it to open the app and update. Android can stretch the 10 minutes when the phone is dozing or has battery limits on this app, and nothing runs after you Force stop the app until you open it again.",
+    "Settings › Updates has a switch for the update notifications."
+  ]
+  },
+  {
+   "version": "2.18.0",
+   "name": "The Speed Update",
+   "date": "2026-11-27",
+   "notes": [
+    "New speed button in the player, next to the equalizer. It opens a slider from 0.5× to 2× that snaps every 0.05, so 1.10× or 1.35× work, with quick chips for 0.5×, 0.75×, 1×, 1.25×, 1.5× and 2×. The button lights up while the speed isn't 1×.",
+    "Pitch follows speed by default, like a record: faster sounds higher, slower sounds lower. Switch it off in the same sheet to keep the voice where it was.",
+    "Your speed is remembered. Songs blend into each other with a plain crossfade while it isn't 1× (beat matching needs normal speed).",
+    "Settings › Customize › Player buttons has a switch to hide the speed button."
+   ]
+  },
+  {
+   "version": "2.17.0",
+   "name": "The Fast Read Update",
+   "date": "2026-11-27",
+   "notes": [
+    "Songs are read for word timing in 2 or 3 pieces at once instead of one long pass. Most of the wait for a song's words was the phone's decoder working through it packet by packet; this was the biggest part of the 12 to 100 seconds it could take. The pieces are only joined where the sound they both heard lines up to the sample (checked on every song); if it doesn't, or anything goes wrong, the song is read in one go like before.",
+    "The speech model now gives up on a song after 100 seconds of it if it hasn't been able to make out a single line (mumbled or heavily processed vocals), instead of spending a minute or more on the whole song for nothing. The voice finder's timing stands for those songs.",
+    "Fixes the crash-and-fail from 2.16.0 (asking the player for its position from the wrong thread).",
+    "Export Timing Report shows how many pieces a song was read in and whether the model gave up."
+   ]
+  },
+  {
+   "version": "2.16.1",
+   "name": "The Sync Update, fixed",
+   "date": "2026-11-25",
+   "notes": [
+    "Fixes lyrics failing to sync once the speech model was installed. Timing a song you were playing asked the player where you were from the wrong thread, which Android refuses, so those songs failed. Songs that failed this way are timed again automatically.",
+    "Long songs on a busy phone are given more time to be read before giving up (7 minutes instead of 3).",
+    "Export Timing Report now shows how sure the speech model was about the lines it heard (best, median and worst), so lines it couldn't hear are easier to explain."
+   ]
+  },
+  {
+   "version": "2.16.0",
+   "name": "The Sync Update",
+   "date": "2026-11-25",
+   "notes": [
+    "Word timing now listens to the words. A small speech model (English) hears where each word of each line is sung and times it from that, instead of guessing from bursts of sound. Lines it can't hear (heavy beats, mumbled or non-English vocals) keep the older method.",
+    "The model downloads once (about 76 MB, on Wi-Fi or from Settings › Lyrics › Speech model) and takes 46 MB on the phone. You can turn it off or remove it there.",
+    "The words of the song you are listening to show up as soon as they are heard, starting from where you are, instead of after the whole song has been read.",
+    "Bluetooth earbuds and speakers play the sound a moment late, so the words used to light up early. While one is connected the lyrics now wait for it (Settings › Lyrics › Bluetooth delay, 150 ms to begin with: slide it until the words land on the beat).",
+    "Songs are timed again with the new method the first time you play them. Export Timing Report now says whether the speech model was used."
+   ]
+  },
+  {
+   "version": "2.15.6",
+   "name": "The Observe Update",
+   "date": "2026-11-25",
+   "notes": [
+    "Fixes Export Timing Report doing nothing: the report was being cancelled the moment the menu closed. It now finishes in the background and opens the share sheet, or tells you what went wrong."
+   ]
+  },
+  {
+   "version": "2.15.5",
+   "name": "The Observe Update",
+   "date": "2026-11-25",
+   "notes": [
+    "Fixes 2.15.4 putting the words of mp3 songs about 40 ms late (a change to how the song's first sound is placed that the new decoder test caught). The test confirms m4a, ogg, opus and webm songs are read to the millisecond, and mp3 too now."
+   ]
+  },
+  {
+   "version": "2.15.4",
+   "name": "The Observe Update",
+   "date": "2026-11-25",
+   "notes": [
+    "New: Export Timing Report in the player's ⋯ menu. It saves the 20 seconds around where you are, exactly as the word timing hears it, with the lyrics before and after timing and a report of what was decided, so a song whose words look wrong can be looked at properly.",
+    "Settings › Diagnostics now shows, for each timed song, how far off the lyrics' own times were found to be, where the lyrics came from, and how the song's audio was read.",
+    "The song reader now respects where the decoder says the first sound starts (a decoder that begins late would have put every word early).",
+    "Behind the scenes: every build now tests the phone's song decoder against sounds whose exact timing is known."
+   ]
+  },
+  {
+   "version": "2.15.3",
+   "name": "The Observe Update",
+   "date": "2026-11-25",
+   "notes": [
+    "Syncing a song is many times faster. Your Diagnostics log showed the time going into reading the song (47 s for a six-minute track) while the timing itself took under 3 s: the song is now fed to the decoder in batches and read out as fast as it comes, instead of one frame per round trip."
+   ]
+  },
+  {
+   "version": "2.15.2",
+   "name": "The Observe Update",
+   "date": "2026-11-25",
+   "notes": [
+    "The song you're listening to is synced first. As soon as it starts playing its lyrics are fetched (if needed) and its words are timed ahead of everything else. Any background job (timing other songs, silence scans, covers) steps aside while it works and carries on from where it left off when it is done.",
+    "Skipping through songs doesn't line them all up: only the song you end up on is timed."
+   ]
+  },
+  {
+   "version": "2.15.1",
+   "name": "The Observe Update",
+   "date": "2026-11-24",
+   "notes": [
+    "Lyrics: the two lines above and below the one being sung now stay fully in front, with their first letters showing, instead of being cut off and covered by the fog on the left. Only lines further away slide off into it.",
+    "Word syncing reads the song faster (the audio is copied out in one go and resampled with a leaner loop), says what it is doing (Reading the song · Listening for the voice · Syncing words) with a percentage, and writes how long each step took to Settings › Diagnostics.",
+    "The little status under the lyrics is short enough to read: Syncing…, Words ✓, Lines only, or Sync failed."
+   ]
+  },
+  {
+   "version": "2.15.0",
+   "name": "The Observe Update",
+   "date": "2026-11-24",
+   "notes": [
+    "Observe: a new four-bar button on the lyrics page, right next to the heart. Turn it on (it lights up in your accent colour) and the lyrics and the buttons under them step away, the visualizer grows to fill the page, and the Lyrics tab is renamed Observe.",
+    "Pulling the media bar up now sends the tab bar below it sinking down, fading and leaving the screen. When the player has fully opened, a copy of the bar with just the three player tabs slides up in the same glass look, so it feels like one bar that changed shape.",
+    "Find Cover Automatically no longer says it can't reach the internet when the covers service simply answered with an error or nothing matched. It now says what actually went wrong.",
+    "The heart on the lyrics page moved a little to the left to make room for the new button."
+   ]
+  },
+  {
+   "version": "2.14.1",
+   "name": "The Karaoke Update",
+   "date": "2026-11-24",
+   "notes": [
+    "Word-by-word timing now starts the moment you open a song's lyrics (it used to wait at the back of the background queue, behind every other job in your library). A \"Syncing words\" pill with a progress ring shows while it works, then \"Words synced\" when it is done.",
+    "New Re-sync button under the lyrics: throws away the word times and makes them again from the lyrics' own line times. The line under the lyrics now says whether the song is Words synced, Line synced or Words not synced.",
+    "A song whose timing fails is no longer silent about it: the reason is written to Settings › Diagnostics and the lyrics say Words not synced, so Re-sync can try again.",
+    "Every song is timed again with this version, and songs up to 8 minutes long can be timed (was 6)."
+   ]
+  },
+  {
+   "version": "2.14.0",
+   "name": "The Karaoke Update",
+   "date": "2026-11-24",
+   "notes": [
+    "Lyrics now look and behave like the Mac app: the lines sit on a gentle curve like a wheel, the line being sung is lit word by word with the word being sung a little bigger, two lines light up when an ad-lib is sung over the end of a line, and a long quiet stretch shows three dots that fill as the next line gets closer. The glow behind the lyrics is gone.",
+    "Word timing is made on your phone by the same small, model-free engine the Mac app uses: it finds where the voice is and where each syllable starts, lines every word up with that (stutters like \"eh eh everyone\" included), and checks whether the whole lyrics file is early or late. Songs are re-timed in the background the first time after this update.",
+    "The buttons under the lyrics (Earlier, Later, Wrong lyrics?) are bigger and sit in front of the lyrics, so pressing them can no longer jump the song to a line.",
+    "Tapping a tab now slides the pages across at a pace you can follow, instead of snapping.",
+    "The player fades in already in the song's colours (no more black frame and flash), and the moving background and visualizer melt in a moment later.",
+    "Covers that are too small to look good are found and swapped for a sharp one automatically (once per album, in the background)."
+   ]
+  },
+  {
+   "version": "2.13.4",
+   "name": "The Thanksgiving Update",
+   "date": "2026-11-23",
+   "notes": [
+    "Export any song: three-dot menu › Export… Choose Original, Opus (.opus), M4A (AAC), FLAC or WAV. Opus and M4A pick their own quality; FLAC and WAV carry the title, artist, album and cover. Save it to Music › Strata Music or share it",
+    "A song that is Opus inside a .webm becomes a real .opus without re-encoding: no quality loss",
+    "Music packs now contain .opus files instead of .webm for YouTube songs, with the title, artist and cover inside"
+   ]
+  },
+  {
+   "version": "2.13.3",
+   "name": "The Thanksgiving Update",
+   "date": "2026-11-23",
+   "notes": [
+    "The media bar opens into the player right away: there is no wait before it starts, it moves on a quicker spring, and the heavy parts (blurred cover, fog, visualizer, the other pages) appear once it has opened instead of being built while it moves",
+    "The player is no longer rebuilt on every frame of the opening, and the whole app skips redrawing parts that did not change, so animations and scrolling stutter less",
+    "The dock's tab bar now shrinks into a small pill at the bottom of the player with three tabs: Lyrics, Current Song and Artist. It slides with the pages as you swipe them",
+    "A built-in start-up profile precompiles the app's hot code on first launch, so the first animations after installing are smooth too",
+    "Updates download several pieces at once and the native libraries are stored compressed, so the update is faster and smaller",
+    "Discord: choose a writing style for the song and artist lines (bold, italic, script, monospace, small caps, wide, UPPERCASE), a marker in front of each (colour dots, notes), what your status shows next to your name, and the text when hovering the cover. Discord itself decides the text colour, so apps cannot change it",
+    "Fixed the Downloads page failing to build"
+   ]
+  },
+  {
+   "version": "2.13.2",
+   "name": "The Thanksgiving Update",
+   "date": "2026-11-23",
+   "notes": [
+    "Downloads no longer stop after a couple of songs: one slow answer from YouTube used to cancel the whole queue. Now each song tries up to four times with a pause between tries, a stuck hidden browser is replaced with a fresh one, and a song that cannot start goes back in line",
+    "New Settings › Downloads page: speed, number of streams and songs done, every song with its own progress, speed and streams, plus Pause, Stop all, Retry failed, Clear, and cancel, retry or remove for each song",
+    "The download notification has Pause and Stop buttons and refreshes about once a second instead of on every tick, which is easier on the battery",
+    "Discord Rich Presence shows the album cover (looked up online, because Discord cannot read files on your phone); turn it off with Show Album Cover",
+    "Under the hood: tested lossless Opus remux (WebM to .opus), and FLAC and WAV writers, ready for song export"
+   ]
+  },
+  {
+   "version": "2.13.1",
+   "name": "The Thanksgiving Update",
+   "date": "2026-11-23",
+   "notes": [
+    "Discord Rich Presence is back on Discord's official SDK: your profile shows \"Listening to Strata Music\" with the song, the artist and a live timeline. There is no sign-in and no token, it just needs the Discord app on the same phone",
+    "Rich Presence is off until you switch it on (Settings › Appearance › Discord Rich Presence), so nothing about what you play appears on Discord unless you choose it",
+    "Customize it in the same place: activity name, display format, the live timeline, and hiding the status while paused"
+   ]
+  },
+  {
+   "version": "2.13.0",
+   "name": "The Thanksgiving Update",
+   "date": "2026-11-23",
+   "notes": [
+    "Brown, yellow and red leaves fall softly down the background, behind the songs and behind the pages you open (turn them off in Settings › Appearance › Motion › Falling Leaves)",
+    "The leaves pause with Motion Effects and in Battery Saver, and are drawn at about 30 frames a second to go easy on the battery",
+    "Album and song covers above thumbnail size are drawn in full color and at a higher resolution (up to 768 px) instead of the small, banded version, so big covers are no longer blurry"
+   ]
+  },
+  {
+   "version": "2.12.4",
+   "name": "Performance Update Pt. 1",
+   "date": "2026-11-23",
+   "notes": [
+    "Fixed a build break: the song library layer (Store) had been emptied by a bad edit and is restored, so the app builds again",
+    "Cover images load through a smaller, capped image cache (about 8% of memory) at the size they are shown",
+    "The lock-screen artwork is only rebuilt when the cover actually changes",
+    "Library changes are saved after a one second pause instead of a quarter second, with a save every time the app goes to the background",
+    "Restored the full update history that had been trimmed from the release notes",
+    "Discord Rich Presence no longer asks for your Discord token (that broke Discord's rules and could get an account banned); any token stored by an older build is erased. It returns on Discord's official SDK"
+   ]
+  },
+  {
+   "version": "2.12.3",
+   "name": "The Presence Update",
+   "date": "2026-11-20",
+   "notes": [
+    "Fixed signing in to Discord for Rich Presence"
+   ]
+  },
+  {
+   "version": "2.12.2",
+   "name": "The Presence Update",
+   "date": "2026-11-20",
+   "notes": [
+    "Discord Rich Presence: shows the song, artist and live playback time on Strata Music (toggle it in Settings › Appearance)",
+    "Lyrics: forced alignment times the words of a song to its vocals when no synced lyrics exist"
+   ]
+  },
+  {
+   "version": "2.12.1",
+   "name": "The Connectivity Update",
+   "date": "2026-11-20",
+   "notes": [
+    "Sharper automatic covers: upgrades Apple/iTunes album art to 1200x1200, skips low-res thumbnails, and grabs max-res YouTube covers when downloading",
+    "Discord Rich Presence setting added to Settings (the connection itself arrived in 2.12.2)",
+    "Settings polish: Concurrent Downloads subtitle and a search entry for it"
+   ]
+  },
+  {
+   "version": "2.12.0",
+   "name": "The Studio Update",
+   "date": "2026-11-20",
+   "notes": [
+    "Settings redesigned: Library & Tabs, Player Layout & Player Look, Visualizer & Lyrics, Appearance (Buttons, Colors, Shapes, Motion, Touch), Playback and About, with a live preview of the player and a search button to find any setting",
+    "Lyrics: three more sources (NetEase, QQ Music, Kugou) next to LRCLIB, so many more songs get timed lyrics. Choose which to use and in what order in Visualizer & Lyrics › LRC Providers",
+    "Import your own .lrc files: pick one or many (name them like \"Artist - Title.lrc\" to match songs automatically), or from \"Wrong lyrics?\" in the player for one song",
+    "Lyrics options: Sync with LRC on/off, highlight style, and where the current line sits (top, centre or bottom)",
+    "Concurrent Downloads: choose how many songs download at once, from 1 to 8",
+    "Player Layout: Compact / Normal / Roomy spacing, hide the album art, and a Rounded / Circle / Sharp play button"
+   ]
+  },
+  {
+   "version": "2.11.2",
+   "name": "The Studio Update",
+   "date": "2026-11-19",
+   "notes": [
+    "Downloads now keep going in the background: while there is anything in the queue the app runs a download service with one progress notification, so you can leave the app or lock the phone",
+    "Playlists with more than 100 songs now download completely (only the first 100 were being read)"
+   ]
+  },
+  {
+   "version": "2.11.1",
+   "name": "The Studio Update",
+   "date": "2026-11-19",
+   "notes": [
+    "Lyric highlighting keeps up with fast and slow parts: each word's share of the line is now worked out from its syllables (not its letters), with a beat of rest after commas and full stops, and the fill stops when a rapper's line ends instead of crawling across the gap",
+    "New Customize › Lyrics › Highlight timing slider to nudge the highlight earlier or later",
+    "Lyrics that carry a time for every word are used exactly"
+   ]
+  },
+  {
+   "version": "2.11.0",
+   "name": "The Studio Update",
+   "date": "2026-11-19",
+   "notes": [
+    "Scan Folders: pick the folders your music lives in (Android asks once and remembers), see every song found, tick or untick any of them, and add them with no playlist, one playlist, or one playlist per folder",
+    "Settings is now a menu of sections, each its own button with a hand-drawn icon that follows your accent colour",
+    "Customize is a hub of tiles: Tabs, Library, Player layout, Player look, Visualizer, Lyrics, Buttons, Media bar, Shapes, Colour, and Motion & touch",
+    "Move the parts of the full player up and down or hide them, centre the title, resize the buttons, and change the corners and shapes of cards, album art, the media bar and its cover",
+    "A short intro for new users, which you can replay from Settings › Updates & About",
+    "Search: the library / YouTube buttons are two round bubbles beside the search bar, and switching runs the search straight away",
+    "YouTube artist pages show their picture, with an All button; results have a play button and a ⋯ menu, and songs, albums and artists play or queue straight from there",
+    "Full player: swipe left for full-screen lyrics (words fill in as they are sung) and right for artist info",
+    "Haptics can be turned off in Customize"
+   ]
+  },
+  {
+   "version": "2.10.3",
+   "name": "The Customizer Update",
+   "date": "2026-11-19",
+   "notes": [
+    "New \"Motion check\" at the top of Customize: says plainly whether the living background and visualizer are running (or paused by Motion Effects, Android's battery saver, or the app's low-battery saver) and whether the audio analyser can hear the music — with one tap to keep motion on",
+    "Diagnostics now records why motion is on or paused, and what the player is using, so problems show up there"
+   ]
+  },
+  {
+   "version": "2.10.2",
+   "name": "The Customizer Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Smoother scrolling in Settings: each section is its own list item so only what's on screen is drawn, and the drifting background glow pauses (instead of redrawing every frame) while you scroll"
+   ]
+  },
+  {
+   "version": "2.10.1",
+   "name": "The Customizer Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Media bar: pulling it up now lifts the bar away from the tab buttons while you resist, and the corners round off as the gap opens",
+    "Tab bubble haptics: a buzz when you pick it up, a click on every tab it passes over, and a thud when you let go (portrait and sideways)"
+   ]
+  },
+  {
+   "version": "2.10.0",
+   "name": "The Customizer Update",
+   "date": "2026-11-18",
+   "notes": [
+    "New Customize centre (Settings → Make it yours): reorder or hide the four tabs, pick your start tab, change song row size, album grid size, and what each row shows",
+    "Sorting like Musicolet: a sort button on every tab — title, artist, album, year, date added, duration, most played and more, ascending or descending, remembered per tab",
+    "Fullscreen player: choose the background (living fog, blurred cover, accent glow or black), visualizer style (bars, mirror, wave, dots), its colour, height and opacity",
+    "Choose the cover's shape and size, the lyrics' size, alignment, glow and fade, the play button style and the seek bar thickness, and add lyrics / equalizer / sleep / queue buttons",
+    "Sideways Fullscreen is rebuilt: the big album cover on the left, lyrics or the title on the right, controls along the bottom",
+    "Lyrics no longer have hard edges: the top, bottom and sides fade softly and the glow and blur are never cut off",
+    "The equalizer is live the instant you open Fullscreen — no more delay",
+    "When the media bar is tucked into its little square, the player now grows out of it and shrinks back into it",
+    "The top glass bar is raised above the screen edge so its rounded top is never seen",
+    "Media bar: optionally hide the progress line or the next button; accent colour can follow the cover or stay fixed"
+   ]
+  },
+  {
+   "version": "2.9.0",
+   "name": "The Collector Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Finding covers is much smarter: it asks iTunes, Deezer and MusicBrainz, forgives accents, \"(Deluxe)\", \"- Single\", \"feat.\" and messy YouTube-style titles, and scores every answer on how well the title and artist match",
+    "If the album can't be found, it looks up the songs themselves; songs with no album get the cover of their own single",
+    "Three albums are looked up at once, with progress, and the result says how many were found and how many couldn't be matched",
+    "Songs without a cover are found automatically in the background, including the ones that failed before",
+    "Hold an album (in Albums, a shelf or search) for its menu: Play, Shuffle, Play Next, Add to Queue, Playlist, Favorite, Go to Artist, Look Up Info, Find Cover, Choose Cover, Share, Remove",
+    "Hold an artist for theirs: Play, Shuffle, Radio, Queue, Playlist, Favorite, Get More from YouTube Music, Find Missing Covers",
+    "Downloads are faster: three songs at once, each fetched in four pieces at the same time, the cover comes down alongside the audio, and the hidden browser warms up when you open YouTube search"
+   ]
+  },
+  {
+   "version": "2.8.1",
+   "name": "The Demo Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Fixed: the glass behind the tab bar, the media bar and the headers could vanish (leaving only the buttons) after you left the app with Back and opened it again. The glass is now rebuilt every time the screen is created, and fixes itself if it ever goes missing"
+   ]
+  },
+  {
+   "version": "2.8.0",
+   "name": "The Demo Update",
+   "date": "2026-11-18",
+   "notes": [
+    "New: Music Packs can carry synced lyrics. A song's entry in musicpack.json can have a \"lyrics\" field with LRC text, and it shows up in the lyrics view without needing LRCLIB",
+    "Made for the Strata Demo pack: 45 invented songs with invented lyrics for \"Open Fields\""
+   ]
+  },
+  {
+   "version": "2.7.0",
+   "name": "The Synced Update",
+   "date": "2026-11-18",
+   "notes": [
+    "New: Settings › Look & Feel › Visual Timing. Move the visualizer and background effects earlier or later (up to half a second either way), with a live visualizer and beat pulse right under the slider so you can see when it lines up with the music",
+    "The visualizer and fog follow the audio's real position (speaker or Bluetooth delay included) and update every frame"
+   ]
+  },
+  {
+   "version": "2.6.1",
+   "name": "The Sideways Update",
+   "date": "2026-11-18",
+   "notes": [
+    "The visualizer and the fog background are in time with the music now: they follow what the speaker (or Bluetooth headphones) is actually playing instead of trailing behind",
+    "The visualizer updates twice as often, every frame"
+   ]
+  },
+  {
+   "version": "2.6.0",
+   "name": "The Sideways Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Sideways: the tabs become a vertical glass pill on the right, with a round bubble you can drag up and down",
+    "Sideways: the media bar is its own glass bubble along the bottom",
+    "Sideways: scroll and the media bar tucks away. It wraps down to its album cover and slides in under the tab pill as the pill shrinks to make room, then comes back after the Scroll Timer",
+    "Settings and Keep Media Bar Tucked keep it tucked; tap the tucked cover to open the player",
+    "Everything slides and resizes smoothly between the shapes"
+   ]
+  },
+  {
+   "version": "2.5.0",
+   "name": "The Fog Update",
+   "date": "2026-11-18",
+   "notes": [
+    "The player's live background is back: two colours from the cover drift as clouds that swell with the bass and flash on big hits",
+    "The full-screen visualizer is back behind the player, fading out towards the top",
+    "Skipping swings the cover off on a curve: it tilts and shrinks away while the next one swings in",
+    "Tap the album cover to turn it over and see the song's info",
+    "Lyrics: the current line sits in the middle, the list glides there smoothly, and passed lines dim and blur away above it. Drag to look around; it glides back after a moment",
+    "In lyrics, tap the small cover or the title to go back to the album cover",
+    "Held buttons keep a circle of liquid glass behind them, even while you drag them about",
+    "Switches glide after your finger and snap to a side like iOS",
+    "More haptics: opening pages, closing menus, skipping, scrolling through lyrics, switches",
+    "The media bar no longer has a visualizer"
+   ]
+  },
+  {
+   "version": "2.4.1",
+   "name": "The Lens Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Tab bubble follows the pages as you swipe between tabs, instead of catching up after",
+    "Dragging the tab bubble tracks your finger instantly"
+   ]
+  },
+  {
+   "version": "2.4.0",
+   "name": "The Lens Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Tab bubble: a rounded iOS-style pill that swells while you drag it, magnifying the icons under it (sharp in the middle, split into red, green and blue at the rim)",
+    "Switches: drag the handle across; while you hold it, it swells into a liquid glass lens and the track colour follows it",
+    "Buttons give a little under your finger, like iOS, and spring back when you let go",
+    "Pulling the player down holds on for a moment, with growing buzzes, then lets go with a thud",
+    "Page headers are glass: the bar fades in smoothly as you scroll, with rounded bottom corners",
+    "Glass tracks the UI in the same frame now: no more jitter while things move",
+    "Fixed: slowly swiping the player down could leave it stuck halfway"
+   ]
+  },
+  {
+   "version": "2.3.0",
+   "name": "The Gloss Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Every floating panel is the glass itself now, and it follows its control exactly on every frame (no more glass left behind or in the wrong place)",
+    "Glass settings: thickness, bend, colour split, frost, opacity and tilt shine (Settings › Look & Feel › Glass), live while you drag",
+    "Tug to open: the whole bar gives a little with a buzz that grows as you pull, then lets go; the media bar jumps to your finger and a glass panel slides up fast from the bottom to meet it",
+    "The player stays glass until it's fully open, and its corners ease into shape",
+    "Closing (or letting go low) shrinks the player back into the media bar's spot and the tab bar rejoins it — no more sliding away and popping back",
+    "Only one set of covers at a time while you open or close the player",
+    "Fixed: tapping a tab could stop halfway on the wrong page",
+    "Fixed: a stray pane of glass over the equalizer"
+   ]
+  },
+  {
+   "version": "2.2.0",
+   "name": "The Glamor Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Liquid Glass everywhere: the bottom bar, the tab bubble, the tool buttons, menus, messages and the selection bar are real glass (QWEA0's Liquid Glass) that bends the music behind it, splits light at the edges and catches the light as you tilt",
+    "New way to open the player: pull the media bar up and it peels off, sticks for a moment, then breaks loose and the player follows your finger up from the bottom",
+    "Haptics everywhere, just like before: taps, ticks on sliders and the seek bar, a thud when the bar breaks loose, buzzes for likes, saves and errors",
+    "Liquid Glass off gives the classic frosted blur on the same controls"
+   ]
+  },
+  {
+   "version": "2.1.0",
+   "name": "The Mirror Update",
+   "date": "2026-11-18",
+   "notes": [
+    "Looks and works like the original Strata Music: same menus, settings, search and queue",
+    "Liquid Glass: the bottom bar bends and splits the light behind it (switch it off for the classic frosted blur)",
+    "The media bar grows into the full player, and shrinks back when you drag it down",
+    "Swipe the album cover to slide to the next or previous song",
+    "Double-tap a song, album or artist to like it",
+    "Pop-up menus swipe down to close",
+    "Queue: hold and drag to reorder, swipe left to remove",
+    "Updates right inside the app: Settings › Updates",
+    "If the app ever crashes, the next launch shows what happened with a Copy button",
+    "Fixed: tapping a tab two away stopped on the tab in between",
+    "Fixed: the app crashed on opening"
+   ]
+  },
+  {
+   "version": "2.0.0",
+   "name": "The Native Update",
+   "date": "2026-11-17",
+   "notes": [
+    "Strata Music rebuilt as a fully native Android app",
+    "Your library, playlists, favorites, lyrics and settings carry over from the old app",
+    "YouTube Music search and downloads with a browser that only runs while downloading",
+    "Synced lyrics, equalizer, crossfade with beat matching, silence cutting",
+    "Music Packs, folders, radio and mixes"
+   ]
+  }
+ ]
+}

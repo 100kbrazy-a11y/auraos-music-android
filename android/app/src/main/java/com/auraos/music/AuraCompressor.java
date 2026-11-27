@@ -27,7 +27,7 @@ final class AuraCompressor {
     }
 
     private static volatile Boolean opusOk = null;
-    private static boolean hasOpusEncoder() {
+    static boolean hasOpusEncoder() {
         if (opusOk != null) return opusOk;
         boolean ok = false;
         if (Build.VERSION.SDK_INT >= 29) {
@@ -83,7 +83,7 @@ final class AuraCompressor {
         }
     }
 
-    private static Result encode(File in, File out, boolean opus, int kbps) throws Exception {
+    static Result encode(File in, File out, boolean opus, int kbps) throws Exception {
         MediaExtractor ex = new MediaExtractor();
         MediaCodec dec = null, enc = null;
         MediaMuxer mux = null;

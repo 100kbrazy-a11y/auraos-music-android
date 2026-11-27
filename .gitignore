@@ -6,3 +6,8 @@ android/build/
 android/.gradle/
 android/local.properties
 android/app/src/main/assets/public/
+android/app/src/next/assets/engine/engine.js
+
+# the Discord SDK: only its encrypted copy (android/discord-sdk/*.gpg) is committed; CI decrypts it here
+android/app/libs/discord_partner_sdk.aar
+android/app/src/next/jniLibs/

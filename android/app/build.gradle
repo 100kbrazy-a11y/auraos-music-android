@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
 
 android {
     lint {
@@ -6,6 +7,30 @@ android {
         abortOnError false
     }
     namespace "com.auraos.music"
+    // "legacy" = today's WebView app (com.auraos.music). "next" = the native Compose app, a separate test app
+    // (com.auraos.music.next) until it takes over the real package.
+    flavorDimensions "ui"
+    productFlavors {
+        legacy { dimension "ui" }
+        // the native app's version comes from its release notes file (newest entry): MAJOR.MINOR.PATCH -> code MAJOR*10000 + MINOR*100 + PATCH
+        next {
+            dimension "ui"; applicationIdSuffix ".next"; minSdkVersion 24   // the liquid glass library needs Android 7.0+
+            def rel = new groovy.json.JsonSlurper().parse(file("src/next/assets/release.json")).releases[0]
+            def v = rel.version.tokenize(".").collect { it as int }
+            ndk { abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64' }   // the Discord SDK ships these (plus 32-bit x86, which no phone uses)
+            versionName rel.version
+            versionCode v[0] * 10000 + v[1] * 100 + v[2]
+        }
+    }
+    buildFeatures { compose true }
+    // native libraries are stored compressed inside the APK: the update you download is much smaller (they are unpacked on install)
+    packaging { jniLibs { useLegacyPackaging true } }
+    composeOptions { kotlinCompilerExtensionVersion "1.5.8" }
+    kotlinOptions {
+        jvmTarget = "17"
+        // compose skips redrawing parts whose inputs did not change, even for our own classes (Song and friends): far fewer recompositions per frame
+        freeCompilerArgs += ["-P", "plugin:androidx.compose.compiler.plugins.kotlin:experimentalStrongSkipping=true"]
+    }
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "com.auraos.music"
@@ -35,6 +60,22 @@ repositories {
 }
 
 dependencies {
+    nextImplementation platform("androidx.compose:compose-bom:2024.09.03")
+    nextImplementation "androidx.compose.ui:ui"
+    nextImplementation "androidx.compose.foundation:foundation"
+    nextImplementation "androidx.compose.material3:material3"
+    nextImplementation "androidx.compose.material:material-icons-core"
+    nextImplementation "androidx.activity:activity-compose:1.8.2"
+    nextImplementation "io.coil-kt:coil-compose:2.5.0"
+    // installs the baseline profile (src/main/baseline-prof.txt) on first start: the hot code is precompiled, so the first animations do not stutter
+    nextImplementation "androidx.profileinstaller:profileinstaller:1.3.1"
+    nextImplementation "com.github.QWEA0:liquidglass:2.0.11"
+    nextImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+    // word timing listens with a speech model: ONNX Runtime runs it, and the model arrives as a .tar.bz2 that has to be unpacked on the phone
+    nextImplementation "com.microsoft.onnxruntime:onnxruntime-android:1.20.0"
+    nextImplementation "org.apache.commons:commons-compress:1.21"
+    // Discord Social SDK (Rich Presence). Private copy, decrypted by CI into libs/ (see .github/workflows/native-next.yml); without it the app still builds, just without Discord
+    if (file("libs/discord_partner_sdk.aar").exists()) nextImplementation files("libs/discord_partner_sdk.aar")
     implementation "androidx.media3:media3-exoplayer:1.4.1"
     implementation "androidx.media3:media3-session:1.4.1"
     implementation fileTree(include: ['*.jar'], dir: 'libs')

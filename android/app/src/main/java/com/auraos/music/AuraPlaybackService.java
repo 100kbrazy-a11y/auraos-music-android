@@ -51,6 +51,18 @@ public class AuraPlaybackService extends MediaSessionService {
     final List<MediaItem> items = new ArrayList<>();
     float crossfade = 0;
     boolean beatMatch = true;
+    /** the speed you chose in the player (1 = normal), and whether the pitch follows it (like a record) or stays put */
+    volatile float userSpeed = 1f;
+    volatile boolean pitchFollows = true;
+    PlaybackParameters userParams() { return new PlaybackParameters(userSpeed, pitchFollows ? userSpeed : 1f); }
+    private boolean isUserParams(ExoPlayer p) { PlaybackParameters q = p.getPlaybackParameters(), u = userParams(); return q.speed == u.speed && q.pitch == u.pitch; }
+    void setUserSpeed(float speed, boolean follow) {
+        userSpeed = Math.max(0.25f, Math.min(4f, speed));
+        pitchFollows = follow;
+        resetMatch();                                   // (a beat match assumes normal speed: drop it, then every player gets the chosen speed)
+        for (ExoPlayer p : players) if (p != null && !isUserParams(p)) p.setPlaybackParameters(userParams());
+        emitState();
+    }
     /** each song's beat where it starts and where it ends: { bpm in, beat in (ms), bpm out, beat out (ms), cut start (ms) } */
     static final java.util.Map<String, double[]> grids = new java.util.concurrent.ConcurrentHashMap<>();
     int repeat = Player.REPEAT_MODE_OFF;
@@ -217,7 +229,24 @@ public class AuraPlaybackService extends MediaSessionService {
         }
     }
 
-    byte[] levels() { return procs[cur].levels(); }
+    // Where the speaker is in the processed audio. The processor counts ms of audio since its last flush; the player's own
+    // position already includes the output latency (Bluetooth too). Since a flush starts at the position the player was sent
+    // to, "played" = position - where it started (plus the songs that ran on into each other without a flush).
+    final double[] vizStart = { 0, 0 }, vizAcc = { 0, 0 };
+    final boolean[] vizSeek = { false, false };
+    private final int[] vizFlush = { -1, -1 };
+    /** Settings › Visual Timing: positive = the visuals come later, negative = earlier (ms) */
+    static volatile double vizShiftMs = 0;
+    byte[] levels() {
+        int i = cur;
+        AuraAudioProcessor pr = procs[i];
+        long pos = active().getCurrentPosition();
+        int fl = pr.flushes;
+        if (fl != vizFlush[i]) { vizFlush[i] = fl; if (!vizSeek[i]) { vizStart[i] = pos; vizAcc[i] = 0; } vizSeek[i] = false; }
+        double played = pos + vizAcc[i] - vizStart[i];
+        if (played > pr.processedMs() + 50 || played < -2000) { vizStart[i] = pos - Math.max(0, pr.processedMs() - pr.leadMs()); vizAcc[i] = 0; played = pos - vizStart[i]; }   // lost track: line up again
+        return pr.levelsAt(played - vizShiftMs);
+    }
 
     // ------------------------------------------------------------------ crossfade
     private void tick() {
@@ -231,7 +260,7 @@ public class AuraPlaybackService extends MediaSessionService {
                 long left = dur - pos, xf = (long) (crossfade * 1000);
                 if (matching && left > xf + RAMP_MS + 2500) resetMatch();          // (it was moved back: start over)
                 if (!matching && beatMatch && left <= xf + RAMP_MS + 600 && left > xf + 400) planMatch(p, next);
-                double r = matching ? ratio : 1;
+                double r = matching ? ratio : userSpeed;
                 if (left / r <= xf && left > 300) startFade(next, (long) (left / r));
             }
         }
@@ -260,6 +289,7 @@ public class AuraPlaybackService extends MediaSessionService {
 
     private void planMatch(ExoPlayer p, int next) {
         MediaItem now = p.getCurrentMediaItem();
+        if (userSpeed != 1f) return;                          // not at a chosen speed: plain crossfade
         if (now == null || next < 0 || next >= items.size()) return;
         double[] a = grids.get(now.mediaId), b = grids.get(items.get(next).mediaId);
         if (a == null || b == null || a[2] <= 0 || b[0] <= 0) return;
@@ -313,13 +343,14 @@ public class AuraPlaybackService extends MediaSessionService {
         h.removeCallbacks(rampStep);
         h.removeCallbacks(startTo);
         corr = 1; ratio = 1; speedSet = 1; speedSent = 1; toStartedAt = 0;
-        for (ExoPlayer p : players) if (p != null && p.getPlaybackParameters().speed != 1f) p.setPlaybackParameters(PlaybackParameters.DEFAULT);
+        for (ExoPlayer p : players) if (p != null && !isUserParams(p)) p.setPlaybackParameters(userParams());
         if (was && toReady && !fading) { players[1 - cur].stop(); }
         toReady = false;
     }
 
     private void startFade(int next, long ms) {
         ExoPlayer from = active(), to = players[1 - cur];
+        if (!matching && !isUserParams(to)) to.setPlaybackParameters(userParams());
         if (!toReady) {
             to.setRepeatMode(repeat);
             to.setMediaItems(new ArrayList<>(items), next, 0);
@@ -372,7 +403,7 @@ public class AuraPlaybackService extends MediaSessionService {
         from.setPauseAtEndOfMediaItems(false);
         from.stop();
         from.setPlaybackParameters(PlaybackParameters.DEFAULT);
-        to.setPlaybackParameters(PlaybackParameters.DEFAULT);
+        to.setPlaybackParameters(userParams());
         from.setVolume(1f);
         to.setVolume(1f);
         cur = 1 - cur;
@@ -397,6 +428,9 @@ public class AuraPlaybackService extends MediaSessionService {
     }
 
     // ------------------------------------------------------------------ telling the app
+    /** just the position: cheap enough to ask for every frame (state() builds a whole record) */
+    long position() { return active().getCurrentPosition(); }
+
     JSObject state() {
         ExoPlayer p = active();
         JSObject o = new JSObject();
@@ -446,6 +480,9 @@ public class AuraPlaybackService extends MediaSessionService {
             emitTrack(reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK ? "seek" : reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT ? "repeat" : "auto");
         }
         @Override public void onPositionDiscontinuity(@NonNull Player.PositionInfo oldPosition, @NonNull Player.PositionInfo newPosition, int reason) {
+            // keep the visualizer's clock lined up with the audio
+            if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) { vizStart[i] = newPosition.positionMs; vizAcc[i] = 0; vizSeek[i] = true; }
+            else if (reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION) vizAcc[i] += oldPosition.positionMs - newPosition.positionMs;
             if (mine()) emitState();
         }
         @Override public void onPlayerError(@NonNull PlaybackException error) {

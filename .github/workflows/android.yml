@@ -50,14 +50,14 @@ jobs:
       - name: Compile
         run: |
           cd android && chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease
-          test -f app/build/outputs/apk/release/app-release-unsigned.apk || { echo "::error::No APK was made; see the log above"; exit 1; }
+          ./gradlew --no-daemon assembleLegacyRelease
+          test -f app/build/outputs/apk/legacy/release/app-legacy-release-unsigned.apk || { echo "::error::No APK was made; see the log above"; exit 1; }
 
       - name: Sign Strata-Music.apk
         run: |
           BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
           echo "build-tools: $BT"
-          "$BT/zipalign" -f -p 4 android/app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          "$BT/zipalign" -f -p 4 android/app/build/outputs/apk/legacy/release/app-legacy-release-unsigned.apk aligned.apk
           "$BT/apksigner" sign --ks signing/release.jks --ks-pass file:signing/keystore.pass \
             --ks-key-alias auraos --out Strata-Music.apk aligned.apk
           "$BT/apksigner" verify Strata-Music.apk
