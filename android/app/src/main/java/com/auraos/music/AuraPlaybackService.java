@@ -51,6 +51,18 @@ public class AuraPlaybackService extends MediaSessionService {
     final List<MediaItem> items = new ArrayList<>();
     float crossfade = 0;
     boolean beatMatch = true;
+    /** the speed you chose in the player (1 = normal), and whether the pitch follows it (like a record) or stays put */
+    volatile float userSpeed = 1f;
+    volatile boolean pitchFollows = true;
+    PlaybackParameters userParams() { return new PlaybackParameters(userSpeed, pitchFollows ? userSpeed : 1f); }
+    private boolean isUserParams(ExoPlayer p) { PlaybackParameters q = p.getPlaybackParameters(), u = userParams(); return q.speed == u.speed && q.pitch == u.pitch; }
+    void setUserSpeed(float speed, boolean follow) {
+        userSpeed = Math.max(0.25f, Math.min(4f, speed));
+        pitchFollows = follow;
+        resetMatch();                                   // (a beat match assumes normal speed: drop it, then every player gets the chosen speed)
+        for (ExoPlayer p : players) if (p != null && !isUserParams(p)) p.setPlaybackParameters(userParams());
+        emitState();
+    }
     /** each song's beat where it starts and where it ends: { bpm in, beat in (ms), bpm out, beat out (ms), cut start (ms) } */
     static final java.util.Map<String, double[]> grids = new java.util.concurrent.ConcurrentHashMap<>();
     int repeat = Player.REPEAT_MODE_OFF;
@@ -248,7 +260,7 @@ public class AuraPlaybackService extends MediaSessionService {
                 long left = dur - pos, xf = (long) (crossfade * 1000);
                 if (matching && left > xf + RAMP_MS + 2500) resetMatch();          // (it was moved back: start over)
                 if (!matching && beatMatch && left <= xf + RAMP_MS + 600 && left > xf + 400) planMatch(p, next);
-                double r = matching ? ratio : 1;
+                double r = matching ? ratio : userSpeed;
                 if (left / r <= xf && left > 300) startFade(next, (long) (left / r));
             }
         }
@@ -277,6 +289,7 @@ public class AuraPlaybackService extends MediaSessionService {
 
     private void planMatch(ExoPlayer p, int next) {
         MediaItem now = p.getCurrentMediaItem();
+        if (userSpeed != 1f) return;                          // not at a chosen speed: plain crossfade
         if (now == null || next < 0 || next >= items.size()) return;
         double[] a = grids.get(now.mediaId), b = grids.get(items.get(next).mediaId);
         if (a == null || b == null || a[2] <= 0 || b[0] <= 0) return;
@@ -330,13 +343,14 @@ public class AuraPlaybackService extends MediaSessionService {
         h.removeCallbacks(rampStep);
         h.removeCallbacks(startTo);
         corr = 1; ratio = 1; speedSet = 1; speedSent = 1; toStartedAt = 0;
-        for (ExoPlayer p : players) if (p != null && p.getPlaybackParameters().speed != 1f) p.setPlaybackParameters(PlaybackParameters.DEFAULT);
+        for (ExoPlayer p : players) if (p != null && !isUserParams(p)) p.setPlaybackParameters(userParams());
         if (was && toReady && !fading) { players[1 - cur].stop(); }
         toReady = false;
     }
 
     private void startFade(int next, long ms) {
         ExoPlayer from = active(), to = players[1 - cur];
+        if (!matching && !isUserParams(to)) to.setPlaybackParameters(userParams());
         if (!toReady) {
             to.setRepeatMode(repeat);
             to.setMediaItems(new ArrayList<>(items), next, 0);
@@ -389,7 +403,7 @@ public class AuraPlaybackService extends MediaSessionService {
         from.setPauseAtEndOfMediaItems(false);
         from.stop();
         from.setPlaybackParameters(PlaybackParameters.DEFAULT);
-        to.setPlaybackParameters(PlaybackParameters.DEFAULT);
+        to.setPlaybackParameters(userParams());
         from.setVolume(1f);
         to.setVolume(1f);
         cur = 1 - cur;

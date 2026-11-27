@@ -674,9 +674,11 @@ private fun npExtras(lyr: Boolean, onLyrics: () -> Unit): List<@Composable () ->
     val a = accent
     val l = mutableListOf<@Composable () -> Unit>()
     val eos by Sleep.endOfSong.collectAsState()
+    val spd by Prefs.speed.collectAsState()
     if (Cfg.btnLyrics.use()) l.add { Box(Modifier.size(44.dp).clip(CircleShape).background(if (lyr) Color.White.copy(alpha = 0.14f) else Color.Transparent).clickable { onLyrics() }, contentAlignment = Alignment.Center) { Icon(Ic.Lyrics, tint = if (lyr) Color.White else Color.White.copy(alpha = 0.7f)) } }
     if (Cfg.btnEq.use()) l.add { IB(Ic.Eq, Color.White.copy(alpha = 0.7f)) { Dialogs.sheet { EqSheet() } } }
     if (Cfg.btnSleep.use()) l.add { IB(Ic.Timer, if (eos) a else Color.White.copy(alpha = 0.7f)) { Dialogs.sheet { SleepSheet() } } }
+    if (Cfg.btnSpeed.use()) l.add { IB(Ic.Speed, if (spd != 1f) a else Color.White.copy(alpha = 0.7f)) { Dialogs.sheet { SpeedSheet() } } }
     if (Cfg.btnQueue.use()) l.add { IB(Ic.Queue, Color.White.copy(alpha = 0.7f)) { Dialogs.sheet { QueueSheet() } } }
     return l
 }
@@ -988,6 +990,26 @@ fun NpSheet(s: Song) {
 }
 object NpState { val open = mutableStateOf(false); /** which of the player's three pages is showing (0 lyrics / observe, 1 current song, 2 artist) */ val page = mutableIntStateOf(1) }
 object Sleep { val endOfSong = kotlinx.coroutines.flow.MutableStateFlow(false) }
+
+/** playback speed: a slider that snaps every 0.05 (so 1.10× works), the usual speeds as chips, and whether the pitch moves with it */
+@Composable
+fun SpeedSheet() {
+    val sp by Prefs.speed.collectAsState(); val follow by Prefs.speedPitch.collectAsState()
+    val a = accent
+    SheetScroll {
+        Row(Modifier.padding(start = 24.dp, end = 24.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Icon(Ic.Speed, tint = a); T("Speed", 22.sp, W700, modifier = Modifier.weight(1f)); T("%.2f×".format(sp), 26.sp, W700, a)
+        }
+        Column(Modifier.padding(horizontal = 24.dp)) {
+            Slide(sp, 0.5f..2f, 0.05f) { Prefs.setSpeed(it) }
+            Row(Modifier.fillMaxWidth()) { T("0.5×", 12.sp, color = C.faint, modifier = Modifier.weight(1f)); T("1×", 12.sp, color = C.faint); T("2×", 12.sp, color = C.faint, modifier = Modifier.weight(1f), align = androidx.compose.ui.text.style.TextAlign.End) }
+        }
+        FlowRow(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { v -> Chip(if (v == 1f || v == 2f) "${v.toInt()}×" else "$v×", kotlin.math.abs(sp - v) < 0.001f) { Prefs.setSpeed(v) } }
+        }
+        SwitchItem(Ic.Speed, "Pitch follows speed", "Faster sounds higher and slower sounds lower, like a record. Off keeps the voice where it was.", follow) { Prefs.setSpeedPitch(it) }
+    }
+}
 
 @Composable
 private fun SleepSheet() {

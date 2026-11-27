@@ -70,6 +70,7 @@ object NativePlayer {
             AuraPlaybackService.item(ctx.applicationContext, o)
         }
         s.crossfade = fadeSecs; s.beatMatch = fadeMatch
+        s.setUserSpeed(spd, spdPitch)
         s.setQueue(list, index, posMs, play, false)
     }
 
@@ -92,6 +93,10 @@ object NativePlayer {
     fun repeat(mode: Int) {
         AuraPlaybackService.instance?.setRepeat(if (mode == 2) Player.REPEAT_MODE_ONE else if (mode == 1) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF)
     }
+    private var spd = 1f
+    private var spdPitch = true
+    /** playback speed (1 = normal); [pitch] true = the pitch moves with the speed, false = it stays where it was */
+    fun speed(v: Float, pitch: Boolean) { spd = v; spdPitch = pitch; AuraPlaybackService.instance?.setUserSpeed(v, pitch) }
     private var fadeSecs = 0f
     private var fadeMatch = true
     fun crossfade(secs: Float, match: Boolean) { fadeSecs = secs; fadeMatch = match; AuraPlaybackService.instance?.let { it.crossfade = secs; it.beatMatch = match } }
@@ -120,6 +125,7 @@ object NativePlayer {
         start(ctx)
         val s = service() ?: return
         s.crossfade = fadeSecs; s.beatMatch = fadeMatch
+        s.setUserSpeed(spd, spdPitch)
         s.setQueue(items.map { AuraPlaybackService.item(ctx.applicationContext, it) }, index, posMs, play, keep)
     }
     /** where the song really is (the player counts from the cut start) */

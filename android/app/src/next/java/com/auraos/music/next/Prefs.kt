@@ -31,6 +31,9 @@ object Prefs {
     val accent = MutableStateFlow(ACCENTS[0])
     val coverAccent = MutableStateFlow(true)
     val crossfade = MutableStateFlow(0f)
+    /** playback speed from the player's speed sheet (0.5 to 2, steps of 0.05) and whether the pitch follows it */
+    val speed = MutableStateFlow(1f)
+    val speedPitch = MutableStateFlow(true)
     val beatMatch = MutableStateFlow(true)
     val trimSilence = MutableStateFlow(true)
     val keepAwake = MutableStateFlow(false)
@@ -67,6 +70,7 @@ object Prefs {
     fun reload() {
         accent.value = s.optInt("accent", ACCENTS[0]); coverAccent.value = s.optBoolean("coverAccent", true)
         crossfade.value = s.optDouble("crossfade", 0.0).toFloat().coerceIn(0f, 12f)
+        speed.value = s.optDouble("playSpeed", 1.0).toFloat().coerceIn(0.5f, 2f); speedPitch.value = s.optBoolean("playSpeedPitch", true)
         beatMatch.value = s.optBoolean("beatMatch", true); trimSilence.value = s.optBoolean("trimSilence", true)
         keepAwake.value = s.optBoolean("keepAwake", false); eqName.value = s.optString("eq", "Flat")
         eqCustom.value = s.optJSONArray("eqCustom")?.let { a -> (0 until 10).map { a.optDouble(it, 0.0).toFloat() } } ?: List(10) { 0f }
@@ -90,6 +94,8 @@ object Prefs {
     fun setAccent(v: Int) { accent.value = v; put("accent", v) }
     fun setCoverAccent(v: Boolean) { coverAccent.value = v; put("coverAccent", v) }
     fun setFade(v: Float) { crossfade.value = v; put("crossfade", Math.round(v * 2) / 2.0); applyAudio() }
+    fun setSpeed(v: Float) { val x = (Math.round(v.coerceIn(0.5f, 2f) * 20) / 20f); speed.value = x; put("playSpeed", x.toDouble()); NativePlayer.speed(x, speedPitch.value) }
+    fun setSpeedPitch(v: Boolean) { speedPitch.value = v; put("playSpeedPitch", v); NativePlayer.speed(speed.value, v) }
     fun setMatch(v: Boolean) { beatMatch.value = v; put("beatMatch", v); applyAudio(); if (v) Tasks.poke() }
     fun setTrim(v: Boolean) { trimSilence.value = v; put("trimSilence", v); Ctl.refreshQueue(); if (v) Tasks.poke() }
     fun setAwake(v: Boolean) { keepAwake.value = v; put("keepAwake", v) }
@@ -122,6 +128,7 @@ object Prefs {
     /** crossfade + EQ into the audio engine; the pre-gain keeps the loudness the same as the WebView app did */
     fun applyAudio() {
         NativePlayer.crossfade(if (crossfade.value < 0.5f) 0f else crossfade.value, beatMatch.value)
+        NativePlayer.speed(speed.value, speedPitch.value)
         val g = eqGains()
         val w = listOf(0.9f, 1f, 1f, 0.9f, 0.8f, 0.7f, 0.55f, 0.4f, 0.3f, 0.2f)
         val avg = g.indices.sumOf { (g[it] * w[it]).toDouble() } / w.sum()

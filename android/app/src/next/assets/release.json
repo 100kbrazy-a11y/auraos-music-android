@@ -2,6 +2,17 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.18.0",
+   "name": "The Speed Update",
+   "date": "2026-11-27",
+   "notes": [
+    "New speed button in the player, next to the equalizer. It opens a slider from 0.5× to 2× that snaps every 0.05, so 1.10× or 1.35× work, with quick chips for 0.5×, 0.75×, 1×, 1.25×, 1.5× and 2×. The button lights up while the speed isn't 1×.",
+    "Pitch follows speed by default, like a record: faster sounds higher, slower sounds lower. Switch it off in the same sheet to keep the voice where it was.",
+    "Your speed is remembered. Songs blend into each other with a plain crossfade while it isn't 1× (beat matching needs normal speed).",
+    "Settings › Customize › Player buttons has a switch to hide the speed button."
+   ]
+  },
+  {
    "version": "2.17.0",
    "name": "The Fast Read Update",
    "date": "2026-11-27",

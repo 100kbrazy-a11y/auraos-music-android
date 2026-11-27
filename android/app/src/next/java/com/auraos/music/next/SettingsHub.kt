@@ -480,6 +480,7 @@ private fun buttonsBlocks(): List<@Composable () -> Unit> = listOf(
             SSwitch(SG.Viz, "Equalizer button", "", Cfg.btnEq)
             SSwitch(SG.Layout, "Queue button", "", Cfg.btnQueue)
             SSwitch(SG.Pulse, "Sleep timer button", "", Cfg.btnSleep)
+            SSwitch(SG.Playback, "Speed button", "Play songs faster or slower", Cfg.btnSpeed)
             SSwitch(SG.Playback, "Time under the seek bar", "Elapsed and remaining", Cfg.showTimes)
             val th = Cfg.seekThick.use()
             SSlider("Seek bar thickness", "", "${th.toInt()} dp", th, 2f..12f, 1f) { Cfg.seekThick.set(it) }

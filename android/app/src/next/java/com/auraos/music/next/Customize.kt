@@ -75,6 +75,7 @@ object Cfg {
     val btnEq = B("cfgBtnEq", true)
     val btnQueue = B("cfgBtnQueue", true)
     val btnSleep = B("cfgBtnSleep", false)
+    val btnSpeed = B("cfgBtnSpeed", true)
     val showTimes = B("cfgTimes", true)
     val seekThick = F("cfgSeek", 5f)
     // ---- the media bar
