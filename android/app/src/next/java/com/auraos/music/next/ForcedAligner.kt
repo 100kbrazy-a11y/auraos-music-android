@@ -31,6 +31,133 @@ object PcmLoader {
     const val RATE = WordTiming.RATE
     const val MAX_SECONDS = 8 * 60
 
+    private class ParFail(why: String) : RuntimeException(why)
+    private const val MIN_PARALLEL_US = 50_000_000L
+
+    private fun durationUs(file: File): Long {
+        val ex = MediaExtractor()
+        return try {
+            ex.setDataSource(file.absolutePath)
+            var d = 0L
+            for (i in 0 until ex.trackCount) { val f = ex.getTrackFormat(i); if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) { if (f.containsKey(MediaFormat.KEY_DURATION)) d = f.getLong(MediaFormat.KEY_DURATION); break } }
+            d
+        } catch (_: Throwable) { 0L } finally { try { ex.release() } catch (_: Throwable) { } }
+    }
+
+    /**
+     * Reads a song to 22.05 kHz stereo. Most of the wait for a song's words is the phone's decoder working through it one packet at a time, so a long song
+     * is read in 2 or 3 pieces at once (as many as the phone has cores for) and the pieces are laid end to end. Where they meet, both pieces have heard the same
+     * few seconds, and the pieces are only joined where those seconds line up exactly (the lag is measured, not assumed, so no codec's quirks can shift the words);
+     * if they don't, or anything goes wrong, the song is read in one go as before. [parts] 0 = decide here.
+     */
+    fun load(file: File, onProgress: (Float) -> Unit = {}, onAudio: ((Pcm) -> Unit)? = null): Pcm = loadImpl(file, onProgress, onAudio, 0, MIN_PARALLEL_US)
+
+    /** (for the tests: a set number of pieces whatever the song's length) */
+    fun loadInParts(file: File, parts: Int): Pcm = loadImpl(file, {}, null, parts, 0L)
+
+    private fun loadImpl(file: File, onProgress: (Float) -> Unit, onAudio: ((Pcm) -> Unit)?, parts: Int, minUs: Long): Pcm {
+        val durUs = durationUs(file)
+        val cores = Runtime.getRuntime().availableProcessors()
+        val k = if (parts > 0) parts else if (durUs < minUs) 1 else if (cores >= 6) 3 else if (cores >= 4) 2 else 1
+        var why: String? = null
+        if (k >= 2 && durUs > 0) {
+            try { return loadParts(file, durUs, k, onProgress, onAudio) } catch (e: ParFail) { why = e.message }
+        }
+        val p = decode(file, 0L, Long.MAX_VALUE, null, onProgress, onAudio)
+        if (why != null) p.info += " · reading in parts didn't work (${why}), read in one go"
+        return p
+    }
+
+    private fun loadParts(file: File, durUs: Long, k: Int, onProgress: (Float) -> Unit, onAudio: ((Pcm) -> Unit)?): Pcm {
+        val over = 4_000_000L                       // each piece reads this much past (and before) its own part, so neighbours share some seconds
+        val cancel = java.util.concurrent.atomic.AtomicBoolean(false)
+        val segs = arrayOfNulls<Pcm>(k); val errs = arrayOfNulls<Throwable>(k); val frac = FloatArray(k)
+        val prio = android.os.Process.getThreadPriority(android.os.Process.myTid())
+        val threads = (1 until k).map { i ->
+            Thread({
+                try {
+                    android.os.Process.setThreadPriority(prio)
+                    segs[i] = decode(file, max(0L, durUs * i / k - over), if (i == k - 1) Long.MAX_VALUE else durUs * (i + 1) / k + over, cancel, { frac[i] = it }, null)
+                } catch (e: Throwable) { errs[i] = e; cancel.set(true) }
+            }, "pcm-$i").also { it.start() }
+        }
+        try {
+            // the first piece is read on this thread: it starts at the start, so whoever is listening along sees it grow exactly as in a one-go read
+            segs[0] = decode(file, 0L, durUs / k + over, cancel, { frac[0] = it; onProgress(frac.average().toFloat()) }, onAudio)
+        } catch (e: Throwable) {
+            cancel.set(true); for (t in threads) { try { t.join() } catch (_: InterruptedException) { } }
+            throw e
+        }
+        for (t in threads) t.join()
+        errs.firstOrNull { it != null }?.let { throw ParFail("${it.javaClass.simpleName}: ${it.message}") }
+        return stitch(segs.map { it!! }, durUs, k)
+    }
+
+    private fun stitch(segs: List<Pcm>, durUs: Long, k: Int): Pcm {
+        val base = IntArray(k); val lags = IntArray(k)          // base[i]: where piece i's first sample sits in the whole
+        val bnd = IntArray(k + 1)                               // where piece i takes over from piece i-1
+        for (i in 1 until k) bnd[i] = (durUs * i / k * RATE / 1_000_000L).toInt()
+        for (i in 1 until k) {
+            val nominal = (segs[i].t0Us * RATE / 1_000_000L).toInt()
+            val shift = findShift(segs[i - 1], base[i - 1], segs[i], nominal, bnd[i]) ?: throw ParFail("piece $i didn't line up with the one before it")
+            base[i] = nominal - shift; lags[i] = -shift
+        }
+        val total = base[k - 1] + segs[k - 1].n
+        val left = ShortArray(total); val right = ShortArray(total)
+        for (i in 0 until k) {
+            val from = if (i == 0) 0 else bnd[i]; val to = if (i == k - 1) total else bnd[i + 1]
+            val a = from - base[i]; val b = to - base[i]
+            if (a < 0 || b > segs[i].n || b < a) throw ParFail("piece $i didn't cover its part")
+            System.arraycopy(segs[i].left, a, left, from, b - a); System.arraycopy(segs[i].right, a, right, from, b - a)
+        }
+        val p = Pcm(left, right, total)
+        p.info = segs[0].info + " · read in $k parts (offsets ${lags.drop(1).joinToString(",")} samples)"
+        return p
+    }
+
+    /**
+     * How many samples [cur] must be read earlier than its nominal place to sit exactly under [prev]: looks at 2 seconds both pieces have heard (near the
+     * boundary, away from where a piece starts up), finds the best match coarsely, then to the sample, and only answers if the match is nearly perfect.
+     */
+    private fun findShift(prev: Pcm, basePrev: Int, cur: Pcm, nominal: Int, boundary: Int): Int? {
+        val len = RATE * 2; val D = 8; val S = (RATE * 0.8).toInt() / D
+        for (w0 in intArrayOf(boundary - RATE, boundary + RATE / 2, boundary - (RATE * 2.2).toInt())) {
+            val pa = w0 - basePrev
+            if (pa < 0 || pa + len > prev.n) continue
+            val ca = w0 - nominal - S * D
+            if (ca < 0 || ca + len + 2 * S * D > cur.n) continue
+            fun mid(x: Pcm, i: Int) = (x.left[i] + x.right[i]) * 0.5f
+            val n = len / D
+            val A = FloatArray(n) { j -> var t = 0f; for (q in 0 until D) t += mid(prev, pa + j * D + q); t / D }
+            val B = FloatArray(n + 2 * S) { j -> var t = 0f; for (q in 0 until D) t += mid(cur, ca + j * D + q); t / D }
+            var ea = 0.0; for (v in A) ea += v.toDouble() * v
+            if (ea / n < 30.0 * 30.0) continue                  // (near-silence says nothing about where it is)
+            val pre = DoubleArray(B.size + 1); for (j in B.indices) pre[j + 1] = pre[j] + B[j].toDouble() * B[j]
+            var best = -1.0; var bl = 0
+            for (l in 0..2 * S) {
+                var dot = 0.0
+                for (j in 0 until n) dot += A[j] * B[j + l]
+                val eb = pre[l + n] - pre[l]
+                val c = if (eb > 0.0) dot / Math.sqrt(ea * eb) else 0.0
+                if (c > best) { best = c; bl = l }
+            }
+            if (best < 0.9) continue
+            val coarse = (bl - S) * D                           // cur is read this many samples later than prev's window
+            var bestF = -1.0; var bs = 0
+            for (s in coarse - D..coarse + D) {
+                val c0 = w0 - nominal + s
+                if (c0 < 0 || c0 + len > cur.n) continue
+                var dot = 0.0; var eb = 0.0; var eaa = 0.0
+                var i = 0
+                while (i < len) { val a = mid(prev, pa + i).toDouble(); val b = mid(cur, c0 + i).toDouble(); dot += a * b; eb += b * b; eaa += a * a; i++ }
+                val c = if (eb > 0.0 && eaa > 0.0) dot / Math.sqrt(eaa * eb) else 0.0
+                if (c > bestF) { bestF = c; bs = s }
+            }
+            if (bestF >= 0.97) return bs
+        }
+        return null
+    }
+
     /** the 22.05 kHz stereo the engine listens to, grown as it is filled */
     private class Sink(cap: Int) {
         var left = ShortArray(cap); var right = ShortArray(cap); var n = 0
@@ -42,8 +169,8 @@ object PcmLoader {
         }
     }
 
-    /** [onProgress] 0..1 over the reading of the file */
-    fun load(file: File, onProgress: (Float) -> Unit = {}, onAudio: ((Pcm) -> Unit)? = null): Pcm {
+    /** reads [fromUs, toUs] of the file (the whole of it by default). [cancel]: another piece failed or the caller gave up, so stop. */
+    private fun decode(file: File, fromUs: Long, toUs: Long, cancel: java.util.concurrent.atomic.AtomicBoolean?, onProgress: (Float) -> Unit, onAudio: ((Pcm) -> Unit)?): Pcm {
         val ex = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -57,7 +184,12 @@ object PcmLoader {
             ex.selectTrack(track)
             val durUs = if (fmt.containsKey(MediaFormat.KEY_DURATION)) fmt.getLong(MediaFormat.KEY_DURATION) else 0L
             if (durUs > MAX_SECONDS * 1_000_000L) throw IllegalStateException("too long to analyse")
-            var cap = ((durUs / 1_000_000.0) * RATE).toInt() + RATE * 2
+            // (a piece that doesn't start at the start: the extractor jumps to the nearest earlier point it can start from, and says where that is)
+            if (fromUs > 0) ex.seekTo(fromUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            val startUs = if (fromUs > 0) max(0L, ex.sampleTime) else 0L
+            val endUs = if (durUs > 0) min(toUs, durUs) else toUs
+            val spanUs = if (durUs > 0 && endUs > startUs) endUs - startUs else 0L
+            var cap = ((spanUs / 1_000_000.0) * RATE).toInt() + RATE * 2
             if (cap < RATE * 20) cap = RATE * 60
             val sink = Sink(cap)
             var codecName = "?"; var firstPts = -1L; var padded = 0; var outRate = 0; var outCh = 0
@@ -78,17 +210,18 @@ object PcmLoader {
             val deadline = System.currentTimeMillis() + 420_000L
             while (!eosOut) {
                 if (System.currentTimeMillis() > deadline) throw IllegalStateException("decoding took too long")
+                if (cancel?.get() == true) throw ParFail("stopped")
                 // feed the decoder as much as it will take right now (one buffer per round trip would make it wait on every single frame)
                 while (!eosIn) {
                     val inIdx = dec.dequeueInputBuffer(0)
                     if (inIdx < 0) break
                     val buf = dec.getInputBuffer(inIdx)!!
-                    val sz = ex.readSampleData(buf, 0)
+                    val sz = if (ex.sampleTime > toUs) -1 else ex.readSampleData(buf, 0)
                     if (sz < 0) { dec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); eosIn = true }
                     else {
                         val tUs = ex.sampleTime
                         dec.queueInputBuffer(inIdx, 0, sz, tUs, 0); ex.advance()
-                        if (durUs > 0 && (++reads and 63) == 0) onProgress((tUs.toFloat() / durUs).coerceIn(0f, 1f))
+                        if (spanUs > 0 && (++reads and 63) == 0) onProgress(((tUs - startUs).toFloat() / spanUs).coerceIn(0f, 1f))
                     }
                 }
                 // ...and take out everything it has ready (the first look waits a moment if nothing is yet)
@@ -151,6 +284,7 @@ object PcmLoader {
                 if (onAudio != null && sink.n - lastHook >= RATE * 4) { lastHook = sink.n; onAudio(Pcm(sink.left, sink.right, sink.n)) }
             }
             val p = Pcm(sink.left, sink.right, sink.n)
+            p.t0Us = startUs
             val mime = fmt.getString(MediaFormat.KEY_MIME) ?: "?"
             p.info = "codec=$codecName mime=$mime rate=$outRate ch=$outCh float=$isFloat first_sample_at=${if (firstPts < 0) "?" else "%.1f ms".format(firstPts / 1000.0)}${if (padded > 0) " (padded ${padded * 1000 / RATE} ms of silence)" else ""} container_duration=${durUs / 1000} ms decoded=${sink.n * 1000L / RATE} ms"
             return p
@@ -332,6 +466,7 @@ object ForcedAligner {
             var lastPublish = 0L
             var speechUsed = 0
             var confs: List<Double> = emptyList()
+            var gaveUp = false
 
             fun speechLines(): Map<Int, SpeechLine>? {
                 val sh = sheet ?: return null
@@ -386,18 +521,24 @@ object ForcedAligner {
                     if (done[c]) continue
                     listenStep(c, pcm); if (sheet == null) break
                     if (urgent && System.currentTimeMillis() - lastPublish > 2500) { publish(false); bumpLater() }
+                    // 100 s of the song listened to and not one line trusted: the model can't make out the words in this one (mumbled or heavily processed vocals),
+                    // and the rest of it would only cost battery and time. The voice finder's times stand.
+                    if (!gaveUp && done.count { it } == 5) {
+                        val good = speechLines()?.values?.count { it.conf >= CtcAlign.TRUST } ?: 0
+                        if (good == 0) { gaveUp = true; sheet = null; break }
+                    }
                 }
             }
             val usedModel = sheet != null
             publish(true)
             rec.put("speechTried", true)
-            if (usedModel) rec.put("speech", speechUsed > 0)
+            if (usedModel || gaveUp) rec.put("speech", speechUsed > 0)
             Store.save()
-            Diag.log("word timing ${s.title}: read ${(t1 - t0) / 100 / 10.0} s, voice finder ${voiceMs / 100 / 10.0} s, speech model ${if (usedModel) "${listenMs / 100 / 10.0} s, heard $speechUsed of ${lines.size} lines${if (confs.isNotEmpty()) " (confidence best ${"%.1f".format(confs.last())}, median ${"%.1f".format(confs[confs.size / 2])}, worst ${"%.1f".format(confs.first())}, needs ${CtcAlign.TRUST})" else ""}" else "not used"} (${lines.size} lines, ${(pcm.n / PcmLoader.RATE)} s of song)")
+            Diag.log("word timing ${s.title}: read ${(t1 - t0) / 100 / 10.0} s, voice finder ${voiceMs / 100 / 10.0} s, speech model ${if (gaveUp) "${listenMs / 100 / 10.0} s, then stopped: it couldn't make out the words in this song" else if (usedModel) "${listenMs / 100 / 10.0} s, heard $speechUsed of ${lines.size} lines${if (confs.isNotEmpty()) " (confidence best ${"%.1f".format(confs.last())}, median ${"%.1f".format(confs[confs.size / 2])}, worst ${"%.1f".format(confs.first())}, needs ${CtcAlign.TRUST})" else ""}" else "not used"} (${lines.size} lines, ${(pcm.n / PcmLoader.RATE)} s of song)")
             // what the engine decided: how far the lyrics' times were from the singing, from how many places, and where the lyrics came from
             timed?.let { Diag.log("word timing ${s.title}: shift ${WordTiming.sign(it.shift)} found ${WordTiming.sign(it.residual)} from ${it.used} · lyrics from ${rec.optString("source").ifBlank { "?" }} · your nudge ${"%+.1f".format(offset)} s · highlight ${Cfg.lyricShift.v.value.toInt()} ms") }
             Diag.log("word timing ${s.title}: audio ${pcm.info}")
-            if (usedModel) SpeechModel.release()
+            if (usedModel || gaveUp) SpeechModel.release()
             _failed.value = _failed.value - s.id
             bumpLater()
             return true

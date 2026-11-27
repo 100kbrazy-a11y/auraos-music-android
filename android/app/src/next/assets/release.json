@@ -2,6 +2,17 @@
  "format": "Version numbers are MAJOR.MINOR.PATCH (big redesign . new features . fixes). Every update has a name. Newest first. Bump this file to ship an update.",
  "releases": [
   {
+   "version": "2.17.0",
+   "name": "The Fast Read Update",
+   "date": "2026-11-27",
+   "notes": [
+    "Songs are read for word timing in 2 or 3 pieces at once instead of one long pass. Most of the wait for a song's words was the phone's decoder working through it packet by packet; this was the biggest part of the 12 to 100 seconds it could take. The pieces are only joined where the sound they both heard lines up to the sample (checked on every song); if it doesn't, or anything goes wrong, the song is read in one go like before.",
+    "The speech model now gives up on a song after 100 seconds of it if it hasn't been able to make out a single line (mumbled or heavily processed vocals), instead of spending a minute or more on the whole song for nothing. The voice finder's timing stands for those songs.",
+    "Fixes the crash-and-fail from 2.16.0 (asking the player for its position from the wrong thread).",
+    "Export Timing Report shows how many pieces a song was read in and whether the model gave up."
+   ]
+  },
+  {
    "version": "2.16.1",
    "name": "The Sync Update, fixed",
    "date": "2026-11-25",

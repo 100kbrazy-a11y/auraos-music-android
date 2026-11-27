@@ -11,6 +11,8 @@ import kotlin.math.min
 class Pcm(val left: ShortArray, val right: ShortArray, val n: Int) {
     /** how the file was read (codec, rates, where the first sample sits): for the diagnostics and the timing report */
     var info: String = ""
+    /** where in the file (µs) the first sample is from: 0 unless this is a piece read from the middle */
+    var t0Us: Long = 0
 }
 
 /** how many syllables a word has, and which words are sung fast and short */

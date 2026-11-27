@@ -18,26 +18,41 @@ object SelfTest {
             Log.w("Strata", "DECODETEST files=${files.size}")
             for (f in files) {
                 try {
+                    if (f.name.startsWith("p")) {
+                        // long test songs: read in one go and in 3 pieces, the bursts in both must be in the same places
+                        val a0 = System.currentTimeMillis(); val one = PcmLoader.loadInParts(f, 1)
+                        val a1 = System.currentTimeMillis(); val three = PcmLoader.loadInParts(f, 3)
+                        val a2 = System.currentTimeMillis()
+                        val (o1, _) = bursts(one); val (o3, _) = bursts(three)
+                        Log.w("Strata", "DECODEPAR file=${f.name} one_ms=${a1 - a0} three_ms=${a2 - a1} one_len=${"%.3f".format(java.util.Locale.US, one.n.toDouble() / PcmLoader.RATE)} three_len=${"%.3f".format(java.util.Locale.US, three.n.toDouble() / PcmLoader.RATE)} one_on=${o1.joinToString(",")} three_on=${o3.joinToString(",")} info=[${three.info}]")
+                        continue
+                    }
                     val t0 = System.currentTimeMillis()
                     val p = PcmLoader.load(f)
-                    val thr = (0.12 * 32768).toInt(); val quiet = (PcmLoader.RATE * 0.5).toInt()
-                    val on = ArrayList<String>(); val pk = ArrayList<String>()
-                    var last = -quiet * 2; var cur = 0; var i = 0
-                    while (i < p.n) {
-                        val a = Math.abs(p.left[i].toInt())
-                        if (a >= thr) {
-                            if (i - last > quiet) { if (on.isNotEmpty()) pk.add(cur.toString()); on.add("%.3f".format(java.util.Locale.US, i.toDouble() / PcmLoader.RATE)); cur = 0 }
-                            last = i
-                        }
-                        if (on.isNotEmpty() && i - last <= quiet) cur = Math.max(cur, a)
-                        i++
-                    }
-                    if (on.isNotEmpty()) pk.add(cur.toString())
+                    val (on, pk) = bursts(p)
                     Log.w("Strata", "DECODETEST file=${f.name} length=${"%.3f".format(java.util.Locale.US, p.n.toDouble() / PcmLoader.RATE)} onsets=${on.joinToString(",")} peaks=${pk.joinToString(",")} ms=${System.currentTimeMillis() - t0} info=[${p.info}]")
                 } catch (e: Throwable) { Log.w("Strata", "DECODETEST file=${f.name} error=${e.javaClass.simpleName}: ${e.message}") }
             }
             Log.w("Strata", "DECODETEST done")
         }
+    }
+
+    /** where the loud bursts in a read song start (seconds) and how loud each is */
+    private fun bursts(p: Pcm): Pair<List<String>, List<String>> {
+        val thr = (0.12 * 32768).toInt(); val quiet = (PcmLoader.RATE * 0.5).toInt()
+        val on = ArrayList<String>(); val pk = ArrayList<String>()
+        var last = -quiet * 2; var cur = 0; var i = 0
+        while (i < p.n) {
+            val a = Math.abs(p.left[i].toInt())
+            if (a >= thr) {
+                if (i - last > quiet) { if (on.isNotEmpty()) pk.add(cur.toString()); on.add("%.3f".format(java.util.Locale.US, i.toDouble() / PcmLoader.RATE)); cur = 0 }
+                last = i
+            }
+            if (on.isNotEmpty() && i - last <= quiet) cur = Math.max(cur, a)
+            i++
+        }
+        if (on.isNotEmpty()) pk.add(cur.toString())
+        return Pair(on, pk)
     }
 
     /** Speech model test, started by CI: downloads the model for real, listens to a clip of read speech whose words are known, and writes where each word was found. */
