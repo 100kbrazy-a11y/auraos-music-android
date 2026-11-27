@@ -20,11 +20,12 @@ object SelfTest {
                 try {
                     if (f.name.startsWith("p")) {
                         // long test songs: read in one go and in 3 pieces, the bursts in both must be in the same places
-                        val a0 = System.currentTimeMillis(); val one = PcmLoader.loadInParts(f, 1)
-                        val a1 = System.currentTimeMillis(); val three = PcmLoader.loadInParts(f, 3)
-                        val a2 = System.currentTimeMillis()
-                        val (o1, _) = bursts(one); val (o3, _) = bursts(three)
-                        Log.w("Strata", "DECODEPAR file=${f.name} one_ms=${a1 - a0} three_ms=${a2 - a1} one_len=${"%.3f".format(java.util.Locale.US, one.n.toDouble() / PcmLoader.RATE)} three_len=${"%.3f".format(java.util.Locale.US, three.n.toDouble() / PcmLoader.RATE)} one_on=${o1.joinToString(",")} three_on=${o3.joinToString(",")} info=[${three.info}]")
+                        PcmLoader.eager = false; val a0 = System.currentTimeMillis(); val old = PcmLoader.loadInParts(f, 1)
+                        PcmLoader.eager = true; val a1 = System.currentTimeMillis(); val one = PcmLoader.loadInParts(f, 1)
+                        val a2 = System.currentTimeMillis(); val three = PcmLoader.loadInParts(f, 3)
+                        val a3 = System.currentTimeMillis()
+                        val (o1, _) = bursts(one); val (o3, _) = bursts(three); val (o0, _) = bursts(old)
+                        Log.w("Strata", "DECODEPAR file=${f.name} old_ms=${a1 - a0} one_ms=${a2 - a1} three_ms=${a3 - a2} one_len=${"%.3f".format(java.util.Locale.US, one.n.toDouble() / PcmLoader.RATE)} three_len=${"%.3f".format(java.util.Locale.US, three.n.toDouble() / PcmLoader.RATE)} one_on=${o1.joinToString(",")} three_on=${o3.joinToString(",")} old_on=${o0.joinToString(",")} info=[${three.info}]")
                         continue
                     }
                     val t0 = System.currentTimeMillis()

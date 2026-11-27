@@ -75,22 +75,23 @@ for ln in open('dtlog.txt'):
         if min(lv)<0.7 or max(lv)>1.3: res.append('loudness ratio '+', '.join(f'{x:.2f}' for x in lv))
     print(('FAIL ' if res else 'ok   ')+name+(' — '+'; '.join(res) if res else f' (starts {", ".join(f"{(o-b)*1000:+.0f}" for o,b in zip(on,BURSTS))} ms)'))
     bad+=bool(res)
-PB=[5.0,12.5,29.9,30.2,44.0,59.95,60.3,71.0,83.5]
+PB=[5.0,12.5,29.9,44.0,59.95,71.0,83.5]    # (bursts closer than half a second count as one)
 par=0
 for ln in open('dtlog.txt'):
-    m=re.search(r'DECODEPAR file=(\S+) one_ms=(\d+) three_ms=(\d+) one_len=([\d.]+) three_len=([\d.]+) one_on=([\d.,]*) three_on=([\d.,]*) info=\[(.*)\]',ln)
+    m=re.search(r'DECODEPAR file=(\S+) old_ms=(\d+) one_ms=(\d+) three_ms=(\d+) one_len=([\d.]+) three_len=([\d.]+) one_on=([\d.,]*) three_on=([\d.,]*) old_on=([\d.,]*) info=\[(.*)\]',ln)
     if not m: continue
-    par+=1; name=m.group(1); o1=[float(x) for x in m.group(6).split(',') if x]; o3=[float(x) for x in m.group(7).split(',') if x]
+    par+=1; name=m.group(1); o1=[float(x) for x in m.group(7).split(',') if x]; o3=[float(x) for x in m.group(8).split(',') if x]; o0=[float(x) for x in m.group(9).split(',') if x]; info=m.group(10)
     res=[]
-    if 'read in 3 parts' not in m.group(8): res.append('did not read in parts: '+m.group(8)[-150:])
-    if abs(float(m.group(4))-float(m.group(5)))>0.01: res.append(f'length {m.group(5)} s in parts vs {m.group(4)} s in one go')
-    if len(o1)!=len(PB) or len(o3)!=len(PB): res.append(f'bursts found: one go {len(o1)}, parts {len(o3)}, expected {len(PB)}')
+    if 'read in 3 parts' not in info: res.append('did not read in parts: '+info[-150:])
+    if abs(float(m.group(5))-float(m.group(6)))>0.01: res.append('length %s s in parts vs %s s in one go'%(m.group(6),m.group(5)))
+    if len(o1)!=len(PB) or len(o3)!=len(PB) or len(o0)!=len(PB): res.append('bursts found: old read %d, one go %d, parts %d, expected %d'%(len(o0),len(o1),len(o3),len(PB)))
     else:
-        d=[(a-b)*1000 for a,b in zip(o3,o1)]; e=[(a-b)*1000 for a,b in zip(o3,PB)]
-        if max(abs(x) for x in d)>4: res.append('parts vs one go differ by ms: '+', '.join(f'{x:+.1f}' for x in d))
-        if max(abs(x) for x in e)>30: res.append('parts vs truth ms: '+', '.join(f'{x:+.0f}' for x in e))
-    om=re.search(r'offsets ([-0-9,]+)',m.group(8)); offs=om.group(1) if om else '?'
-    print(('FAIL ' if res else 'ok   ')+'PARTS '+name+(' — '+'; '.join(res) if res else ' (one go %s ms, 3 parts %s ms, offsets %s)'%(m.group(2),m.group(3),offs)))
+        d=[(a-b)*1000 for a,b in zip(o3,o1)]; e=[(a-b)*1000 for a,b in zip(o3,PB)]; d0=[(a-b)*1000 for a,b in zip(o1,o0)]
+        if max(abs(x) for x in d)>4: res.append('parts vs one go differ by ms: '+', '.join('%+.1f'%x for x in d))
+        if max(abs(x) for x in d0)>1: res.append('eager read vs old read differ by ms: '+', '.join('%+.1f'%x for x in d0))
+        if max(abs(x) for x in e)>30: res.append('parts vs truth ms: '+', '.join('%+.0f'%x for x in e))
+    om=re.search(r'offsets ([-0-9,]+)',info); offs=om.group(1) if om else '?'
+    print(('FAIL ' if res else 'ok   ')+'PARTS '+name+(' — '+'; '.join(res) if res else ' (old loop %s ms, new loop %s ms, new loop in 3 parts %s ms, offsets %s)'%(m.group(2),m.group(3),m.group(4),offs)))
     bad+=bool(res)
 if par==0: print('FAIL no long test song was read'); bad+=1
 print('files checked:',seen,'long:',par); 

@@ -32,6 +32,8 @@ object PcmLoader {
     const val MAX_SECONDS = 8 * 60
 
     private class ParFail(why: String) : RuntimeException(why)
+    /** keep feeding the decoder while it has room, and only wait for its output when there was nothing to feed (the tests switch this to compare) */
+    @Volatile var eager = true
     private const val MIN_PARALLEL_US = 50_000_000L
 
     private fun durationUs(file: File): Long {
@@ -212,9 +214,11 @@ object PcmLoader {
                 if (System.currentTimeMillis() > deadline) throw IllegalStateException("decoding took too long")
                 if (cancel?.get() == true) throw ParFail("stopped")
                 // feed the decoder as much as it will take right now (one buffer per round trip would make it wait on every single frame)
+                var fed = false
                 while (!eosIn) {
                     val inIdx = dec.dequeueInputBuffer(0)
                     if (inIdx < 0) break
+                    fed = true
                     val buf = dec.getInputBuffer(inIdx)!!
                     val sz = if (ex.sampleTime > toUs) -1 else ex.readSampleData(buf, 0)
                     if (sz < 0) { dec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); eosIn = true }
@@ -225,7 +229,7 @@ object PcmLoader {
                     }
                 }
                 // ...and take out everything it has ready (the first look waits a moment if nothing is yet)
-                var wait = 4_000L
+                var wait = if (eager && fed) 0L else 4_000L
                 while (!eosOut) {
                     val outIdx = dec.dequeueOutputBuffer(info, wait)
                     wait = 0L
